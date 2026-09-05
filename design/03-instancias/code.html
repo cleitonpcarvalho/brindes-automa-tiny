@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="pt-BR"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><link href="https://fonts.googleapis.com" rel="preconnect"/><link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/><style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script><script id="tailwind-config">tailwind.config = { darkMode: "class", theme: { extend: { "colors": { "primary-container": "#105edd", "on-secondary": "#003915", "surface-container-high": "#292a2c", "tertiary-fixed-dim": "#ffb95f", "surface-tint": "#b2c5ff", "on-secondary-fixed-variant": "#005321", "secondary": "#4ae176", "on-primary-container": "#dee4ff", "primary-fixed": "#dae2ff", "surface-container-highest": "#343537", "surface": "#121315", "on-surface": "#e3e2e5", "on-primary-fixed": "#001847", "primary-fixed-dim": "#b2c5ff", "on-secondary-container": "#004119", "inverse-surface": "#e3e2e5", "on-error": "#690005", "on-primary-fixed-variant": "#0040a0", "error": "#ffb4ab", "surface-container-low": "#1b1c1e", "on-tertiary-fixed-variant": "#653e00", "tertiary-fixed": "#ffddb8", "secondary-fixed": "#6bff8f", "surface-bright": "#38393b", "on-tertiary-fixed": "#2a1700", "surface-dim": "#121315", "background": "#121315", "on-background": "#e3e2e5", "outline": "#8c90a0", "secondary-container": "#00b954", "on-tertiary": "#472a00", "on-tertiary-container": "#ffe1c0", "on-surface-variant": "#c2c6d7", "primary": "#b2c5ff", "outline-variant": "#424654", "on-primary": "#002c72", "secondary-fixed-dim": "#4ae176", "surface-variant": "#343537", "inverse-on-surface": "#303033", "surface-container": "#1f2022", "on-secondary-fixed": "#002109", "error-container": "#93000a", "inverse-primary": "#0056d1", "on-error-container": "#ffdad6", "surface-container-lowest": "#0d0e10", "tertiary": "#ffb95f", "tertiary-container": "#905b00" }, "borderRadius": { "DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem" }, "spacing": { "space-sm": "8px", "section-gap": "24px", "button-height": "32px", "card-padding": "16px", "space-xs": "4px", "input-height": "32px", "space-2xl": "24px", "grid-base": "8px", "space-xxs": "2px", "space-lg": "16px", "space-md": "12px", "space-3xl": "32px", "space-xl": "20px" }, "fontFamily": { "mono-metric-lg": [ "Inter" ], "body-default": [ "Inter" ], "header-section": [ "Inter" ], "mono-metric": [ "Inter" ], "caption-medium": [ "Inter" ], "title-page-mobile": [ "Inter" ], "caption-label": [ "Inter" ], "title-page": [ "Inter" ], "body-medium": [ "Inter" ], "code-inline": [ "JetBrains Mono" ] }, "fontSize": { "mono-metric-lg": [ "20px", { "lineHeight": "24px", "letterSpacing": "-0.02em", "fontWeight": "600" } ], "body-default": [ "14px", { "lineHeight": "20px", "letterSpacing": "0em", "fontWeight": "400" } ], "header-section": [ "15px", { "lineHeight": "20px", "letterSpacing": "-0.01em", "fontWeight": "500" } ], "mono-metric": [ "14px", { "lineHeight": "20px", "letterSpacing": "0em", "fontWeight": "500" } ], "caption-medium": [ "12px", { "lineHeight": "16px", "letterSpacing": "0.005em", "fontWeight": "500" } ], "title-page-mobile": [ "20px", { "lineHeight": "28px", "letterSpacing": "-0.015em", "fontWeight": "600" } ], "caption-label": [ "12px", { "lineHeight": "16px", "letterSpacing": "0.01em", "fontWeight": "400" } ], "title-page": [ "24px", { "lineHeight": "32px", "letterSpacing": "-0.02em", "fontWeight": "600" } ], "body-medium": [ "14px", { "lineHeight": "20px", "letterSpacing": "-0.005em", "fontWeight": "500" } ], "code-inline": [ "12px", { "lineHeight": "16px", "letterSpacing": "0em", "fontWeight": "400" } ] } } } };</script></head><body class="bg-surface-container-lowest font-body-default text-body-default text-on-surface antialiased"><aside class="fixed left-0 top-0 h-screen w-[240px] bg-surface-container-low border-r border-outline-variant/40 z-50 flex flex-col justify-between select-none"><div class="flex flex-col"><div class="h-16 px-space-lg flex items-center gap-space-md border-b border-outline-variant/30"><div class="w-8 h-8 rounded-lg bg-primary-container flex items-center justify-center text-on-primary-container shrink-0"><span class="material-symbols-outlined text-[20px]">sync_alt</span></div><div class="flex flex-col min-w-0"><span class="font-header-section text-header-section font-semibold text-on-surface truncate leading-tight">Automa Soluct</span><span class="font-caption-label text-caption-label text-outline truncate leading-tight">Sync ERP</span></div></div><nav class="flex flex-col gap-space-xxs py-space-md px-space-xs" data-active-classes="bg-surface-container text-on-surface font-medium border-l-2 border-primary-container"><a class="flex items-center justify-between px-space-md py-space-xs rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="visao-geral" href="#"><div class="flex items-center gap-space-md"><span class="material-symbols-outlined text-[18px]">grid_view</span><span class="font-body-medium text-body-medium">Visão geral</span></div></a><a class="flex items-center justify-between px-space-md py-space-xs rounded-lg bg-surface-container text-on-surface font-medium border-l-2 border-primary-container hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="instancias" href="#"><div class="flex items-center gap-space-md"><span class="material-symbols-outlined text-[18px]">dns</span><span class="font-body-medium text-body-medium">Instâncias</span></div></a><a class="flex items-center justify-between px-space-md py-space-xs rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="fornecedores" href="#"><div class="flex items-center gap-space-md"><span class="material-symbols-outlined text-[18px]">apartment</span><span class="font-body-medium text-body-medium">Fornecedores</span></div><span class="px-space-xs py-[1px] bg-surface-container-highest text-on-surface-variant text-caption-medium font-caption-medium rounded-lg">4</span></a><a class="flex items-center justify-between px-space-md py-space-xs rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="sincronizacoes" href="#"><div class="flex items-center gap-space-md"><span class="material-symbols-outlined text-[18px]">sync</span><span class="font-body-medium text-body-medium">Sincronizações</span></div></a><a class="flex items-center justify-between px-space-md py-space-xs rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="logs-e-alertas" href="#"><div class="flex items-center gap-space-md"><span class="material-symbols-outlined text-[18px]">warning</span><span class="font-body-medium text-body-medium">Logs e Alertas</span></div><span class="px-space-xs py-[1px] bg-surface-container-highest text-on-surface-variant text-caption-medium font-caption-medium rounded-lg">3</span></a><a class="flex items-center justify-between px-space-md py-space-xs rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="configuracoes" href="#"><div class="flex items-center gap-space-md"><span class="material-symbols-outlined text-[18px]">settings</span><span class="font-body-medium text-body-medium">Configurações</span></div></a></nav></div><div class="p-space-md border-t border-outline-variant/30"><div class="flex items-center gap-space-md"><div class="relative flex items-center justify-center shrink-0"><div class="w-8 h-8 rounded-full bg-surface-container-highest border border-outline-variant flex items-center justify-center text-caption-medium font-caption-medium text-on-surface">CC</div><span class="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-secondary ring-2 ring-surface-container-low"></span></div><div class="flex flex-col min-w-0 flex-1"><span class="font-caption-medium text-caption-medium text-on-surface truncate leading-tight">Cleiton Carvalho</span><span class="font-caption-label text-caption-label text-outline truncate leading-tight" title="cleiton.carvalho@automasoluct.com.br">cleiton.carvalho@automasoluct.com.br</span></div></div></div></aside><div class="pl-[240px] flex flex-col min-h-screen"><header class="fixed top-0 left-[240px] right-0 h-16 bg-surface-container-lowest/90 backdrop-blur-md z-40 border-b border-outline-variant/30 flex items-center justify-end px-space-2xl gap-space-md"><div class="flex items-center gap-space-sm text-outline"><button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-surface-container-high hover:text-on-surface transition-colors"><span class="material-symbols-outlined text-[20px]">search</span></button><button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-surface-container-high hover:text-on-surface transition-colors"><span class="material-symbols-outlined text-[20px]">notifications</span></button></div><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center shrink-0"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></header><main class="w-full max-w-[1440px] pt-16 px-space-2xl pb-space-3xl mx-auto flex-1 bg-surface-container-lowest"><div class="flex flex-col w-full">
+<!-- Top Action & Title Header -->
+<div class="flex flex-col md:flex-row md:items-center justify-between gap-space-md mb-space-2xl">
+<div class="flex flex-col">
+<h1 class="font-title-page text-title-page text-white tracking-tight">Instâncias</h1>
+<p class="font-body-default text-body-default text-outline mt-space-xxs">Contas de ERP conectadas e seus catálogos sincronizados</p>
+</div>
+<div class="flex items-center gap-space-sm shrink-0">
+<button class="h-button-height px-space-md bg-primary-container hover:bg-[#0d4db5] active:bg-[#0a3d91] text-white font-body-medium text-body-medium rounded-lg flex items-center gap-space-xs transition-colors focus:outline-none focus:ring-2 focus:ring-primary-container focus:ring-offset-2 focus:ring-offset-surface" type="button">
+<span class="material-symbols-outlined text-[16px]">add</span>
+<span>Nova instância</span>
+</button>
+</div>
+</div>
+<!-- Filter & Control Toolbar -->
+<div class="flex flex-wrap items-center gap-space-md mb-space-lg">
+<!-- Search Bar -->
+<div class="relative w-full sm:w-[320px]">
+<span class="absolute inset-y-0 left-0 pl-space-sm flex items-center pointer-events-none text-outline">
+<span class="material-symbols-outlined text-[16px]">search</span>
+</span>
+<input class="w-full h-input-height pl-8 pr-space-sm bg-[#141619] border border-[#23262B] rounded-lg text-white font-body-default text-body-default placeholder:text-outline placeholder:opacity-60 focus:outline-none focus:border-primary-container focus:ring-1 focus:ring-primary-container transition-all" id="instance-search" placeholder="Buscar por nome ou CNPJ" type="text"/>
+</div>
+<!-- Filter Dropdown: Status -->
+<div class="relative">
+<button class="h-input-height px-space-md bg-[#141619] border border-[#23262B] rounded-lg text-outline font-body-default text-body-default flex items-center gap-space-xs hover:border-[#2D3139] hover:text-white transition-colors" type="button">
+<span>Status: <strong class="text-white font-medium">Todos</strong></span>
+<span class="material-symbols-outlined text-[16px]">expand_more</span>
+</button>
+</div>
+<!-- Filter Dropdown: ERP -->
+<div class="relative">
+<button class="h-input-height px-space-md bg-[#141619] border border-[#23262B] rounded-lg text-outline font-body-default text-body-default flex items-center gap-space-xs hover:border-[#2D3139] hover:text-white transition-colors" type="button">
+<span>ERP: <strong class="text-white font-medium">Tiny</strong></span>
+<span class="material-symbols-outlined text-[16px]">expand_more</span>
+</button>
+</div>
+<div class="hidden lg:flex flex-1"></div>
+<!-- Segmented View Toggle -->
+<div class="flex items-center p-0.5 bg-[#0B0C0E] border border-[#23262B] rounded-lg ml-auto">
+<button aria-label="Visualização em tabela" class="w-7 h-7 flex items-center justify-center rounded bg-[#1A1D21] border border-[#2D3139] text-white" type="button">
+<span class="material-symbols-outlined text-[16px]">table_rows</span>
+</button>
+<button aria-label="Visualização em grade" class="w-7 h-7 flex items-center justify-center rounded text-outline hover:text-white transition-colors" type="button">
+<span class="material-symbols-outlined text-[16px]">grid_view</span>
+</button>
+</div>
+</div>
+<!-- Operational Status Metric Strip & Inline Supplier Legend -->
+<div class="bg-[#141619] border border-[#23262B] rounded-lg px-space-md py-2.5 mb-space-lg flex flex-wrap items-center justify-between gap-y-2 gap-x-4 font-caption-medium text-caption-medium">
+<div class="flex flex-wrap items-center gap-space-md">
+<div class="text-white font-medium">14 instâncias</div>
+<div class="h-3 w-px bg-[#23262B] hidden sm:block"></div>
+<div class="flex items-center gap-1.5 text-secondary font-medium">
+<span class="w-1.5 h-1.5 rounded-full bg-[#22C55E]"></span>
+<span>10 conectadas</span>
+</div>
+<div class="h-3 w-px bg-[#23262B] hidden sm:block"></div>
+<div class="flex items-center gap-1.5 text-error font-medium">
+<span class="w-1.5 h-1.5 rounded-full bg-[#EF4444]"></span>
+<span>2 com erro</span>
+</div>
+<div class="h-3 w-px bg-[#23262B] hidden sm:block"></div>
+<div class="flex items-center gap-1.5 text-outline font-medium">
+<span class="w-1.5 h-1.5 rounded-full bg-[#94A3B8]"></span>
+<span>2 não conectadas</span>
+</div>
+</div>
+<div class="flex items-center flex-wrap gap-x-3 gap-y-1 text-[12px] text-[#94A3B8]">
+<span class="font-medium text-outline">Legenda:</span>
+<span class="inline-flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-[#22C55E] shrink-0"></span><span>Sincronizado recentemente</span></span>
+<span class="text-[#424654]">·</span>
+<span class="inline-flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-[#F59E0B] shrink-0"></span><span>Atenção</span></span>
+<span class="text-[#424654]">·</span>
+<span class="inline-flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-[#EF4444] shrink-0"></span><span>Falha</span></span>
+<span class="text-[#424654]">·</span>
+<span class="inline-flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-[#94A3B8] shrink-0"></span><span>Não configurado</span></span>
+</div>
+</div>
+<!-- High-Density Data Matrix -->
+<div class="w-full bg-[#141619] border border-[#23262B] rounded-xl overflow-hidden shadow-sm">
+<div class="w-full">
+<table class="w-full text-left border-collapse table-auto">
+<thead>
+<tr class="bg-[#101114] border-b border-[#23262B] text-caption-label font-caption-medium text-outline uppercase tracking-wider select-none">
+<th class="py-space-md pl-space-md pr-space-xs text-left">Cliente</th>
+<th class="py-space-md px-space-xs w-16 text-left">ERP</th>
+<th class="py-space-md px-space-xs w-28 text-left">Status</th>
+<th class="py-space-md px-space-xs w-44 text-left">Fornecedores</th>
+<th class="py-space-md px-space-xs w-28 text-right">Produtos</th>
+<th class="py-space-md px-space-xs w-36 text-left">Última sincronização</th>
+<th class="py-space-md px-space-xs w-36 text-left">Token</th>
+<th class="py-space-md pr-space-md pl-space-xs w-10 text-right"><span class="sr-only">Ações</span></th>
+</tr>
+</thead>
+<tbody class="divide-y divide-[#1A1D21] font-body-default text-body-default">
+<!-- Row 1: EKK Brindes (Critical Error) -->
+<tr class="hover:bg-[#181a1e] transition-colors cursor-pointer group">
+<td class="py-space-sm pl-space-md pr-space-xs align-middle min-w-0">
+<div class="flex flex-col">
+<span class="font-body-medium text-body-medium text-white truncate group-hover:text-primary transition-colors">EKK Brindes Promocionais</span>
+<span class="font-caption-label text-caption-label text-outline [font-variant-numeric:tabular-nums]">18.421.908/0001-44</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<span class="font-code-inline text-code-inline text-[#cbd5e1] bg-[#1b1d22] border border-[#2c3038] px-1.5 py-0.5 rounded">Tiny</span>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full font-caption-medium text-caption-medium bg-red-500/10 text-[#EF4444] border border-red-500/20 whitespace-nowrap">
+<span class="w-1.5 h-1.5 rounded-full bg-[#EF4444]"></span>
+                Erro
+              </span>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<div class="flex items-center gap-1 flex-nowrap whitespace-nowrap [font-variant-numeric:tabular-nums]">
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20">XBZ</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-amber-500/10 text-[#F59E0B] border border-amber-500/20">ASIA</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20">SOMAR</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-[#1A1D21] text-[#94A3B8] border border-[#23262B]">SPOT</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle text-right">
+<div class="flex flex-col items-end whitespace-nowrap">
+<span class="font-body-medium text-body-medium text-white [font-variant-numeric:tabular-nums]">2.418</span>
+<span class="font-caption-label text-caption-label text-outline">2.418 cadastrados</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<div class="flex flex-col whitespace-nowrap">
+<span class="font-body-default text-body-default text-white">há 2h14</span>
+<span class="font-caption-label text-caption-label text-outline">Tiny via API</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle text-left">
+<div class="inline-flex items-center gap-1.5 text-[#EF4444] font-caption-medium text-caption-medium whitespace-nowrap">
+<span class="material-symbols-outlined text-[14px] shrink-0">error</span>
+<span>expirado</span>
+</div>
+</td>
+<td class="py-space-sm pr-space-md pl-space-xs align-middle text-right">
+<button aria-label="Ações de instância" class="w-7 h-7 rounded flex items-center justify-center text-[#94A3B8] hover:text-white hover:bg-[#23262B] transition-colors ml-auto" type="button">
+<svg class="w-4 h-4" fill="currentColor" viewbox="0 0 20 20"><circle cx="5" cy="10" r="1.75"></circle><circle cx="10" cy="10" r="1.75"></circle><circle cx="15" cy="10" r="1.75"></circle></svg>
+</button>
+</td>
+</tr>
+<!-- Row 2: Brindes Prime Corporativos (Warning) -->
+<tr class="hover:bg-[#181a1e] transition-colors cursor-pointer group">
+<td class="py-space-sm pl-space-md pr-space-xs align-middle min-w-0">
+<div class="flex flex-col">
+<span class="font-body-medium text-body-medium text-white truncate group-hover:text-primary transition-colors">Brindes Prime Corporativos</span>
+<span class="font-caption-label text-caption-label text-outline [font-variant-numeric:tabular-nums]">07.892.341/0001-09</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<span class="font-code-inline text-code-inline text-[#cbd5e1] bg-[#1b1d22] border border-[#2c3038] px-1.5 py-0.5 rounded">Tiny</span>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full font-caption-medium text-caption-medium bg-amber-500/10 text-[#F59E0B] border border-amber-500/20 whitespace-nowrap">
+<span class="w-1.5 h-1.5 rounded-full bg-[#F59E0B]"></span>
+                Atenção
+              </span>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<div class="flex items-center gap-1 flex-nowrap whitespace-nowrap [font-variant-numeric:tabular-nums]">
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-red-500/10 text-[#EF4444] border border-red-500/20" title="Taxa de requisição atingida">XBZ</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20">ASIA</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20">SOMAR</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20">SPOT</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle text-right">
+<div class="flex flex-col items-end whitespace-nowrap">
+<span class="font-body-medium text-body-medium text-white [font-variant-numeric:tabular-nums]">1.890</span>
+<span class="font-caption-label text-caption-label text-outline">1.852 cadastrados</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<div class="flex flex-col whitespace-nowrap">
+<span class="font-body-default text-body-default text-white">há 40 min</span>
+<span class="font-caption-label text-caption-label text-outline">Só Marcas</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle text-left">
+<div class="inline-flex items-center gap-1.5 text-[#F59E0B] font-caption-medium text-caption-medium whitespace-nowrap">
+<span class="material-symbols-outlined text-[14px] shrink-0">timer</span>
+<span>expira em 48m</span>
+</div>
+</td>
+<td class="py-space-sm pr-space-md pl-space-xs align-middle text-right">
+<button aria-label="Ações de instância" class="w-7 h-7 rounded flex items-center justify-center text-[#94A3B8] hover:text-white hover:bg-[#23262B] transition-colors ml-auto" type="button">
+<svg class="w-4 h-4" fill="currentColor" viewbox="0 0 20 20"><circle cx="5" cy="10" r="1.75"></circle><circle cx="10" cy="10" r="1.75"></circle><circle cx="15" cy="10" r="1.75"></circle></svg>
+</button>
+</td>
+</tr>
+<!-- Row 3: Casa dos Brindes & Mkt (Warning) -->
+<tr class="hover:bg-[#181a1e] transition-colors cursor-pointer group">
+<td class="py-space-sm pl-space-md pr-space-xs align-middle min-w-0">
+<div class="flex flex-col">
+<span class="font-body-medium text-body-medium text-white truncate group-hover:text-primary transition-colors">Casa dos Brindes &amp; Mkt</span>
+<span class="font-caption-label text-caption-label text-outline [font-variant-numeric:tabular-nums]">23.514.887/0001-82</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<span class="font-code-inline text-code-inline text-[#cbd5e1] bg-[#1b1d22] border border-[#2c3038] px-1.5 py-0.5 rounded">Tiny</span>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full font-caption-medium text-caption-medium bg-amber-500/10 text-[#F59E0B] border border-amber-500/20 whitespace-nowrap">
+<span class="w-1.5 h-1.5 rounded-full bg-[#F59E0B]"></span>
+                Atenção
+              </span>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<div class="flex items-center gap-1 flex-nowrap whitespace-nowrap [font-variant-numeric:tabular-nums]">
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20">XBZ</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-amber-500/10 text-[#F59E0B] border border-amber-500/20" title="Inconsistência de SKU">ASIA</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-[#1A1D21] text-[#94A3B8] border border-[#23262B]">SOMAR</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20">SPOT</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle text-right">
+<div class="flex flex-col items-end whitespace-nowrap">
+<span class="font-body-medium text-body-medium text-white [font-variant-numeric:tabular-nums]">3.120</span>
+<span class="font-caption-label text-caption-label text-outline">3.082 cadastrados</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<div class="flex flex-col whitespace-nowrap">
+<span class="font-body-default text-body-default text-white">há 6h</span>
+<span class="font-caption-label text-caption-label text-outline">Asia</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle text-left">
+<span class="font-caption-medium text-caption-medium text-outline whitespace-nowrap">expira em 2h15</span>
+</td>
+<td class="py-space-sm pr-space-md pl-space-xs align-middle text-right">
+<button aria-label="Ações de instância" class="w-7 h-7 rounded flex items-center justify-center text-[#94A3B8] hover:text-white hover:bg-[#23262B] transition-colors ml-auto" type="button">
+<svg class="w-4 h-4" fill="currentColor" viewbox="0 0 20 20"><circle cx="5" cy="10" r="1.75"></circle><circle cx="10" cy="10" r="1.75"></circle><circle cx="15" cy="10" r="1.75"></circle></svg>
+</button>
+</td>
+</tr>
+<!-- Row 4: Líder Brindes & Personalizados (Healthy) -->
+<tr class="hover:bg-[#181a1e] transition-colors cursor-pointer group">
+<td class="py-space-sm pl-space-md pr-space-xs align-middle min-w-0">
+<div class="flex flex-col">
+<span class="font-body-medium text-body-medium text-white truncate group-hover:text-primary transition-colors">Líder Brindes &amp; Personalizados</span>
+<span class="font-caption-label text-caption-label text-outline [font-variant-numeric:tabular-nums]">04.182.991/0001-30</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<span class="font-code-inline text-code-inline text-[#cbd5e1] bg-[#1b1d22] border border-[#2c3038] px-1.5 py-0.5 rounded">Tiny</span>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full font-caption-medium text-caption-medium bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20 whitespace-nowrap">
+<span class="w-1.5 h-1.5 rounded-full bg-[#22C55E]"></span>
+                Conectada
+              </span>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<div class="flex items-center gap-1 flex-nowrap whitespace-nowrap [font-variant-numeric:tabular-nums]">
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20">XBZ</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20">ASIA</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20">SOMAR</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20">SPOT</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle text-right">
+<div class="flex flex-col items-end whitespace-nowrap">
+<span class="font-body-medium text-body-medium text-white [font-variant-numeric:tabular-nums]">4.512</span>
+<span class="font-caption-label text-caption-label text-outline">4.512 cadastrados</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<div class="flex flex-col whitespace-nowrap">
+<span class="font-body-default text-body-default text-white">há 12 min</span>
+<span class="font-caption-label text-caption-label text-outline">XBZ</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle text-left">
+<span class="font-caption-medium text-caption-medium text-outline whitespace-nowrap">expira em 8h40</span>
+</td>
+<td class="py-space-sm pr-space-md pl-space-xs align-middle text-right">
+<button aria-label="Ações de instância" class="w-7 h-7 rounded flex items-center justify-center text-[#94A3B8] hover:text-white hover:bg-[#23262B] transition-colors ml-auto" type="button">
+<svg class="w-4 h-4" fill="currentColor" viewbox="0 0 20 20"><circle cx="5" cy="10" r="1.75"></circle><circle cx="10" cy="10" r="1.75"></circle><circle cx="15" cy="10" r="1.75"></circle></svg>
+</button>
+</td>
+</tr>
+<!-- Row 5: Alpha Promo Indústria de Brindes (Healthy) -->
+<tr class="hover:bg-[#181a1e] transition-colors cursor-pointer group">
+<td class="py-space-sm pl-space-md pr-space-xs align-middle min-w-0">
+<div class="flex flex-col">
+<span class="font-body-medium text-body-medium text-white truncate group-hover:text-primary transition-colors">Alpha Promo Indústria de Brindes</span>
+<span class="font-caption-label text-caption-label text-outline [font-variant-numeric:tabular-nums]">12.309.445/0001-98</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<span class="font-code-inline text-code-inline text-[#cbd5e1] bg-[#1b1d22] border border-[#2c3038] px-1.5 py-0.5 rounded">Tiny</span>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full font-caption-medium text-caption-medium bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20 whitespace-nowrap">
+<span class="w-1.5 h-1.5 rounded-full bg-[#22C55E]"></span>
+                Conectada
+              </span>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<div class="flex items-center gap-1 flex-nowrap whitespace-nowrap [font-variant-numeric:tabular-nums]">
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20">XBZ</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20">ASIA</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20">SOMAR</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20">SPOT</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle text-right">
+<div class="flex flex-col items-end whitespace-nowrap">
+<span class="font-body-medium text-body-medium text-white [font-variant-numeric:tabular-nums]">1.650</span>
+<span class="font-caption-label text-caption-label text-outline">1.650 cadastrados</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<div class="flex flex-col whitespace-nowrap">
+<span class="font-body-default text-body-default text-white">há 34 min</span>
+<span class="font-caption-label text-caption-label text-outline">Spot</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle text-left">
+<span class="font-caption-medium text-caption-medium text-outline whitespace-nowrap">expira em 11h20</span>
+</td>
+<td class="py-space-sm pr-space-md pl-space-xs align-middle text-right">
+<button aria-label="Ações de instância" class="w-7 h-7 rounded flex items-center justify-center text-[#94A3B8] hover:text-white hover:bg-[#23262B] transition-colors ml-auto" type="button">
+<svg class="w-4 h-4" fill="currentColor" viewbox="0 0 20 20"><circle cx="5" cy="10" r="1.75"></circle><circle cx="10" cy="10" r="1.75"></circle><circle cx="15" cy="10" r="1.75"></circle></svg>
+</button>
+</td>
+</tr>
+<!-- Row 6: Vip Corporativo Soluções (Healthy) -->
+<tr class="hover:bg-[#181a1e] transition-colors cursor-pointer group">
+<td class="py-space-sm pl-space-md pr-space-xs align-middle min-w-0">
+<div class="flex flex-col">
+<span class="font-body-medium text-body-medium text-white truncate group-hover:text-primary transition-colors">Vip Corporativo Soluções</span>
+<span class="font-caption-label text-caption-label text-outline [font-variant-numeric:tabular-nums]">31.298.012/0001-65</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<span class="font-code-inline text-code-inline text-[#cbd5e1] bg-[#1b1d22] border border-[#2c3038] px-1.5 py-0.5 rounded">Tiny</span>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full font-caption-medium text-caption-medium bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20 whitespace-nowrap">
+<span class="w-1.5 h-1.5 rounded-full bg-[#22C55E]"></span>
+                Conectada
+              </span>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<div class="flex items-center gap-1 flex-nowrap whitespace-nowrap [font-variant-numeric:tabular-nums]">
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-[#1A1D21] text-[#94A3B8] border border-[#23262B]">XBZ</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20">ASIA</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20">SOMAR</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-[#1A1D21] text-[#94A3B8] border border-[#23262B]">SPOT</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle text-right">
+<div class="flex flex-col items-end whitespace-nowrap">
+<span class="font-body-medium text-body-medium text-white [font-variant-numeric:tabular-nums]">984</span>
+<span class="font-caption-label text-caption-label text-outline">984 cadastrados</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<div class="flex flex-col whitespace-nowrap">
+<span class="font-body-default text-body-default text-white">há 1h05</span>
+<span class="font-caption-label text-caption-label text-outline">Só Marcas</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle text-left">
+<span class="font-caption-medium text-caption-medium text-outline whitespace-nowrap">expira em 5h10</span>
+</td>
+<td class="py-space-sm pr-space-md pl-space-xs align-middle text-right">
+<button aria-label="Ações de instância" class="w-7 h-7 rounded flex items-center justify-center text-[#94A3B8] hover:text-white hover:bg-[#23262B] transition-colors ml-auto" type="button">
+<svg class="w-4 h-4" fill="currentColor" viewbox="0 0 20 20"><circle cx="5" cy="10" r="1.75"></circle><circle cx="10" cy="10" r="1.75"></circle><circle cx="15" cy="10" r="1.75"></circle></svg>
+</button>
+</td>
+</tr>
+<!-- Row 7: Mega Brindes Brasil (Healthy) -->
+<tr class="hover:bg-[#181a1e] transition-colors cursor-pointer group">
+<td class="py-space-sm pl-space-md pr-space-xs align-middle min-w-0">
+<div class="flex flex-col">
+<span class="font-body-medium text-body-medium text-white truncate group-hover:text-primary transition-colors">Mega Brindes Brasil</span>
+<span class="font-caption-label text-caption-label text-outline [font-variant-numeric:tabular-nums]">09.432.187/0001-21</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<span class="font-code-inline text-code-inline text-[#cbd5e1] bg-[#1b1d22] border border-[#2c3038] px-1.5 py-0.5 rounded">Tiny</span>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full font-caption-medium text-caption-medium bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20 whitespace-nowrap">
+<span class="w-1.5 h-1.5 rounded-full bg-[#22C55E]"></span>
+                Conectada
+              </span>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<div class="flex items-center gap-1 flex-nowrap whitespace-nowrap [font-variant-numeric:tabular-nums]">
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20">XBZ</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20">ASIA</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20">SOMAR</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20">SPOT</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle text-right">
+<div class="flex flex-col items-end whitespace-nowrap">
+<span class="font-body-medium text-body-medium text-white [font-variant-numeric:tabular-nums]">5.820</span>
+<span class="font-caption-label text-caption-label text-outline">5.820 cadastrados</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<div class="flex flex-col whitespace-nowrap">
+<span class="font-body-default text-body-default text-white">há 1h45</span>
+<span class="font-caption-label text-caption-label text-outline">XBZ</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle text-left">
+<span class="font-caption-medium text-caption-medium text-outline whitespace-nowrap">expira em 14h00</span>
+</td>
+<td class="py-space-sm pr-space-md pl-space-xs align-middle text-right">
+<button aria-label="Ações de instância" class="w-7 h-7 rounded flex items-center justify-center text-[#94A3B8] hover:text-white hover:bg-[#23262B] transition-colors ml-auto" type="button">
+<svg class="w-4 h-4" fill="currentColor" viewbox="0 0 20 20"><circle cx="5" cy="10" r="1.75"></circle><circle cx="10" cy="10" r="1.75"></circle><circle cx="15" cy="10" r="1.75"></circle></svg>
+</button>
+</td>
+</tr>
+<!-- Row 8: Total Print & Brindes (Healthy) -->
+<tr class="hover:bg-[#181a1e] transition-colors cursor-pointer group">
+<td class="py-space-sm pl-space-md pr-space-xs align-middle min-w-0">
+<div class="flex flex-col">
+<span class="font-body-medium text-body-medium text-white truncate group-hover:text-primary transition-colors">Total Print &amp; Brindes</span>
+<span class="font-caption-label text-caption-label text-outline [font-variant-numeric:tabular-nums]">19.821.433/0001-52</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<span class="font-code-inline text-code-inline text-[#cbd5e1] bg-[#1b1d22] border border-[#2c3038] px-1.5 py-0.5 rounded">Tiny</span>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full font-caption-medium text-caption-medium bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20 whitespace-nowrap">
+<span class="w-1.5 h-1.5 rounded-full bg-[#22C55E]"></span>
+                Conectada
+              </span>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<div class="flex items-center gap-1 flex-nowrap whitespace-nowrap [font-variant-numeric:tabular-nums]">
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20">XBZ</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-[#1A1D21] text-[#94A3B8] border border-[#23262B]">ASIA</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20">SOMAR</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-emerald-500/10 text-[#22C55E] border border-emerald-500/20">SPOT</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle text-right">
+<div class="flex flex-col items-end whitespace-nowrap">
+<span class="font-body-medium text-body-medium text-white [font-variant-numeric:tabular-nums]">2.105</span>
+<span class="font-caption-label text-caption-label text-outline">2.105 cadastrados</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<div class="flex flex-col whitespace-nowrap">
+<span class="font-body-default text-body-default text-white">há 3h20</span>
+<span class="font-caption-label text-caption-label text-outline">Spot</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle text-left">
+<span class="font-caption-medium text-caption-medium text-outline whitespace-nowrap">expira em 7h35</span>
+</td>
+<td class="py-space-sm pr-space-md pl-space-xs align-middle text-right">
+<button aria-label="Ações de instância" class="w-7 h-7 rounded flex items-center justify-center text-[#94A3B8] hover:text-white hover:bg-[#23262B] transition-colors ml-auto" type="button">
+<svg class="w-4 h-4" fill="currentColor" viewbox="0 0 20 20"><circle cx="5" cy="10" r="1.75"></circle><circle cx="10" cy="10" r="1.75"></circle><circle cx="15" cy="10" r="1.75"></circle></svg>
+</button>
+</td>
+</tr>
+<!-- Row 9: Impacto Merchandising & Brindes (Not Configured) -->
+<tr class="hover:bg-[#181a1e] transition-colors cursor-pointer group">
+<td class="py-space-sm pl-space-md pr-space-xs align-middle min-w-0">
+<div class="flex flex-col">
+<span class="font-body-medium text-body-medium text-white truncate group-hover:text-primary transition-colors">Impacto Merchandising &amp; Brindes</span>
+<span class="font-caption-label text-caption-label text-outline [font-variant-numeric:tabular-nums]">28.910.334/0001-77</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<span class="font-code-inline text-code-inline text-[#cbd5e1] bg-[#1b1d22] border border-[#2c3038] px-1.5 py-0.5 rounded">Tiny</span>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full font-caption-medium text-caption-medium bg-slate-500/10 text-outline border border-slate-500/20 whitespace-nowrap">
+<span class="w-1.5 h-1.5 rounded-full bg-[#94A3B8]"></span>
+                Não conectada
+              </span>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<div class="flex items-center gap-1 flex-nowrap whitespace-nowrap [font-variant-numeric:tabular-nums]">
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-[#1A1D21] text-[#94A3B8] border border-[#23262B]">XBZ</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-[#1A1D21] text-[#94A3B8] border border-[#23262B]">ASIA</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-[#1A1D21] text-[#94A3B8] border border-[#23262B]">SOMAR</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-[#1A1D21] text-[#94A3B8] border border-[#23262B]">SPOT</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle text-right">
+<div class="flex flex-col items-end whitespace-nowrap">
+<span class="font-body-medium text-body-medium text-outline [font-variant-numeric:tabular-nums]">—</span>
+<span class="font-caption-label text-caption-label text-outline">0 cadastrados</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<div class="flex flex-col whitespace-nowrap">
+<span class="font-body-default text-body-default text-outline">Nunca</span>
+<span class="font-caption-label text-caption-label text-outline">Sem execuções</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle text-left">
+<span class="font-caption-medium text-caption-medium text-outline whitespace-nowrap">Não configurado</span>
+</td>
+<td class="py-space-sm pr-space-md pl-space-xs align-middle text-right">
+<button aria-label="Ações de instância" class="w-7 h-7 rounded flex items-center justify-center text-[#94A3B8] hover:text-white hover:bg-[#23262B] transition-colors ml-auto" type="button">
+<svg class="w-4 h-4" fill="currentColor" viewbox="0 0 20 20"><circle cx="5" cy="10" r="1.75"></circle><circle cx="10" cy="10" r="1.75"></circle><circle cx="15" cy="10" r="1.75"></circle></svg>
+</button>
+</td>
+</tr>
+<!-- Row 10: Sul Brindes Corporativos (Pending Auth) -->
+<tr class="hover:bg-[#181a1e] transition-colors cursor-pointer group">
+<td class="py-space-sm pl-space-md pr-space-xs align-middle min-w-0">
+<div class="flex flex-col">
+<span class="font-body-medium text-body-medium text-white truncate group-hover:text-primary transition-colors">Sul Brindes Corporativos</span>
+<span class="font-caption-label text-caption-label text-outline [font-variant-numeric:tabular-nums]">33.109.842/0001-15</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<span class="font-code-inline text-code-inline text-[#cbd5e1] bg-[#1b1d22] border border-[#2c3038] px-1.5 py-0.5 rounded">Tiny</span>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full font-caption-medium text-caption-medium bg-slate-500/10 text-outline border border-slate-500/20 whitespace-nowrap">
+<span class="w-1.5 h-1.5 rounded-full bg-[#94A3B8]"></span>
+                Não conectada
+              </span>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<div class="flex items-center gap-1 flex-nowrap whitespace-nowrap [font-variant-numeric:tabular-nums]">
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-[#1A1D21] text-[#94A3B8] border border-[#23262B]">XBZ</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-[#1A1D21] text-[#94A3B8] border border-[#23262B]">ASIA</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-[#1A1D21] text-[#94A3B8] border border-[#23262B]">SOMAR</span>
+<span class="w-10 text-center shrink-0 py-0.5 rounded text-[10px] font-medium tracking-wider bg-[#1A1D21] text-[#94A3B8] border border-[#23262B]">SPOT</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle text-right">
+<div class="flex flex-col items-end whitespace-nowrap">
+<span class="font-body-medium text-body-medium text-outline [font-variant-numeric:tabular-nums]">—</span>
+<span class="font-caption-label text-caption-label text-outline">0 cadastrados</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle">
+<div class="flex flex-col whitespace-nowrap">
+<span class="font-body-default text-body-default text-outline">Nunca</span>
+<span class="font-caption-label text-caption-label text-outline">Aguardando token</span>
+</div>
+</td>
+<td class="py-space-sm px-space-xs align-middle text-left">
+<span class="font-caption-medium text-caption-medium text-outline whitespace-nowrap">Pendente</span>
+</td>
+<td class="py-space-sm pr-space-md pl-space-xs align-middle text-right">
+<button aria-label="Ações de instância" class="w-7 h-7 rounded flex items-center justify-center text-[#94A3B8] hover:text-white hover:bg-[#23262B] transition-colors ml-auto" type="button">
+<svg class="w-4 h-4" fill="currentColor" viewbox="0 0 20 20"><circle cx="5" cy="10" r="1.75"></circle><circle cx="10" cy="10" r="1.75"></circle><circle cx="15" cy="10" r="1.75"></circle></svg>
+</button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Precision Pagination Sub-bar -->
+<div class="flex flex-col sm:flex-row items-center justify-between px-space-md py-space-sm border-t border-[#23262B] bg-[#101114] gap-space-sm font-caption-medium text-caption-medium text-outline">
+<div class="[font-variant-numeric:tabular-nums]">
+        Mostrando <span class="text-white font-medium">10</span> de <span class="text-white font-medium">14</span> instâncias
+      </div>
+<div class="flex items-center gap-1.5">
+<button class="h-7 px-2.5 rounded bg-[#141619] border border-[#23262B] text-outline/40 cursor-not-allowed flex items-center gap-1 transition-colors" disabled="" type="button">
+<span class="material-symbols-outlined text-[14px]">chevron_left</span>
+<span>Anterior</span>
+</button>
+<div class="flex items-center gap-1 [font-variant-numeric:tabular-nums]">
+<button class="w-7 h-7 rounded bg-primary-container text-white font-medium flex items-center justify-center" type="button">1</button>
+<button class="w-7 h-7 rounded bg-[#141619] border border-[#23262B] text-outline hover:text-white hover:border-[#2D3139] flex items-center justify-center transition-colors" type="button">2</button>
+</div>
+<button class="h-7 px-2.5 rounded bg-[#141619] border border-[#23262B] text-outline hover:text-white hover:border-[#2D3139] flex items-center gap-1 transition-colors" type="button">
+<span>Próximo</span>
+<span class="material-symbols-outlined text-[14px]">chevron_right</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const searchInput = document.getElementById('instance-search');
+    if (searchInput) {
+      searchInput.addEventListener('input', (e) => {
+        const query = e.target.value.toLowerCase().trim();
+        const rows = document.querySelectorAll('tbody tr');
+        rows.forEach(row => {
+          const text = row.textContent.toLowerCase();
+          if (text.includes(query)) {
+            row.style.display = '';
+          } else {
+            row.style.display = 'none';
+          }
+        });
+      });
+    }
+  });
+</script></main></div></body></html>

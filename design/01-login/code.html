@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="pt-BR"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Login — Automa Soluct Sync ERP</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+          },
+          colors: {
+            background: '#0B0C0E',
+            surface: '#141619',
+            border: '#23262B',
+            primary: {
+              DEFAULT: '#105EDD',
+              hover: '#0D4EB8',
+            },
+            muted: '#94A3B8',
+          }
+        }
+      }
+    }
+  </script>
+<style>
+    body {
+      background-color: #0B0C0E;
+      color: #F1F5F9;
+      font-family: 'Inter', sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+  </style>
+</head>
+<body class="h-screen w-full bg-[#0B0C0E] text-[#F1F5F9] flex items-center justify-center p-4 overflow-hidden select-none">
+<!-- Container Geral Centralizado -->
+<div class="w-full max-w-[400px] flex flex-col items-center">
+<!-- Branding Superior -->
+<div class="flex flex-col items-center mb-6 text-center">
+<!-- Símbolo / Logo (40px x 40px rounded square em #105EDD com ícone de 18px) -->
+<div class="w-10 h-10 rounded-[10px] bg-[#105EDD] flex items-center justify-center text-white mb-3 shadow-sm">
+<svg fill="none" height="18" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" viewbox="0 0 24 24" width="18" xmlns="http://www.w3.org/2000/svg">
+<path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+<path d="M3 3v5h5"></path>
+<path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path>
+<path d="M16 21h5v-5"></path>
+</svg>
+</div>
+<!-- Nome do Produto -->
+<h1 class="text-[18px] font-semibold text-white tracking-tight leading-tight">
+        Automa Soluct
+      </h1>
+<!-- Subtítulo / Muted -->
+<p class="text-[12px] text-[#94A3B8] font-normal mt-0.5">
+        Sync ERP
+      </p>
+</div>
+<!-- Card de Login -->
+<div class="w-full bg-[#141619] border border-[#23262B] rounded-[10px] p-6 shadow-xl">
+<!-- Cabeçalho do Card -->
+<div class="mb-5">
+<h2 class="text-[20px] font-semibold text-white tracking-tight leading-none">
+          Entrar
+        </h2>
+<p class="text-[13px] text-[#94A3B8] mt-1.5 font-normal">
+          Acesse o painel de sincronização
+        </p>
+</div>
+<!-- Formulário -->
+<form class="space-y-4" onsubmit="event.preventDefault();">
+<!-- Campo E-mail -->
+<div>
+<label class="block text-[13px] font-medium text-[#94A3B8] mb-1.5" for="email">
+            E-mail
+          </label>
+<input class="w-full h-9 px-3 text-[14px] text-white bg-[#0B0C0E] border border-[#23262B] rounded-[8px] focus:outline-none focus:border-[#105EDD] focus:ring-1 focus:ring-[#105EDD] transition-colors" id="email" name="email" required="" type="email" value="cleiton.carvalho@automasoluct.com.br"/>
+</div>
+<!-- Campo Senha -->
+<div>
+<div class="flex items-center justify-between mb-1.5">
+<label class="block text-[13px] font-medium text-[#94A3B8]" for="password">
+              Senha
+            </label>
+<a class="text-[12px] text-[#94A3B8] hover:text-white transition-colors focus:outline-none focus:underline" href="#">
+              Esqueci minha senha
+            </a>
+</div>
+<div class="relative flex items-center">
+<input class="w-full h-9 pl-3 pr-9 text-[14px] text-white bg-[#0B0C0E] border border-[#23262B] rounded-[8px] focus:outline-none focus:border-[#105EDD] focus:ring-1 focus:ring-[#105EDD] font-mono tracking-widest transition-colors" id="password" name="password" required="" type="password" value="senha-secreta-exemplo"/>
+<button aria-label="Mostrar ou ocultar senha" class="absolute right-2.5 flex items-center justify-center text-[#94A3B8] hover:text-white focus:outline-none transition-colors" type="button">
+<!-- Eye Outline Icon (16px) -->
+<svg fill="none" height="16" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" viewbox="0 0 24 24" width="16" xmlns="http://www.w3.org/2000/svg">
+<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"></path>
+<circle cx="12" cy="12" r="3"></circle>
+</svg>
+</button>
+</div>
+</div>
+<!-- Checkbox Manter conectado -->
+<div class="pt-0.5 flex items-center">
+<label class="flex items-center gap-2 cursor-pointer group select-none">
+<div class="relative flex items-center">
+<input class="sr-only peer" id="remember" name="remember" type="checkbox"/>
+<div class="w-3.5 h-3.5 rounded-[3px] border border-[#23262B] bg-[#0B0C0E] peer-checked:bg-[#105EDD] peer-checked:border-[#105EDD] transition-colors flex items-center justify-center group-hover:border-[#383B40]">
+<!-- Check Icon -->
+<svg class="w-2.5 h-2.5 text-white hidden peer-checked:block pointer-events-none" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="3" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+<polyline points="20 6 9 17 4 12"></polyline>
+</svg>
+</div>
+</div>
+<span class="text-[13px] text-[#94A3B8] group-hover:text-slate-300 transition-colors">
+              Manter conectado
+            </span>
+</label>
+</div>
+<!-- Botão Primário Entrar -->
+<div class="pt-2">
+<button class="w-full h-9 px-4 bg-[#105EDD] hover:bg-[#0D4EB8] text-white text-[14px] font-medium rounded-[8px] transition-colors focus:outline-none focus:ring-2 focus:ring-[#105EDD] focus:ring-offset-2 focus:ring-offset-[#141619] shadow-sm flex items-center justify-center" type="submit">
+            Entrar
+          </button>
+</div>
+</form>
+</div>
+<!-- Rodapé Discreto -->
+<div class="mt-6 text-center">
+<p class="text-[12px] text-[#94A3B8] font-normal tracking-wide">
+        Acesso restrito · Automa Soluct © 2026
+      </p>
+</div>
+</div>
+</body></html>

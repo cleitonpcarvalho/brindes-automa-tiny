@@ -1,0 +1,216 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Tokens extraídos de design/02-dashboard/DESIGN.md (seção "Colors" em
+ * prosa — não o front-matter YAML, que é um export Material genérico não
+ * usado de fato no HTML) e conferidos contra design/01-login/code.html e
+ * design/02-dashboard/code.html. Ver retorno da conversa (passo 7) para a
+ * lista completa de divergências entre o front-matter e o HTML real.
+ *
+ * App é dark-only por design (nenhuma tela clara foi desenhada) — os
+ * valores abaixo valem tanto em :root quanto em .dark; a classe "dark" é
+ * sempre aplicada no <html> (ver layout.tsx), então não dependemos da
+ * preferência de sistema do usuário.
+ */
+:root,
+.dark {
+  /* Superfícies (Elevation & Depth, DESIGN.md) */
+  --background: #0b0c0e; /* L0 — canvas */
+  --foreground: #f8fafc;
+  --card: #141619; /* L1 — cartões, sidebar, painéis */
+  --card-foreground: #f8fafc;
+  --popover: #1a1d21; /* L2 — dropdowns, menus, tooltips */
+  --popover-foreground: #f8fafc;
+
+  /* Ações e navegação */
+  --primary: #105edd;
+  --primary-hover: #0d4db5;
+  --primary-active: #0a3d91;
+  --primary-foreground: #ffffff;
+  --primary-subtle: #105edd1f;
+
+  --secondary: #141619;
+  --secondary-foreground: #f8fafc;
+
+  --muted: #1a1d21;
+  --muted-foreground: #94a3b8;
+
+  --accent: #1c1f24; /* hover de linhas/itens interativos */
+  --accent-foreground: #f8fafc;
+
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --destructive-subtle: #ef44441a;
+
+  /* Semânticas de status (Estados e Diagnóstico, DESIGN.md) */
+  --success: #22c55e;
+  --success-subtle: #22c55e1a;
+  --warning: #f59e0b;
+  --warning-subtle: #f59e0b1a;
+  --error: #ef4444;
+  --error-subtle: #ef44441a;
+  --neutral-status: #94a3b8;
+  --neutral-status-subtle: #94a3b81a;
+
+  /* Bordas */
+  --border: #23262b; /* estrutural, 1px entre componentes */
+  --border-subtle: #1a1d21; /* divisores internos (linhas de tabela) */
+  --border-hover: #2e333d; /* hover de cartões e do botão secundário */
+  --input: #23262b;
+  --ring: #105edd;
+
+  --radius: 8px; /* controles: botões, inputs, menus */
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-active: var(--primary-active);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-subtle: var(--primary-subtle);
+
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-subtle: var(--destructive-subtle);
+
+  --color-success: var(--success);
+  --color-success-subtle: var(--success-subtle);
+  --color-warning: var(--warning);
+  --color-warning-subtle: var(--warning-subtle);
+  --color-error: var(--error);
+  --color-error-subtle: var(--error-subtle);
+  --color-neutral-status: var(--neutral-status);
+  --color-neutral-status-subtle: var(--neutral-status-subtle);
+
+  --color-border: var(--border);
+  --color-border-subtle: var(--border-subtle);
+  --color-border-hover: var(--border-hover);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-jetbrains-mono);
+
+  /* Shapes (DESIGN.md): escala fixa, não proporcional a um --radius único —
+     cartões/tabelas (10px) e chips (4-6px) não são múltiplos do radius de
+     controles (8px), por isso cada papel tem seu próprio token. */
+  --radius-sm: 4px; /* chips, badges */
+  --radius-md: 6px; /* chips alternativos, menus pequenos */
+  --radius-lg: 8px; /* botões, inputs, menus — var(--radius) */
+  --radius-xl: 10px; /* cartões, tabelas, modais */
+
+  /* Grade de 8px (Layout & Spacing, DESIGN.md) */
+  --spacing-xxs: 2px;
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 12px;
+  --spacing-lg: 16px;
+  --spacing-xl: 20px;
+  --spacing-2xl: 24px;
+  --spacing-3xl: 32px;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+
+/*
+ * Escala tipográfica (Typography, DESIGN.md). "mono-metric"/"mono-metric-lg"
+ * usam Inter + tabular-nums (não são realmente monoespaçadas — "mono" aqui
+ * é sobre alinhamento numérico); só "code-inline" usa JetBrains Mono de
+ * verdade, para payloads/tokens brutos.
+ */
+@utility text-title-page {
+  font-family: var(--font-sans);
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 32px;
+  letter-spacing: -0.02em;
+}
+@utility text-title-page-mobile {
+  font-family: var(--font-sans);
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 28px;
+  letter-spacing: -0.015em;
+}
+@utility text-header-section {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 20px;
+  letter-spacing: -0.01em;
+}
+@utility text-body-default {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+}
+@utility text-body-medium {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  letter-spacing: -0.005em;
+}
+@utility text-caption-label {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+  letter-spacing: 0.01em;
+}
+@utility text-caption-medium {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  letter-spacing: 0.005em;
+}
+@utility text-mono-metric {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  font-variant-numeric: tabular-nums;
+}
+@utility text-mono-metric-lg {
+  font-family: var(--font-sans);
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 24px;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+@utility text-code-inline {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+}

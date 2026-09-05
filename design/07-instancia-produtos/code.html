@@ -1,0 +1,574 @@
+<!DOCTYPE html><html class="dark" lang="pt-BR"><head><meta charset="utf-8"><meta content="width=device-width, initial-scale=1.0" name="viewport"><link href="https://fonts.googleapis.com" rel="preconnect"><link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"><style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config = { darkMode: "class", theme: { extend: { "colors": { "surface-variant": "#343537", "on-primary-fixed-variant": "#0040a0", "on-primary": "#002c72", "inverse-on-surface": "#303033", "on-secondary-fixed": "#002109", "tertiary-fixed-dim": "#ffb95f", "primary-fixed-dim": "#b2c5ff", "on-tertiary-fixed": "#2a1700", "on-secondary-container": "#004119", "secondary-fixed-dim": "#4ae176", "on-tertiary-fixed-variant": "#653e00", "inverse-surface": "#e3e2e5", "surface-bright": "#38393b", "secondary-fixed": "#6bff8f", "surface-container": "#1f2022", "surface-container-low": "#1b1c1e", "on-secondary-fixed-variant": "#005321", "error": "#ffb4ab", "secondary-container": "#00b954", "on-background": "#e3e2e5", "on-primary-fixed": "#001847", "on-secondary": "#003915", "on-tertiary": "#472a00", "primary-fixed": "#dae2ff", "surface": "#121315", "background": "#121315", "on-surface": "#e3e2e5", "on-error-container": "#ffdad6", "tertiary": "#ffb95f", "on-error": "#690005", "outline": "#8c90a0", "surface-dim": "#121315", "surface-container-highest": "#343537", "on-surface-variant": "#c2c6d7", "surface-container-lowest": "#0d0e10", "tertiary-container": "#905b00", "on-primary-container": "#dee4ff", "surface-tint": "#b2c5ff", "secondary": "#4ae176", "error-container": "#93000a", "surface-container-high": "#292a2c", "outline-variant": "#424654", "primary-container": "#105edd", "primary": "#b2c5ff", "on-tertiary-container": "#ffe1c0", "inverse-primary": "#0056d1", "tertiary-fixed": "#ffddb8" }, "borderRadius": { "DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem" }, "spacing": { "space-md": "12px", "space-xs": "4px", "space-lg": "16px", "card-padding": "16px", "space-sm": "8px", "input-height": "32px", "space-xxs": "2px", "space-xl": "20px", "space-3xl": "32px", "section-gap": "24px", "space-2xl": "24px", "button-height": "32px", "grid-base": "8px" }, "fontFamily": { "mono-metric-lg": [ "Inter" ], "body-medium": [ "Inter" ], "title-page": [ "Inter" ], "mono-metric": [ "Inter" ], "title-page-mobile": [ "Inter" ], "caption-medium": [ "Inter" ], "caption-label": [ "Inter" ], "body-default": [ "Inter" ], "code-inline": [ "JetBrains Mono" ], "header-section": [ "Inter" ] }, "fontSize": { "mono-metric-lg": [ "20px", { "lineHeight": "24px", "letterSpacing": "-0.02em", "fontWeight": "600" } ], "body-medium": [ "14px", { "lineHeight": "20px", "letterSpacing": "-0.005em", "fontWeight": "500" } ], "title-page": [ "24px", { "lineHeight": "32px", "letterSpacing": "-0.02em", "fontWeight": "600" } ], "mono-metric": [ "14px", { "lineHeight": "20px", "letterSpacing": "0em", "fontWeight": "500" } ], "title-page-mobile": [ "20px", { "lineHeight": "28px", "letterSpacing": "-0.015em", "fontWeight": "600" } ], "caption-medium": [ "12px", { "lineHeight": "16px", "letterSpacing": "0.005em", "fontWeight": "500" } ], "caption-label": [ "12px", { "lineHeight": "16px", "letterSpacing": "0.01em", "fontWeight": "400" } ], "body-default": [ "14px", { "lineHeight": "20px", "letterSpacing": "0em", "fontWeight": "400" } ], "code-inline": [ "12px", { "lineHeight": "16px", "letterSpacing": "0em", "fontWeight": "400" } ], "header-section": [ "15px", { "lineHeight": "20px", "letterSpacing": "-0.01em", "fontWeight": "500" } ] } } } };</script></head><body class="bg-surface-container-lowest font-body-default text-body-default text-on-surface antialiased"><aside class="fixed left-0 top-0 h-screen w-[240px] bg-surface-container-low border-r border-outline-variant/40 z-50 flex flex-col justify-between select-none"><div class="flex flex-col"><div class="h-16 px-space-lg flex items-center gap-space-md border-b border-outline-variant/30"><div class="w-8 h-8 rounded-lg bg-primary-container flex items-center justify-center text-on-primary-container shrink-0"><span class="material-symbols-outlined text-[20px]">sync_alt</span></div><div class="flex flex-col min-w-0"><span class="font-header-section text-header-section font-semibold text-on-surface truncate leading-tight">Automa Soluct</span><span class="font-caption-label text-caption-label text-outline truncate leading-tight">Sync ERP</span></div></div><nav class="flex flex-col gap-space-xxs py-space-md px-space-xs" data-active-classes="bg-surface-container text-on-surface font-medium border-l-2 border-primary-container"><a class="flex items-center justify-between px-space-md py-space-xs rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="visao-geral" href="#"><div class="flex items-center gap-space-sm"><svg class="w-4 h-4 text-outline shrink-0" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" viewBox="0 0 24 24"><rect height="7" width="7" x="3" y="3"></rect><rect height="7" width="7" x="14" y="3"></rect><rect height="7" width="7" x="14" y="14"></rect><rect height="7" width="7" x="3" y="14"></rect></svg><span class="font-body-medium text-body-medium">Visão geral</span></div></a><a class="flex items-center justify-between px-space-md py-space-xs rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="instancias" href="#"><div class="flex items-center gap-space-sm"><svg class="w-4 h-4 text-outline shrink-0" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" viewBox="0 0 24 24"><rect height="8" rx="2" width="20" x="2" y="2"></rect><rect height="8" rx="2" width="20" x="2" y="14"></rect><line x1="6" x2="6.01" y1="6" y2="6"></line><line x1="6" x2="6.01" y1="18" y2="18"></line></svg><span class="font-body-medium text-body-medium">Instâncias</span></div></a><a class="flex items-center justify-between px-space-md py-space-xs rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="fornecedores" href="#"><div class="flex items-center gap-space-sm"><svg class="w-4 h-4 text-outline shrink-0" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" x2="12" y1="22.08" y2="12"></line></svg><span class="font-body-medium text-body-medium">Fornecedores</span></div><span class="px-space-xs py-[1px] bg-surface-container-highest text-on-surface-variant text-caption-medium font-caption-medium rounded-lg">4</span></a><a class="flex items-center justify-between px-space-md py-space-xs rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="sincronizacoes" href="#"><div class="flex items-center gap-space-sm"><svg class="w-4 h-4 text-outline shrink-0" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" viewBox="0 0 24 24"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path></svg><span class="font-body-medium text-body-medium">Sincronizações</span></div></a><a class="flex items-center justify-between px-space-md py-space-xs rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="logs-e-alertas" href="#"><div class="flex items-center gap-space-sm"><svg class="w-4 h-4 text-outline shrink-0" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" x2="12" y1="9" y2="13"></line><line x1="12" x2="12.01" y1="17" y2="17"></line></svg><span class="font-body-medium text-body-medium">Logs e Alertas</span></div><span class="px-space-xs py-[1px] bg-surface-container-highest text-on-surface-variant text-caption-medium font-caption-medium rounded-lg">3</span></a><a class="flex items-center justify-between px-space-md py-space-xs rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="configuracoes" href="#"><div class="flex items-center gap-space-sm"><svg class="w-4 h-4 text-outline shrink-0" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg><span class="font-body-medium text-body-medium">Configurações</span></div></a></nav></div><div class="p-space-md border-t border-outline-variant/30"><div class="flex items-center gap-space-md"><div class="relative flex items-center justify-center shrink-0"><div class="w-8 h-8 rounded-full bg-surface-container-highest border border-outline-variant flex items-center justify-center text-caption-medium font-caption-medium text-on-surface">CC</div><span class="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-secondary ring-2 ring-surface-container-low"></span></div><div class="flex flex-col min-w-0 flex-1"><span class="font-caption-medium text-caption-medium text-on-surface truncate leading-tight">Cleiton Carvalho</span><span class="font-caption-label text-caption-label text-outline truncate leading-tight" title="cleiton.carvalho@automasoluct.com.br">cleiton.carvalho@automasoluct.com.br</span></div></div></div></aside><div class="pl-[240px] flex flex-col min-h-screen"><header class="fixed top-0 left-[240px] right-0 h-16 bg-surface-container-lowest/90 backdrop-blur-md z-40 border-b border-outline-variant/30 flex items-center justify-end px-space-2xl gap-space-md"><div class="flex items-center gap-space-sm text-outline"><button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-surface-container-high hover:text-on-surface transition-colors"><span class="material-symbols-outlined text-[20px]">search</span></button><button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-surface-container-high hover:text-on-surface transition-colors"><span class="material-symbols-outlined text-[20px]">notifications</span></button></div><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center shrink-0"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></header><main class="w-full max-w-[1440px] pt-16 px-space-2xl pb-space-3xl mx-auto flex-1 bg-surface-container-lowest"><div class="flex flex-col w-full">
+<!-- Top Navigation & Client Header -->
+<div class="flex flex-col gap-space-md mb-space-xl">
+<!-- Back link -->
+<a class="inline-flex items-center gap-1 text-[13px] text-outline hover:text-on-surface transition-colors w-fit" href="#">
+<span class="material-symbols-outlined text-[16px]">chevron_left</span>
+      Instâncias
+    </a>
+<!-- Client Title & Meta Actions -->
+<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-space-md">
+<div class="flex flex-wrap items-center gap-space-md">
+<h1 class="font-title-page text-title-page text-on-surface tracking-tight">EKK Brindes Promocionais</h1>
+<span class="font-code-inline text-code-inline bg-surface-container-low text-on-surface-variant px-space-xs py-[2px] rounded border border-outline-variant/30">
+          18.421.908/0001-44
+        </span>
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[12px] font-medium bg-[#EF44441A] text-[#EF4444] border border-[#EF444433]">
+<span class="w-1.5 h-1.5 rounded-full bg-[#EF4444]"></span>
+          Erro
+        </span>
+</div>
+<div class="flex items-center gap-space-sm">
+<button class="inline-flex items-center gap-2 h-button-height px-space-md bg-surface-container-low text-on-surface text-body-medium font-body-medium rounded-lg border border-outline-variant/30 hover:bg-surface-container-high transition-colors">
+<span class="material-symbols-outlined text-[16px] text-outline">sync</span>
+          Sincronizar tudo
+        </button>
+<button class="w-button-height h-button-height flex items-center justify-center rounded-lg text-outline hover:bg-surface-container-high hover:text-on-surface transition-colors" title="Mais opções">
+<span class="material-symbols-outlined text-[18px]">more_horiz</span>
+</button>
+</div>
+</div>
+<!-- Client Sub-tabs -->
+<div class="flex items-center gap-space-lg border-b border-outline-variant/30 mt-space-xs text-body-medium font-body-medium"><a class="py-2.5 text-on-surface-variant hover:text-on-surface transition-colors" href="#">Visão geral</a><a class="py-2.5 text-on-surface-variant hover:text-on-surface transition-colors" href="#">Fornecedores</a><a class="py-2.5 text-on-surface border-b-2 border-primary-container font-semibold -mb-[1px]" href="#">Produtos</a><a class="py-2.5 text-on-surface-variant hover:text-on-surface transition-colors" href="#">Execuções</a><a class="py-2.5 text-on-surface-variant hover:text-on-surface transition-colors" href="#">Configurações</a></div>
+</div>
+<!-- 1. Status Filter Strip -->
+<div class="flex flex-col lg:flex-row lg:items-center justify-between gap-space-md pb-space-md border-b border-outline-variant/20 mb-space-lg">
+<div class="flex items-center gap-space-lg overflow-x-auto select-none">
+<button class="flex items-center gap-1.5 py-1 text-on-surface border-b-2 border-primary-container font-medium text-[13px] shrink-0">
+<span class="">Todos</span>
+<span class="text-caption-medium font-code-inline text-on-surface-variant">2.748</span>
+</button>
+<button class="flex items-center gap-1.5 py-1 text-on-surface-variant hover:text-on-surface font-normal text-[13px] transition-colors shrink-0">
+<span class="">Cadastrados</span>
+<span class="text-caption-medium font-code-inline text-outline">2.418</span>
+</button>
+<button class="flex items-center gap-1.5 py-1 text-on-surface-variant hover:text-on-surface font-normal text-[13px] transition-colors shrink-0">
+<span class="">Aguardando</span>
+<span class="text-caption-medium font-code-inline text-outline">312</span>
+</button>
+<button class="flex items-center gap-1.5 py-1 text-on-surface-variant hover:text-on-surface font-normal text-[13px] transition-colors shrink-0">
+<span class="">Pendentes</span>
+<span class="text-caption-medium font-code-inline text-outline">0</span>
+</button>
+<button class="flex items-center gap-1.5 py-1 text-on-surface-variant hover:text-on-surface font-normal text-[13px] transition-colors shrink-0">
+<span class="flex items-center gap-1.5">
+<span class="w-1.5 h-1.5 rounded-full bg-[#EF4444]"></span>
+          Com erro
+        </span>
+<span class="text-caption-medium font-code-inline text-[#EF4444]">18</span>
+</button>
+<button class="flex items-center gap-1.5 py-1 text-on-surface-variant hover:text-on-surface font-normal text-[13px] transition-colors shrink-0">
+<span class="">Descontinuados</span>
+<span class="text-caption-medium font-code-inline text-outline">879</span>
+</button>
+</div>
+<div class="text-[12px] text-outline self-end lg:self-auto font-caption-label">
+      Descontinuados nunca são cadastrados.
+    </div>
+</div>
+<!-- 2. Filter Bar -->
+<div class="bg-surface-container-low border border-outline-variant/30 rounded-lg p-space-md flex flex-col md:flex-row items-stretch md:items-center justify-between gap-space-md mb-space-lg shadow-sm">
+<div class="flex-1 flex items-center bg-surface-container-lowest border border-outline-variant/40 rounded-lg px-space-sm h-input-height focus-within:border-primary-container focus-within:ring-1 focus-within:ring-primary-container transition-all">
+<span class="material-symbols-outlined text-[18px] text-outline mr-2 shrink-0">search</span>
+<input class="bg-transparent text-body-default text-on-surface placeholder:text-outline/60 text-[13px] w-full focus:outline-none" placeholder="Buscar por SKU, nome ou código do produto-pai" type="text">
+</div>
+<div class="flex flex-wrap items-center gap-space-sm shrink-0">
+<!-- Fornecedor Dropdown -->
+<button class="h-input-height px- space-md bg-surface-container border border-outline-variant/30 rounded-lg text-body-default text-[13px] text-on-surface flex items-center justify-between gap-space-md hover:bg-surface-container-high transition-colors">
+<span class="">Fornecedor: <strong class="font-medium text-on-surface">Todos</strong></span>
+<span class="material-symbols-outlined text-[16px] text-outline">expand_more</span>
+</button>
+<!-- Ordenar Dropdown -->
+<button class="h-input-height px-space-md bg-surface-container border border-outline-variant/30 rounded-lg text-body-default text-[13px] text-on-surface flex items-center justify-between gap-space-md hover:bg-surface-container-high transition-colors">
+<span class="">Ordenar por: <strong class="font-medium text-on-surface">Atualizado recentemente</strong></span>
+<span class="material-symbols-outlined text-[16px] text-outline">expand_more</span>
+</button>
+<!-- Export CSV Ghost -->
+<button class="h-input-height px-space-md text-outline hover:text-on-surface hover:bg-surface-container-high rounded-lg flex items-center gap-1.5 text-[13px] transition-colors">
+<span class="material-symbols-outlined text-[16px]">download</span>
+        Exportar CSV
+      </button>
+</div>
+</div>
+<!-- 3. Data Table Container -->
+<div class="bg-surface-container-low border border-outline-variant/30 rounded-lg overflow-hidden shadow-sm">
+<div class="overflow-x-auto">
+<table class="w-full text-left border-collapse min-w-[1020px]">
+<thead>
+<tr class="bg-surface-container-lowest border-b border-outline-variant/30 text-[12px] font-caption-medium text-outline h-8 select-none">
+<th class="w-10 px-3 text-center"></th>
+<th class="py-2 px-3 font-medium">SKU &amp; Pai</th>
+<th class="py-2 px-3 font-medium">Produto</th>
+<th class="py-2 px-3 font-medium">Fornecedor</th>
+<th class="py-2 px-3 font-medium">NCM</th>
+<th class="py-2 px-3 font-medium text-right">Preço</th>
+<th class="py-2 px-3 font-medium text-right">Estoque</th>
+<th class="py-2 px-3 font-medium">Status</th>
+<th class="py-2 px-3 font-medium">ID no Tiny</th>
+<th class="w-10 px-3 text-center font-medium"></th>
+</tr>
+</thead>
+<tbody class="divide-y divide-outline-variant/20 text-[13px] font-body-default">
+<!-- Row 1 -->
+<tr class="hover:bg-surface-container-high/50 transition-colors">
+<td class="py-2.5 px-3">
+<div class="w-8 h-8 rounded bg-surface-container-highest overflow-hidden shrink-0 flex items-center justify-center">
+<img class="w-full h-full object-cover" data-alt="Black stainless steel double wall thermal water bottle sleek matte finish on neutral background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCIhTUne6vv2x1oMZKyzxWZRosbnJEineQH5iveKpBLQPjk87IsUNYvjggVfUXkBn2MVTYpE1IwF8zlbkivCwEUoEyFhUjqP3WW5l8eyCBrWWOFvmuu0VpL-PkWEGCzLnStTaMJjLytyGQmd77_aWtlimrtxJod6x0Jmij5fZYijrJrlMo8dkWnuhOvPewTT8yf_TKDQ1lklicTXc2z2Ok7avVBkiyJ2FfMx1cJvYqe8qq5C8WofhDB">
+</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<div class="font-code-inline text-[13px] text-on-surface font-medium">X000256</div>
+<div class="text-[11px] text-outline font-code-inline">Pai: 06520</div>
+</td>
+<td class="py-2.5 px-3">
+<div class="text-on-surface font-medium leading-tight mb-1">Squeeze Térmico Inox 500ml Dupla Parede</div>
+<div class="flex items-center gap-1.5 flex-wrap">
+<span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant font-medium">Preto</span>
+<span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant font-medium">500ml</span>
+</div>
+</td>
+<td class="py-2.5 px-3 text-on-surface-variant">XBZ</td>
+<td class="py-2.5 px-3 font-code-inline text-[12px] text-on-surface-variant">9617.00.10</td>
+<td class="py-2.5 px-3 text-right font-code-inline text-on-surface font-medium">R$ 38,50</td>
+<td class="py-2.5 px-3 text-right font-code-inline text-on-surface">1.420</td>
+<td class="py-2.5 px-3">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-[#22C55E1A] text-[#22C55E] border border-[#22C55E33]">
+                Cadastrado
+              </span>
+</td>
+<td class="py-2.5 px-3 font-code-inline text-[12px] text-outline">849201948</td>
+<td class="py-2.5 px-3 text-center">
+<button class="w-7 h-7 flex items-center justify-center rounded text-outline hover:text-on-surface hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined text-[16px]">more_vert</span>
+</button>
+</td>
+</tr>
+<!-- Row 2 -->
+<tr class="hover:bg-surface-container-high/50 transition-colors">
+<td class="py-2.5 px-3">
+<div class="w-8 h-8 rounded bg-surface-container-highest overflow-hidden shrink-0 flex items-center justify-center">
+<img class="w-full h-full object-cover" data-alt="Navy blue ceramic coffee mug with matte coating studio lighting professional corporate gift" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBsIlPl2Gqb9W--yCsjXTZEyinRB7gG-VgURwh6V4Ofg1MBBiV-3ORIOguJtizHXFfjqYUds23O-2uYyfsIT194KCTWF555-eUzu9-jXglUWyMUzXl9rOKpXdUrKfy9Ch3088_gsHqyQp96i-P8Rob6YumGTx1roR4UkOQrnvbwuXBK4ondtqR8EMNFzV6NMriD3pO3iC8siAhGEc316tVStpQR1JshaFislipxiPnHPZAjYzo5zrD6">
+</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<div class="font-code-inline text-[13px] text-on-surface font-medium">MC511-AZ</div>
+<div class="text-[11px] text-outline font-code-inline">Pai: MC511</div>
+</td>
+<td class="py-2.5 px-3">
+<div class="text-on-surface font-medium leading-tight mb-1">Caneca Cerâmica Fosca Classic 350ml</div>
+<div class="flex items-center gap-1.5 flex-wrap">
+<span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant font-medium">Azul Marinho</span>
+<span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant font-medium">350ml</span>
+</div>
+</td>
+<td class="py-2.5 px-3 text-on-surface-variant">Asia</td>
+<td class="py-2.5 px-3 font-code-inline text-[12px] text-on-surface-variant">6912.00.00</td>
+<td class="py-2.5 px-3 text-right font-code-inline text-on-surface font-medium">R$ 14,20</td>
+<td class="py-2.5 px-3 text-right font-code-inline text-on-surface">3.180</td>
+<td class="py-2.5 px-3">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-[#22C55E1A] text-[#22C55E] border border-[#22C55E33]">
+                Cadastrado
+              </span>
+</td>
+<td class="py-2.5 px-3 font-code-inline text-[12px] text-outline">849201982</td>
+<td class="py-2.5 px-3 text-center">
+<button class="w-7 h-7 flex items-center justify-center rounded text-outline hover:text-on-surface hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined text-[16px]">more_vert</span>
+</button>
+</td>
+</tr>
+<!-- Row 3 -->
+<tr class="hover:bg-surface-container-high/50 transition-colors">
+<td class="py-2.5 px-3">
+<div class="w-8 h-8 rounded bg-surface-container-highest overflow-hidden shrink-0 flex items-center justify-center">
+<img class="w-full h-full object-cover" data-alt="Executive waterproof laptop backpack in graphite gray high density fabric minimalist design" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAAFiu0l4c7eFFvEvYv_Ln03HsXSKQb1P2eXGSzIFAcas8JML2Jdm-RS_23GnrPrgckzeR0yMY_mA5gm1hJfyra5IEtE6Y52TshpYiFrXPGZxam3nybC5wBqcoK1r8ZonpOWwm_9htZl6t1fg10Ir86OEfXTVCPSUBR9zpnriqUCc2X3siK1VfqPV3nEGed-TxTowuKEZ8AfoupRitV6TUg0nzQAuwq-pgg_6NedXy6EpVrwxMktgru">
+</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<div class="font-code-inline text-[13px] text-on-surface font-medium">AS-01510</div>
+<div class="text-[11px] text-outline font-code-inline">Pai: AS-015</div>
+</td>
+<td class="py-2.5 px-3">
+<div class="text-on-surface font-medium leading-tight mb-1">Mochila Notebook Impermeável Executiva</div>
+<div class="flex items-center gap-1.5 flex-wrap">
+<span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant font-medium">Cinza Grafite</span>
+<span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant font-medium">15.6"</span>
+</div>
+</td>
+<td class="py-2.5 px-3 text-on-surface-variant">Só Marcas</td>
+<td class="py-2.5 px-3 font-code-inline text-[12px] text-on-surface-variant">4202.92.00</td>
+<td class="py-2.5 px-3 text-right font-code-inline text-on-surface font-medium">R$ 89,90</td>
+<td class="py-2.5 px-3 text-right font-code-inline text-on-surface">540</td>
+<td class="py-2.5 px-3">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-[#22C55E1A] text-[#22C55E] border border-[#22C55E33]">
+                Cadastrado
+              </span>
+</td>
+<td class="py-2.5 px-3 font-code-inline text-[12px] text-outline">849202110</td>
+<td class="py-2.5 px-3 text-center">
+<button class="w-7 h-7 flex items-center justify-center rounded text-outline hover:text-on-surface hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined text-[16px]">more_vert</span>
+</button>
+</td>
+</tr>
+<!-- Row 4 -->
+<tr class="hover:bg-surface-container-high/50 transition-colors">
+<td class="py-2.5 px-3">
+<div class="w-8 h-8 rounded bg-surface-container-highest overflow-hidden shrink-0 flex items-center justify-center">
+<span class="material-symbols-outlined text-[18px] text-outline">stylus</span>
+</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<div class="font-code-inline text-[13px] text-on-surface font-medium">11110-105</div>
+<div class="text-[11px] text-outline font-code-inline">Pai: 11110</div>
+</td>
+<td class="py-2.5 px-3">
+<div class="text-on-surface font-medium leading-tight mb-1">Caneta Metal Roller com Estojo Soft Touch</div>
+<div class="flex items-center gap-1.5 flex-wrap">
+<span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant font-medium">Preto Fosco</span>
+</div>
+</td>
+<td class="py-2.5 px-3 text-on-surface-variant">Spot</td>
+<td class="py-2.5 px-3 font-code-inline text-[12px] text-on-surface-variant">9608.10.00</td>
+<td class="py-2.5 px-3 text-right font-code-inline text-on-surface font-medium">R$ 9,80</td>
+<td class="py-2.5 px-3 text-right font-code-inline text-on-surface">2.890</td>
+<td class="py-2.5 px-3">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-[#22C55E1A] text-[#22C55E] border border-[#22C55E33]">
+                Cadastrado
+              </span>
+</td>
+<td class="py-2.5 px-3 font-code-inline text-[12px] text-outline">849202340</td>
+<td class="py-2.5 px-3 text-center">
+<button class="w-7 h-7 flex items-center justify-center rounded text-outline hover:text-on-surface hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined text-[16px]">more_vert</span>
+</button>
+</td>
+</tr>
+<!-- Row 5 (Aguardando) -->
+<tr class="hover:bg-surface-container-high/50 transition-colors">
+<td class="py-2.5 px-3">
+<div class="w-8 h-8 rounded bg-surface-container flex items-center justify-center shrink-0 border border-outline-variant/30">
+<span class="material-symbols-outlined text-[18px] text-outline">image</span>
+</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<div class="font-code-inline text-[13px] text-on-surface font-medium">X000318</div>
+<div class="text-[11px] text-outline font-code-inline">Pai: 06540</div>
+</td>
+<td class="py-2.5 px-3">
+<div class="text-on-surface font-medium leading-tight mb-1">Garrafa Alumínio 650ml Mosquetão Esportivo</div>
+<div class="flex items-center gap-1.5 flex-wrap">
+<span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant font-medium">Vermelho</span>
+<span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant font-medium">650ml</span>
+</div>
+</td>
+<td class="py-2.5 px-3 text-on-surface-variant">XBZ</td>
+<td class="py-2.5 px-3 font-code-inline text-[12px] text-on-surface-variant">7615.10.00</td>
+<td class="py-2.5 px-3 text-right font-code-inline text-on-surface font-medium">R$ 22,40</td>
+<td class="py-2.5 px-3 text-right font-code-inline text-outline">0</td>
+<td class="py-2.5 px-3">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-[#F59E0B1A] text-[#F59E0B] border border-[#F59E0B33]">
+                Aguardando
+              </span>
+</td>
+<td class="py-2.5 px-3 font-code-inline text-[12px] text-outline">—</td>
+<td class="py-2.5 px-3 text-center">
+<button class="w-7 h-7 flex items-center justify-center rounded text-outline hover:text-on-surface hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined text-[16px]">more_vert</span>
+</button>
+</td>
+</tr>
+<!-- Row 6 (Aguardando) -->
+<tr class="hover:bg-surface-container-high/50 transition-colors">
+<td class="py-2.5 px-3">
+<div class="w-8 h-8 rounded bg-surface-container flex items-center justify-center shrink-0 border border-outline-variant/30">
+<span class="material-symbols-outlined text-[18px] text-outline">local_cafe</span>
+</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<div class="font-code-inline text-[13px] text-on-surface font-medium">AS-02194</div>
+<div class="text-[11px] text-outline font-code-inline">Pai: AS-021</div>
+</td>
+<td class="py-2.5 px-3">
+<div class="text-on-surface font-medium leading-tight mb-1">Copo Térmico com Tampa e Abridor 473ml</div>
+<div class="flex items-center gap-1.5 flex-wrap">
+<span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant font-medium">Branco Pérola</span>
+</div>
+</td>
+<td class="py-2.5 px-3 text-on-surface-variant">Só Marcas</td>
+<td class="py-2.5 px-3 font-code-inline text-[12px] text-on-surface-variant">3924.10.00</td>
+<td class="py-2.5 px-3 text-right font-code-inline text-on-surface font-medium">R$ 34,00</td>
+<td class="py-2.5 px-3 text-right font-code-inline text-outline">0</td>
+<td class="py-2.5 px-3">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-[#F59E0B1A] text-[#F59E0B] border border-[#F59E0B33]">
+                Aguardando
+              </span>
+</td>
+<td class="py-2.5 px-3 font-code-inline text-[12px] text-outline">—</td>
+<td class="py-2.5 px-3 text-center">
+<button class="w-7 h-7 flex items-center justify-center rounded text-outline hover:text-on-surface hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined text-[16px]">more_vert</span>
+</button>
+</td>
+</tr>
+<!-- Row 7 (Erro + Alert line) -->
+<tr class="hover:bg-surface-container-high/50 transition-colors">
+<td class="py-2.5 px-3">
+<div class="w-8 h-8 rounded bg-surface-container-highest overflow-hidden shrink-0 flex items-center justify-center">
+<span class="material-symbols-outlined text-[18px] text-outline">card_giftcard</span>
+</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<div class="font-code-inline text-[13px] text-on-surface font-medium">X000492</div>
+<div class="text-[11px] text-outline font-code-inline">Pai: 07100</div>
+</td>
+<td class="py-2.5 px-3">
+<div class="text-on-surface font-medium leading-tight mb-1">Kit Boas-Vindas Onboarding Ecológico Kraft</div>
+<div class="flex items-center gap-1.5 flex-wrap">
+<span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant font-medium">Natural</span>
+</div>
+</td>
+<td class="py-2.5 px-3 text-on-surface-variant">XBZ</td>
+<td class="py-2.5 px-3 font-code-inline text-[12px] text-[#EF4444]">4820.10.00</td>
+<td class="py-2.5 px-3 text-right font-code-inline text-on-surface font-medium">R$ 46,20</td>
+<td class="py-2.5 px-3 text-right font-code-inline text-on-surface">210</td>
+<td class="py-2.5 px-3">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-[#EF44441A] text-[#EF4444] border border-[#EF444433]">
+                Erro
+              </span>
+</td>
+<td class="py-2.5 px-3 font-code-inline text-[12px] text-outline">—</td>
+<td class="py-2.5 px-3 text-center">
+<button class="w-7 h-7 flex items-center justify-center rounded text-outline hover:text-on-surface hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined text-[16px]">more_vert</span>
+</button>
+</td>
+</tr>
+<tr>
+<td class="p-0" colspan="10">
+<div class="bg-[#EF444412] px-space-md py-1.5 border-y border-[#EF444433] flex items-center gap-2 text-[12px] text-[#EF4444]">
+<span class="material-symbols-outlined text-[14px] shrink-0">warning</span>
+<span class="">Tiny recusou: NCM inválido para o produto (informado 4820.10.00)</span>
+</div>
+</td>
+</tr>
+<!-- Row 8 (Erro + Alert line) -->
+<tr class="hover:bg-surface-container-high/50 transition-colors">
+<td class="py-2.5 px-3">
+<div class="w-8 h-8 rounded bg-surface-container-highest overflow-hidden shrink-0 flex items-center justify-center">
+<span class="material-symbols-outlined text-[18px] text-outline">book</span>
+</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<div class="font-code-inline text-[13px] text-on-surface font-medium">MC780-PT</div>
+<div class="text-[11px] text-outline font-code-inline">Pai: MC780</div>
+</td>
+<td class="py-2.5 px-3">
+<div class="text-on-surface font-medium leading-tight mb-1">Caderno Moleskine Wire-o Capa Dura Pautado</div>
+<div class="flex items-center gap-1.5 flex-wrap">
+<span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant font-medium">Preto</span>
+<span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant font-medium">A5</span>
+</div>
+</td>
+<td class="py-2.5 px-3 text-on-surface-variant">Asia</td>
+<td class="py-2.5 px-3 font-code-inline text-[12px] text-on-surface-variant">4820.10.00</td>
+<td class="py-2.5 px-3 text-right font-code-inline text-on-surface font-medium">R$ 18,90</td>
+<td class="py-2.5 px-3 text-right font-code-inline text-on-surface">1.150</td>
+<td class="py-2.5 px-3">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-[#EF44441A] text-[#EF4444] border border-[#EF444433]">
+                Erro
+              </span>
+</td>
+<td class="py-2.5 px-3 font-code-inline text-[12px] text-outline">—</td>
+<td class="py-2.5 px-3 text-center">
+<button class="w-7 h-7 flex items-center justify-center rounded text-outline hover:text-on-surface hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined text-[16px]">more_vert</span>
+</button>
+</td>
+</tr>
+<tr>
+<td class="p-0" colspan="10">
+<div class="bg-[#EF444412] px-space-md py-1.5 border-y border-[#EF444433] flex items-center gap-2 text-[12px] text-[#EF4444]">
+<span class="material-symbols-outlined text-[14px] shrink-0">warning</span>
+<span class="">Tiny recusou: unidade de medida não reconhecida pelo ERP (UN vs PC)</span>
+</div>
+</td>
+</tr>
+<!-- Row 9 (Erro + Alert line) -->
+<tr class="hover:bg-surface-container-high/50 transition-colors">
+<td class="py-2.5 px-3">
+<div class="w-8 h-8 rounded bg-surface-container-highest overflow-hidden shrink-0 flex items-center justify-center">
+<span class="material-symbols-outlined text-[18px] text-outline">battery_charging_full</span>
+</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<div class="font-code-inline text-[13px] text-on-surface font-medium">X000109</div>
+<div class="text-[11px] text-outline font-code-inline">Pai: 05990</div>
+</td>
+<td class="py-2.5 px-3">
+<div class="text-on-surface font-medium leading-tight mb-1">Carregador Portátil Power Bank 10.000mAh Slim</div>
+<div class="flex items-center gap-1.5 flex-wrap">
+<span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant font-medium">Prata</span>
+</div>
+</td>
+<td class="py-2.5 px-3 text-on-surface-variant">XBZ</td>
+<td class="py-2.5 px-3 font-code-inline text-[12px] text-on-surface-variant">8504.40.10</td>
+<td class="py-2.5 px-3 text-right font-code-inline text-on-surface font-medium">R$ 72,00</td>
+<td class="py-2.5 px-3 text-right font-code-inline text-on-surface">85</td>
+<td class="py-2.5 px-3">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-[#EF44441A] text-[#EF4444] border border-[#EF444433]">
+                Erro
+              </span>
+</td>
+<td class="py-2.5 px-3 font-code-inline text-[12px] text-outline">—</td>
+<td class="py-2.5 px-3 text-center">
+<button class="w-7 h-7 flex items-center justify-center rounded text-outline hover:text-on-surface hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined text-[16px]">more_vert</span>
+</button>
+</td>
+</tr>
+<tr>
+<td class="p-0" colspan="10">
+<div class="bg-[#EF444412] px-space-md py-1.5 border-y border-[#EF444433] flex items-center gap-2 text-[12px] text-[#EF4444]">
+<span class="material-symbols-outlined text-[14px] shrink-0">warning</span>
+<span class="">Tiny recusou: descrição excede o limite máximo permitido de caracteres</span>
+</div>
+</td>
+</tr>
+<!-- Row 10 (Spot empty NCM) -->
+<tr class="hover:bg-surface-container-high/50 transition-colors">
+<td class="py-2.5 px-3">
+<div class="w-8 h-8 rounded bg-surface-container flex items-center justify-center shrink-0 border border-outline-variant/30">
+<span class="material-symbols-outlined text-[18px] text-outline">notes</span>
+</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<div class="font-code-inline text-[13px] text-on-surface font-medium">11450-002</div>
+<div class="text-[11px] text-outline font-code-inline">Pai: 11450</div>
+</td>
+<td class="py-2.5 px-3">
+<div class="text-on-surface font-medium leading-tight mb-1">Bloco Ecológico com Caneta Bambu e Post-it</div>
+<div class="flex items-center gap-1.5 flex-wrap">
+<span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant font-medium">Kraft</span>
+</div>
+</td>
+<td class="py-2.5 px-3 text-on-surface-variant">Spot</td>
+<td class="py-2.5 px-3 font-code-inline text-[12px] text-outline">—</td>
+<td class="py-2.5 px-3 text-right font-code-inline text-on-surface font-medium">R$ 11,50</td>
+<td class="py-2.5 px-3 text-right font-code-inline text-on-surface">940</td>
+<td class="py-2.5 px-3">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-[#22C55E1A] text-[#22C55E] border border-[#22C55E33]">
+                Cadastrado
+              </span>
+</td>
+<td class="py-2.5 px-3 font-code-inline text-[12px] text-outline">849202511</td>
+<td class="py-2.5 px-3 text-center">
+<button class="w-7 h-7 flex items-center justify-center rounded text-outline hover:text-on-surface hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined text-[16px]">more_vert</span>
+</button>
+</td>
+</tr>
+<!-- Row 11 (Descontinuado) -->
+<tr class="hover:bg-surface-container-high/50 transition-colors opacity-80">
+<td class="py-2.5 px-3">
+<div class="w-8 h-8 rounded bg-surface-container flex items-center justify-center shrink-0 border border-outline-variant/30">
+<span class="material-symbols-outlined text-[18px] text-outline">vpn_key</span>
+</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<div class="font-code-inline text-[13px] text-on-surface font-medium">P@99210</div>
+<div class="text-[11px] text-outline font-code-inline">Pai: 09920</div>
+</td>
+<td class="py-2.5 px-3">
+<div class="text-on-surface font-medium leading-tight mb-0.5">Chaveiro Abridor Alumínio Anatômico</div>
+<div class="flex items-center gap-2">
+<span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant font-medium">Azul</span>
+<span class="text-[11px] text-outline italic">saindo de linha no fornecedor</span>
+</div>
+</td>
+<td class="py-2.5 px-3 text-on-surface-variant">XBZ</td>
+<td class="py-2.5 px-3 font-code-inline text-[12px] text-on-surface-variant">8308.90.90</td>
+<td class="py-2.5 px-3 text-right font-code-inline text-on-surface font-medium">R$ 3,10</td>
+<td class="py-2.5 px-3 text-right font-code-inline text-on-surface">45</td>
+<td class="py-2.5 px-3">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-surface-container-highest text-outline border border-outline-variant/40">
+                Descontinuado
+              </span>
+</td>
+<td class="py-2.5 px-3 font-code-inline text-[12px] text-outline">—</td>
+<td class="py-2.5 px-3 text-center">
+<button class="w-7 h-7 flex items-center justify-center rounded text-outline hover:text-on-surface hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined text-[16px]">more_vert</span>
+</button>
+</td>
+</tr>
+<!-- Row 12 -->
+<tr class="hover:bg-surface-container-high/50 transition-colors">
+<td class="py-2.5 px-3">
+<div class="w-8 h-8 rounded bg-surface-container-highest overflow-hidden shrink-0 flex items-center justify-center">
+<span class="material-symbols-outlined text-[18px] text-outline">umbrella</span>
+</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<div class="font-code-inline text-[13px] text-on-surface font-medium">AS-03040</div>
+<div class="text-[11px] text-outline font-code-inline">Pai: AS-030</div>
+</td>
+<td class="py-2.5 px-3">
+<div class="text-on-surface font-medium leading-tight mb-1">Guarda-chuva Automático Fibra de Vidro 27"</div>
+<div class="flex items-center gap-1.5 flex-wrap">
+<span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant font-medium">Preto</span>
+</div>
+</td>
+<td class="py-2.5 px-3 text-on-surface-variant">Só Marcas</td>
+<td class="py-2.5 px-3 font-code-inline text-[12px] text-on-surface-variant">6601.99.00</td>
+<td class="py-2.5 px-3 text-right font-code-inline text-on-surface font-medium">R$ 52,00</td>
+<td class="py-2.5 px-3 text-right font-code-inline text-on-surface">620</td>
+<td class="py-2.5 px-3">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-[#22C55E1A] text-[#22C55E] border border-[#22C55E33]">
+                Cadastrado
+              </span>
+</td>
+<td class="py-2.5 px-3 font-code-inline text-[12px] text-outline">849202890</td>
+<td class="py-2.5 px-3 text-center">
+<button class="w-7 h-7 flex items-center justify-center rounded text-outline hover:text-on-surface hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined text-[16px]">more_vert</span>
+</button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- 4. Pagination Footer -->
+<div class="px-space-md py-space-sm bg-surface-container-lowest border-t border-outline-variant/30 flex flex-col sm:flex-row items-center justify-between gap-space-md select-none">
+<span class="text-[12px] text-outline font-caption-label">
+        Mostrando <strong class="font-medium text-on-surface">12</strong> de <strong class="font-medium text-on-surface">2.748</strong> produtos
+      </span>
+<div class="flex items-center gap-1">
+<button class="h-7 px-2 text-[12px] rounded border border-outline-variant/30 text-outline hover:text-on-surface hover:bg-surface-container-high transition-colors flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">chevron_left</span>
+          Anterior
+        </button>
+<button class="w-7 h-7 text-[12px] rounded bg-primary-container text-on-primary-container font-medium flex items-center justify-center">
+          1
+        </button>
+<button class="w-7 h-7 text-[12px] rounded text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors flex items-center justify-center">
+          2
+        </button>
+<button class="w-7 h-7 text-[12px] rounded text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors flex items-center justify-center">
+          3
+        </button>
+<span class="w-7 h-7 text-[12px] text-outline flex items-center justify-center">...</span>
+<button class="w-7 h-7 text-[12px] rounded text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors flex items-center justify-center">
+          230
+        </button>
+<button class="h-7 px-2 text-[12px] rounded border border-outline-variant/30 text-outline hover:text-on-surface hover:bg-surface-container-high transition-colors flex items-center gap-1">
+          Próximo
+          <span class="material-symbols-outlined text-[14px]">chevron_right</span>
+</button>
+</div>
+</div>
+</div>
+</div></main></div>
+
+</body></html>

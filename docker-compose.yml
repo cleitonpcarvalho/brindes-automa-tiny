@@ -30,7 +30,9 @@ services:
       retries: 10
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      target: base
     restart: unless-stopped
     env_file:
       - .env
@@ -45,7 +47,9 @@ services:
         condition: service_healthy
 
   worker:
-    build: ./backend
+    build:
+      context: ./backend
+      target: base
     restart: unless-stopped
     env_file:
       - .env
@@ -59,7 +63,9 @@ services:
         condition: service_healthy
 
   beat:
-    build: ./backend
+    build:
+      context: ./backend
+      target: base
     restart: unless-stopped
     env_file:
       - .env
@@ -73,7 +79,9 @@ services:
         condition: service_healthy
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      target: deps
     restart: unless-stopped
     env_file:
       - .env

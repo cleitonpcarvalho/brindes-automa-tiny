@@ -122,8 +122,17 @@ SPECTACULAR_SETTINGS = {
 CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS", "http://localhost:3000")
 CORS_ALLOW_CREDENTIALS = True
 
+# Passo 9: atrás do Traefik, que termina o TLS — sem isso o Django vê a
+# requisição como HTTP puro (Referer/Origin dizem https, request.is_secure()
+# diria false) e rejeita POSTs do admin com "CSRF verification failed".
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+CSRF_TRUSTED_ORIGINS = env_list(
+    "DJANGO_CSRF_TRUSTED_ORIGINS", "https://sync-api.automasoluct.com.br"
+)
+
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -177,5 +186,14 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
+# Coletado no build da imagem (ver Dockerfile) e servido pelo WhiteNoise —
+# não há nginx/servidor de estáticos separado nesta stack.
+STATIC_ROOT = BASE_DIR / "staticfiles"
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

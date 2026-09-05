@@ -1,0 +1,207 @@
+version: "3.9"
+
+# Cole este arquivo direto no Portainer (Stacks > Add stack > Web editor).
+# Nenhum valor sensível está escrito aqui — veja deploy/README.md para a
+# lista de variáveis a preencher na seção "Environment variables" do stack.
+
+x-backend-image: &backend-image ghcr.io/cleitonpcarvalho/brindes-automa-tiny/backend:latest
+
+x-backend-env: &backend-env
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+  DJANGO_DEBUG: "False"
+  DJANGO_ALLOWED_HOSTS: "sync-api.automasoluct.com.br,backend"
+  DJANGO_CSRF_TRUSTED_ORIGINS: "https://sync-api.automasoluct.com.br"
+  CORS_ALLOWED_ORIGINS: "https://sync.automasoluct.com.br"
+  FERNET_KEY: ${FERNET_KEY}
+  REDIS_URL: "redis://redis:6379"
+  POSTGRES_HOST: "postgres"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: ${POSTGRES_DB}
+  POSTGRES_USER: ${POSTGRES_USER}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - interna
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    networks:
+      - interna
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+
+  backend:
+    image: *backend-image
+    environment:
+      <<: *backend-env
+      GUNICORN_WORKERS: "2"
+      GUNICORN_TIMEOUT: "60"
+    networks:
+      - automanet
+      - interna
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=AutomaNet"
+        - "traefik.http.routers.sync-api.rule=Host(`sync-api.automasoluct.com.br`)"
+        - "traefik.http.routers.sync-api.entrypoints=websecure"
+        - "traefik.http.routers.sync-api.tls=true"
+        - "traefik.http.routers.sync-api.tls.certresolver=letsencrypt"
+        - "traefik.http.services.sync-api.loadbalancer.server.port=8000"
+
+  frontend:
+    image: ghcr.io/cleitonpcarvalho/brindes-automa-tiny/frontend:latest
+    environment:
+      BACKEND_INTERNAL_URL: "http://backend:8000"
+      NODE_ENV: "production"
+    networks:
+      - automanet
+      - interna
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 128M
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=AutomaNet"
+        - "traefik.http.routers.sync.rule=Host(`sync.automasoluct.com.br`)"
+        - "traefik.http.routers.sync.entrypoints=websecure"
+        - "traefik.http.routers.sync.tls=true"
+        - "traefik.http.routers.sync.tls.certresolver=letsencrypt"
+        - "traefik.http.services.sync.loadbalancer.server.port=3000"
+
+  worker:
+    image: *backend-image
+    command: ["celery", "-A", "config", "worker", "-l", "info"]
+    environment: *backend-env
+    networks:
+      - interna
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 384M
+        reservations:
+          cpus: "0.1"
+          memory: 192M
+
+  beat:
+    image: *backend-image
+    command: ["celery", "-A", "config", "beat", "-l", "info"]
+    environment: *backend-env
+    networks:
+      - interna
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+        reservations:
+          cpus: "0.05"
+          memory: 64M
+
+  # Não faz parte do fluxo normal — replicas: 0 para nunca rodar sozinho.
+  # Sobe migrações (ver deploy/README.md, seção "Migrações e primeiro
+  # acesso") escalando este serviço para 1 réplica sob demanda, para que
+  # nunca rode em paralelo com o próprio deploy do backend/worker/beat.
+  migrate:
+    image: *backend-image
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    environment: *backend-env
+    networks:
+      - interna
+    deploy:
+      replicas: 0
+      restart_policy:
+        condition: none
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+networks:
+  automanet:
+    external: true
+    name: AutomaNet
+  interna:
+    driver: overlay
+
+volumes:
+  postgres_data:
+  redis_data:

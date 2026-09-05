@@ -1,0 +1,12 @@
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+staticfiles
+media
+celerybeat-schedule
+.env
+.env.*
+!.env.example
+.git
+README.md

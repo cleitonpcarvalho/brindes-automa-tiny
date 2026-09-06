@@ -27,7 +27,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard", label: "Visão geral", icon: LayoutDashboard },
   { href: "/instancias", label: "Instâncias", icon: Network },
   { href: "/sincronizacoes", label: "Sincronizações", icon: ArrowRightLeft },
-  { href: "/logs-e-alertas", label: "Logs e Alertas", icon: Terminal },
+  { href: "/logs", label: "Logs", icon: Terminal },
   { href: "/configuracoes", label: "Configurações", icon: Settings },
 ];
 

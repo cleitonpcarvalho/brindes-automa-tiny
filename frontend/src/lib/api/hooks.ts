@@ -192,11 +192,22 @@ interface DadosCredencial {
 export function useAtualizarCredencial(slug: string, fornecedor: FornecedorEnum) {
   const queryClient = useQueryClient();
   return useMutation({
+    // Não retém as credenciais enviadas depois de resetar/desmontar o formulário.
+    gcTime: 0,
     mutationFn: (dados: DadosCredencial) =>
       apiClient.put<CredencialFornecedorResposta>(`/instancias/${slug}/credenciais/${fornecedor}/`, dados),
-    onSuccess: () => {
+    onSuccess: async (credencialSalva) => {
+      // Descarta leituras em voo antes de aplicar a resposta mascarada do PUT.
+      await queryClient.cancelQueries({ queryKey: ["instancias", "credenciais", slug], exact: true });
+      queryClient.setQueryData<CredencialFornecedorResposta[]>(
+        ["instancias", "credenciais", slug],
+        (credenciais) => credenciais?.map((credencial) =>
+          credencial.fornecedor === fornecedor ? credencialSalva : credencial),
+      );
       queryClient.invalidateQueries({ queryKey: ["instancias", "credenciais", slug] });
       queryClient.invalidateQueries({ queryKey: ["instancias", "detalhe", slug] });
+      queryClient.invalidateQueries({ queryKey: ["instancias", "listagem"] });
+      queryClient.invalidateQueries({ queryKey: ["instancias", "cadencias", slug] });
     },
   });
 }

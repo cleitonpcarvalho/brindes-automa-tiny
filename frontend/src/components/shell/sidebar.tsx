@@ -7,7 +7,6 @@ import {
   LayoutDashboard,
   LogOut,
   Network,
-  Package,
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
@@ -27,7 +26,6 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard", label: "Visão geral", icon: LayoutDashboard },
   { href: "/instancias", label: "Instâncias", icon: Network },
-  { href: "/fornecedores", label: "Fornecedores", icon: Package },
   { href: "/sincronizacoes", label: "Sincronizações", icon: ArrowRightLeft },
   { href: "/logs-e-alertas", label: "Logs e Alertas", icon: Terminal },
   { href: "/configuracoes", label: "Configurações", icon: Settings },

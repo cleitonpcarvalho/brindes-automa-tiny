@@ -40,6 +40,9 @@ export function FornecedorAcordeao({
   const [expandido, setExpandido] = useState(defaultExpanded)
   const sincronizar = useSincronizarFornecedor(slug, statusDetalhe.fornecedor)
   const fornecedor = statusDetalhe.fornecedor
+  const rotuloStatus = credencial.configurado && statusDetalhe.cor === "nao_configurado"
+    ? "Configurado"
+    : ROTULO_POR_COR[statusDetalhe.cor]
 
   const descricao = statusDetalhe.ultima_execucao_em
     ? `${statusDetalhe.ultima_execucao_status === "falha" ? "falha " : ""}${formatarTempoRelativo(statusDetalhe.ultima_execucao_em)} · ${formatarNumero(statusDetalhe.produtos_total)} produtos sincronizados · intervalo ${cadencia.intervalo_minutos ?? 60}min`
@@ -59,7 +62,7 @@ export function FornecedorAcordeao({
             <span className={cn("relative inline-flex size-2.5 rounded-full", DOT_POR_COR[statusDetalhe.cor])} />
           </span>
           <h2 className="text-body-medium font-semibold text-foreground">{ROTULO_FORNECEDOR[fornecedor]}</h2>
-          <Badge variant={VARIANTE_BADGE_POR_COR[statusDetalhe.cor]}>{ROTULO_POR_COR[statusDetalhe.cor]}</Badge>
+          <Badge variant={VARIANTE_BADGE_POR_COR[statusDetalhe.cor]}>{rotuloStatus}</Badge>
         </div>
         <div className="flex items-center gap-4">
           <span className="text-caption-label text-muted-foreground">{descricao}</span>

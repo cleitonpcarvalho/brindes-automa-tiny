@@ -98,6 +98,83 @@ class CredencialFornecedorDetailPutTests(TestCase):
         credencial = CredencialFornecedor.objects.get(instancia=self.instancia, fornecedor="xbz")
         self.assertEqual(credencial.credenciais["cnpj"], "2")
 
+    def test_put_exige_reentrada_do_secret_sem_alterar_credencial_existente(self):
+        credencial = CredencialFornecedor.objects.create(
+            instancia=self.instancia,
+            fornecedor="xbz",
+            credenciais={"cnpj": "1", "token": "segredo-existente"},
+            ativo=False,
+        )
+
+        for dados in ({"cnpj": "2"}, {"cnpj": "2", "token": ""}):
+            with self.subTest(dados=dados):
+                resposta = self.client.put(
+                    f"/api/instancias/{self.instancia.slug}/credenciais/xbz/",
+                    {"credenciais": dados},
+                    content_type="application/json",
+                )
+
+                self.assertEqual(resposta.status_code, status.HTTP_400_BAD_REQUEST)
+                credencial.refresh_from_db()
+                self.assertEqual(credencial.credenciais, {"cnpj": "1", "token": "segredo-existente"})
+                self.assertFalse(credencial.ativo)
+                self.assertNotIn("segredo-existente", str(resposta.content))
+
+    def test_put_preserva_isolamento_por_instancia_e_fornecedor(self):
+        outra_instancia = Instancia.objects.create(nome="Outra Loja")
+        outra_loja = CredencialFornecedor.objects.create(
+            instancia=outra_instancia,
+            fornecedor="xbz",
+            credenciais={"cnpj": "outro-cnpj", "token": "segredo-outra-loja"},
+        )
+        outro_fornecedor = CredencialFornecedor.objects.create(
+            instancia=self.instancia,
+            fornecedor="spot",
+            credenciais={"access_key": "segredo-outro-fornecedor"},
+        )
+
+        resposta = self.client.put(
+            f"/api/instancias/{self.instancia.slug}/credenciais/xbz/",
+            {"credenciais": {"cnpj": "1", "token": "segredo-novo"}, "ativo": False},
+            content_type="application/json",
+        )
+
+        self.assertEqual(resposta.status_code, status.HTTP_200_OK)
+        self.assertTrue(resposta.data["configurado"])
+        self.assertFalse(resposta.data["ativo"])
+        outra_loja.refresh_from_db()
+        outro_fornecedor.refresh_from_db()
+        self.assertEqual(outra_loja.credenciais, {"cnpj": "outro-cnpj", "token": "segredo-outra-loja"})
+        self.assertEqual(outro_fornecedor.credenciais, {"access_key": "segredo-outro-fornecedor"})
+        resposta_lista = self.client.get(f"/api/instancias/{self.instancia.slug}/credenciais/")
+        xbz = next(linha for linha in resposta_lista.data if linha["fornecedor"] == "xbz")
+        self.assertEqual(xbz["campos_mascarados"]["cnpj"], "1")
+        self.assertNotIn("outro-cnpj", str(resposta_lista.content))
+
+    def test_put_aceita_formato_real_dos_demais_fornecedores(self):
+        exemplos = {
+            "asia": {"api_key": "chave-api-ficticia", "secret_key": "segredo-ficticio"},
+            "somarcas": {"usuario": "usuario-ficticio", "senha": "senha-ficticia", "estado": "CE"},
+            "spot": {"access_key": "chave-access-ficticia"},
+        }
+
+        for fornecedor, credenciais in exemplos.items():
+            with self.subTest(fornecedor=fornecedor):
+                resposta = self.client.put(
+                    f"/api/instancias/{self.instancia.slug}/credenciais/{fornecedor}/",
+                    {"credenciais": credenciais, "ativo": False},
+                    content_type="application/json",
+                )
+
+                self.assertEqual(resposta.status_code, status.HTTP_200_OK)
+                self.assertTrue(resposta.data["configurado"])
+                gravada = CredencialFornecedor.objects.get(instancia=self.instancia, fornecedor=fornecedor)
+                self.assertEqual(gravada.credenciais, credenciais)
+                self.assertFalse(gravada.ativo)
+                for chave, valor in credenciais.items():
+                    if chave not in {"usuario", "estado"}:
+                        self.assertNotIn(valor, str(resposta.content))
+
     def test_put_fornecedor_desconhecido_retorna_404(self):
         resposta = self.client.put(
             f"/api/instancias/{self.instancia.slug}/credenciais/inexistente/",

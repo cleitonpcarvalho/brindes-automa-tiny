@@ -57,6 +57,19 @@ class LeituraDoLimiteDaContaTests(TestCase):
         instancia.refresh_from_db()
         self.assertEqual(instancia.rate_limit_por_minuto, 90)
 
+    @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.requests.request")
+    def test_x_limit_api_nao_positivo_e_ignorado(self, mock_request):
+        # um x-limit-api "0" gravaria rate_limit=0 e desligaria o limiter — não pode.
+        instancia = _instancia(rate_limit_por_minuto=90)
+        mock_request.return_value = _resposta(200, {"x-limit-api": "0"})
+
+        cliente = TinyApiClient(instancia, sleep_fn=lambda s: None, limiter=LimiterFalso())
+        cliente.get("/produtos")
+
+        instancia.refresh_from_db()
+        self.assertEqual(instancia.rate_limit_por_minuto, 90)
+
     def test_sem_base_url_configurada_recusa_chamar(self):
         instancia = _instancia()
         cliente = TinyApiClient(instancia, base_url="", limiter=LimiterFalso())

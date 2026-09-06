@@ -162,6 +162,12 @@ class TinyApiClient:
             valor_int = int(valor)
         except ValueError:
             return
+        # Guarda defensiva: um `x-limit-api` <= 0 (visto em alguns cenários de
+        # estrangulamento) gravaria rate_limit_por_minuto=0, e aí o limiter
+        # trata como "limite desconhecido" e para de segurar — exatamente o
+        # oposto do que queremos quando o Tiny já está reclamando.
+        if valor_int <= 0:
+            return
         if valor_int != self.instancia.rate_limit_por_minuto:
             self.instancia.rate_limit_por_minuto = valor_int
             self.instancia.save(update_fields=["rate_limit_por_minuto", "atualizado_em"])

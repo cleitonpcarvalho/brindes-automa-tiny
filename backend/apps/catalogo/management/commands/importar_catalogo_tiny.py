@@ -13,18 +13,30 @@ Não faz matching/deduplicação com Produto/Variacao dos fornecedores —
 isso é um passo futuro.
 """
 
+import time
 from decimal import Decimal, InvalidOperation
 
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
 from apps.instancias.models import Instancia
-from apps.instancias.tiny_client import TinyApiClient
+from apps.instancias.tiny_client import TinyApiClient, TinyApiError, TinyApiValidationError
 
 from ...models import ProdutoTiny, calcular_hash_conteudo
 
 PAGE_SIZE_PADRAO = 100  # default documentado da API v3
 INTERVALO_REFRESH_TOKEN = 100  # a cada N produtos, recarrega o access_token do banco
+
+# Ritmo das chamadas de detalhe (GET /produtos/{id}). O limiter Redis do
+# TinyApiClient continua sendo a trava dura compartilhada entre Django/Celery
+# (80% do x-limit-api, janela deslizante de 60s). O problema é que essa janela
+# permite RAJADA — todas as vagas do minuto podem ser gastas em poucos
+# segundos, e o Tiny recusa esse pico sob carga sustentada; quando ele começa
+# a devolver 429 a janela dele já está cheia e os 5 retries com backoff (~31s)
+# não recuperam. Aqui a carga espaça as chamadas UNIFORMEMENTE, a uma fração
+# conservadora do limite, para o Tiny nunca chegar a estrangular.
+FRACAO_CONSERVADORA_DETALHE = 0.5  # metade do x-limit-api (o limiter já corta em 0.8)
+RPM_DETALHE_PADRAO = 30  # usado só enquanto o x-limit-api ainda não foi lido
 
 
 def _dec(valor):
@@ -41,6 +53,10 @@ class Command(BaseCommand):
         "Espelha localmente (ProdutoTiny) o catálogo de produtos que já existe no "
         "Tiny da instância. Somente leitura — nunca escreve no Tiny."
     )
+
+    # patcháveis nos testes (mesma ideia do sleep_fn do TinyApiClient)
+    _dormir = staticmethod(time.sleep)
+    _relogio = staticmethod(time.monotonic)
 
     def add_arguments(self, parser):
         parser.add_argument("instancia_slug", help="slug da Instancia")
@@ -71,6 +87,15 @@ class Command(BaseCommand):
         parser.add_argument(
             "--page-size", type=int, default=PAGE_SIZE_PADRAO, help="Tamanho da página da listagem."
         )
+        parser.add_argument(
+            "--rpm-detalhe",
+            type=int,
+            default=None,
+            help="Teto de chamadas por minuto para os GET /produtos/{id}, espaçadas "
+            "uniformemente (sem rajada). Padrão: metade do limite da conta lido no "
+            f"header x-limit-api (piso de {RPM_DETALHE_PADRAO}/min enquanto o limite "
+            "não é conhecido). Diminua se ainda aparecer 429.",
+        )
 
     def handle(self, *args, **options):
         instancia = self._obter_instancia(options["instancia_slug"])
@@ -86,8 +111,15 @@ class Command(BaseCommand):
         if options["limite"] is not None:
             itens = itens[: options["limite"]]
 
+        # A listagem já respondeu pelo menos uma vez, então instancia.rate_limit_por_minuto
+        # normalmente já está preenchido (x-limit-api) quando calculamos o ritmo do detalhe.
+        rpm_detalhe = self._rpm_detalhe(instancia, options["rpm_detalhe"])
+        self._intervalo_detalhe = 60.0 / rpm_detalhe
+        self._proxima_chamada_detalhe = 0.0
+
         stats = {
             "total_no_tiny": total_tiny,
+            "rpm_detalhe": rpm_detalhe,
             "processados": 0,
             "novos": 0,
             "atualizados": 0,
@@ -112,9 +144,41 @@ class Command(BaseCommand):
                 # basta recarregar o objeto in-place.
                 instancia.refresh_from_db(fields=["access_token", "rate_limit_por_minuto"])
 
-            self._processar_item(cliente, instancia, item, options, dry_run, stats)
+            try:
+                self._processar_item(cliente, instancia, item, options, dry_run, stats)
+            except TinyApiValidationError:
+                raise
+            except TinyApiError as exc:
+                # 429 persistente mesmo com o ritmo conservador — para com o que
+                # já foi salvo (upsert é por item) em vez de estourar traceback.
+                # É retomável: o mesmo comando de novo continua e pula o que já
+                # tem dataAlteracao igual.
+                self.stdout.write(self.style.ERROR(f"Rate limit persistente: {exc}"))
+                self.stdout.write(
+                    "Carga interrompida — o progresso já foi salvo. Rode o MESMO comando "
+                    "de novo para continuar (e considere --rpm-detalhe menor)."
+                )
+                self._imprimir_resumo(instancia, dry_run, stats)
+                raise CommandError("importação incompleta por rate limit — retomável") from exc
 
         self._imprimir_resumo(instancia, dry_run, stats)
+
+    # -- ritmo das chamadas de detalhe -----------------------------------
+
+    def _rpm_detalhe(self, instancia, override):
+        if override:
+            return max(1, override)
+        limite = instancia.rate_limit_por_minuto
+        if limite and limite > 0:
+            return max(1, int(limite * FRACAO_CONSERVADORA_DETALHE))
+        return RPM_DETALHE_PADRAO
+
+    def _aguardar_ritmo_detalhe(self):
+        """Espaça as chamadas GET /produtos/{id} uniformemente no tempo."""
+        agora = self._relogio()
+        if agora < self._proxima_chamada_detalhe:
+            self._dormir(self._proxima_chamada_detalhe - agora)
+        self._proxima_chamada_detalhe = self._relogio() + self._intervalo_detalhe
 
     # -- listagem paginada ------------------------------------------------
 
@@ -154,6 +218,7 @@ class Command(BaseCommand):
         ):
             detalhe = detalhe_reusavel  # nada mudou desde a última passada → pula o GET /produtos/{id}
         else:
+            self._aguardar_ritmo_detalhe()  # espaça uniformemente — evita rajada e 429
             detalhe = cliente.obter_produto(tiny_id)
             stats["chamadas_detalhe"] += 1
 
@@ -263,6 +328,7 @@ class Command(BaseCommand):
         w(f"  Com GTIN .................. {stats['com_gtin']}")
         w(f"  Com NCM (do detalhe) ..... {stats['com_ncm']}")
         w("")
+        w(f"  Ritmo do detalhe .......... {stats['rpm_detalhe']}/min (1 chamada a cada {60.0 / stats['rpm_detalhe']:.1f}s)")
         w(f"  Chamadas à API — listagem . {stats['chamadas_listagem']}")
         w(f"  Chamadas à API — detalhe .. {stats['chamadas_detalhe']}")
         w(f"  Chamadas à API — total .... {stats['chamadas_listagem'] + stats['chamadas_detalhe']}")

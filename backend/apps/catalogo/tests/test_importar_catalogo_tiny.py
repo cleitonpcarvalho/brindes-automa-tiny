@@ -73,9 +73,10 @@ def _detalhe(pid, **over):
 class HandlerTiny:
     """Handler de `requests.request`: só GET; pagina /produtos e serve /produtos/{id}."""
 
-    def __init__(self, produtos, page_size=100):
+    def __init__(self, produtos, page_size=100, headers_listagem=None):
         self.produtos = produtos  # {pid: {"listagem": {...}, "detalhe": {...}}}
         self.page_size = page_size
+        self.headers_listagem = headers_listagem or {}
         self.chamadas_listagem = 0
         self.chamadas_detalhe = 0
         self.metodos = []
@@ -93,7 +94,8 @@ class HandlerTiny:
             offset = kw["params"]["offset"]
             limit = kw["params"]["limit"]
             return _resp(200, {"itens": itens[offset:offset + limit],
-                               "paginacao": {"limit": limit, "offset": offset, "total": len(itens)}})
+                               "paginacao": {"limit": limit, "offset": offset, "total": len(itens)}},
+                         headers=self.headers_listagem)
 
         pid = int(url.rsplit("/", 1)[1])
         self.chamadas_detalhe += 1
@@ -109,9 +111,14 @@ class ImportarCatalogoTinyTests(TestCase):
             2: {"listagem": _listagem(2, gtin="", situacao="I"), "detalhe": _detalhe(2, ncm="", gtin="")},
             3: {"listagem": _listagem(3), "detalhe": _detalhe(3)},
         }
+        # não dormir de verdade nos testes; registra as pausas pedidas.
+        self.pausas = []
+        p = patch.object(cmd.Command, "_dormir", lambda _self, s: self.pausas.append(s))
+        p.start()
+        self.addCleanup(p.stop)
 
-    def _rodar(self, *args):
-        handler = HandlerTiny(self.produtos)
+    def _rodar(self, *args, headers_listagem=None):
+        handler = HandlerTiny(self.produtos, headers_listagem=headers_listagem)
         out = StringIO()
         with patch("apps.instancias.tiny_client.requests.request", side_effect=handler):
             call_command("importar_catalogo_tiny", self.instancia.slug, *args, stdout=out)
@@ -254,3 +261,96 @@ class ImportarCatalogoTinyTests(TestCase):
         self.assertIn("Com GTIN .................. 2", saida)   # produto 2 tem gtin=""
         self.assertIn("Com NCM (do detalhe) ..... 2", saida)   # produto 2 tem ncm=""
         self.assertIn("Situação A / I / E / outra . 2 / 1 / 0 / 0", saida)
+
+
+# ---------------------------------------------------------------------------
+# Rate limit / ritmo das chamadas de detalhe
+# ---------------------------------------------------------------------------
+
+
+@override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+class RitmoDetalheTests(TestCase):
+    def setUp(self):
+        self.instancia = Instancia.objects.create(nome="EKK Brindes", access_token="tok-1")
+        self.produtos = {i: {"listagem": _listagem(i), "detalhe": _detalhe(i)} for i in (1, 2, 3)}
+        self.pausas = []
+        p = patch.object(cmd.Command, "_dormir", lambda _self, s: self.pausas.append(s))
+        p.start()
+        self.addCleanup(p.stop)
+
+    def _rodar(self, *args, headers_listagem=None):
+        handler = HandlerTiny(self.produtos, headers_listagem=headers_listagem)
+        out = StringIO()
+        with patch("apps.instancias.tiny_client.requests.request", side_effect=handler):
+            call_command("importar_catalogo_tiny", self.instancia.slug, *args, stdout=out)
+        return handler, out.getvalue()
+
+    def _pausas_significativas(self):
+        return [p for p in self.pausas if p > 0.01]
+
+    def test_rpm_detalhe_explicito_espaca_uniformemente_sem_rajada(self):
+        handler, saida = self._rodar("--rpm-detalhe", "60")  # 1 chamada/s
+        self.assertEqual(handler.chamadas_detalhe, 3)
+        pausas = self._pausas_significativas()
+        self.assertEqual(len(pausas), 2)  # 1ª chamada sem espera; as 2 seguintes esperam
+        for pausa in pausas:
+            self.assertAlmostEqual(pausa, 1.0, delta=0.4)
+        self.assertIn("Ritmo do detalhe .......... 60/min", saida)
+
+    def test_ritmo_padrao_vem_de_metade_do_x_limit_api(self):
+        # x-limit-api = 20 -> limiter usa 16 (0.8); a carga usa 10 (0.5) -> 6s/chamada
+        _, saida = self._rodar(headers_listagem={"x-limit-api": "20"})
+        self.assertIn("Ritmo do detalhe .......... 10/min", saida)
+        for pausa in self._pausas_significativas():
+            self.assertAlmostEqual(pausa, 6.0, delta=1.0)
+
+    def test_ritmo_padrao_conservador_enquanto_limite_desconhecido(self):
+        _, saida = self._rodar()  # sem x-limit-api
+        self.assertIn(f"Ritmo do detalhe .......... {cmd.RPM_DETALHE_PADRAO}/min", saida)
+
+    def test_nao_espaca_quando_nao_ha_chamada_de_detalhe(self):
+        self._rodar("--sem-detalhe")
+        self.assertEqual(self._pausas_significativas(), [])
+
+    def test_nao_reespaça_itens_pulados_por_dataAlteracao(self):
+        self._rodar("--rpm-detalhe", "60")            # 1ª carga: 3 detalhes, 2 pausas
+        self.pausas.clear()
+        handler2, _ = self._rodar("--rpm-detalhe", "60")  # 2ª: nada mudou -> 0 detalhe
+        self.assertEqual(handler2.chamadas_detalhe, 0)
+        self.assertEqual(self._pausas_significativas(), [])
+
+    def test_429_persistente_para_com_progresso_salvo_e_e_retomavel(self):
+        from apps.instancias.tiny_client import TinyApiError
+
+        class HandlerCom429(HandlerTiny):
+            def __call__(self, metodo, url, **kw):
+                if not url.rstrip("/").endswith("/produtos") and self.chamadas_detalhe >= 1:
+                    # o 2º GET /produtos/{id} em diante: 429 sem Retry-After
+                    self.chamadas_detalhe += 1
+                    raise TinyApiError("429 persistente após 5 tentativas em '/produtos/2'.")
+                return super().__call__(metodo, url, **kw)
+
+        handler = HandlerCom429(self.produtos)
+        out = StringIO()
+        with patch("apps.instancias.tiny_client.requests.request", side_effect=handler):
+            with self.assertRaises(CommandError):
+                call_command("importar_catalogo_tiny", self.instancia.slug, "--rpm-detalhe", "60", stdout=out)
+
+        # o 1º produto foi salvo antes do 429
+        self.assertEqual(ProdutoTiny.objects.filter(instancia=self.instancia).count(), 1)
+        self.assertIn("Carga interrompida", out.getvalue())
+        self.assertIn("Rode o MESMO comando", out.getvalue())
+
+    def test_erro_de_validacao_no_meio_propaga_sem_virar_retomavel(self):
+        from apps.instancias.tiny_client import TinyApiValidationError
+
+        class HandlerComValidacao(HandlerTiny):
+            def __call__(self, metodo, url, **kw):
+                if not url.rstrip("/").endswith("/produtos"):
+                    raise TinyApiValidationError("produto não encontrado", [])
+                return super().__call__(metodo, url, **kw)
+
+        handler = HandlerComValidacao(self.produtos)
+        with patch("apps.instancias.tiny_client.requests.request", side_effect=handler):
+            with self.assertRaises(TinyApiValidationError):
+                call_command("importar_catalogo_tiny", self.instancia.slug, stdout=StringIO())

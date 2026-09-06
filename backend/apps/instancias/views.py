@@ -3,16 +3,19 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db.models import Q
 from django.http import HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
-from rest_framework import status, viewsets
+from rest_framework import generics, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.catalogo.models import StatusVariacao, Variacao
+from apps.catalogo.serializers import VariacaoEspelhoSerializer
 from apps.fornecedores.models import CadenciaFornecedor
 from apps.fornecedores.services import (
     checar_limite_diario_xbz,
@@ -30,7 +33,7 @@ from .listagem import (
     queryset_listagem,
 )
 from .models import CredencialFornecedor, Instancia
-from .pagination import InstanciaPagination
+from .pagination import InstanciaPagination, ProdutoEspelhoPagination
 from .serializers import (
     AutorizarRespostaSerializer,
     CadenciaFornecedorSerializer,
@@ -346,3 +349,78 @@ class SincronizarFornecedorView(APIView):
         return Response(
             {"execucao_id": execucao.id, "status": execucao.status}, status=status.HTTP_202_ACCEPTED
         )
+
+
+@extend_schema_view(
+    get=extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "busca",
+                str,
+                required=False,
+                description="Busca textual em SKU, código-pai, nome da variação e nome do produto.",
+            ),
+            OpenApiParameter(
+                "fornecedor",
+                str,
+                enum=list(Fornecedor.values),
+                required=False,
+                description="Filtra por fornecedor do produto-pai.",
+            ),
+            OpenApiParameter(
+                "status",
+                str,
+                enum=list(StatusVariacao.values),
+                required=False,
+                description="Filtra pela situação da variação em relação ao Tiny.",
+            ),
+        ]
+    )
+)
+class ProdutosEspelhoView(generics.ListAPIView):
+    """
+    GET /api/instancias/<slug>/produtos/ — listagem paginada das variações
+    (SKUs) do espelho local PostgreSQL desta instância.
+
+    Somente consulta: não dispara sincronização, não fala com fornecedor
+    nem com o Tiny. Cada linha é uma Variacao (a unidade cadastrável no
+    Tiny — regra nº 1), com os campos do Produto-pai anexados via
+    `select_related` para não gerar N+1.
+
+    O queryset é sempre `produto__instancia == <slug>` — não existe forma de
+    pedir/filtrar variações de outra instância por esta rota.
+    """
+
+    serializer_class = VariacaoEspelhoSerializer
+    pagination_class = ProdutoEspelhoPagination
+
+    def get_queryset(self):
+        instancia = get_object_or_404(Instancia, slug=self.kwargs["slug"])
+        queryset = (
+            Variacao.objects.filter(produto__instancia=instancia)
+            .select_related("produto")
+            .order_by("produto__codigo_pai", "sku")
+        )
+
+        params = self.request.query_params
+
+        busca = (params.get("busca") or "").strip()
+        if busca:
+            queryset = queryset.filter(
+                Q(sku__icontains=busca)
+                | Q(produto__codigo_pai__icontains=busca)
+                | Q(nome__icontains=busca)
+                | Q(produto__nome__icontains=busca)
+            )
+
+        # Filtros silenciosamente ignorados quando o valor não é uma choice
+        # válida — mesma política da listagem de instâncias (listagem.py).
+        fornecedor = params.get("fornecedor")
+        if fornecedor in Fornecedor.values:
+            queryset = queryset.filter(produto__fornecedor=fornecedor)
+
+        status_variacao = params.get("status")
+        if status_variacao in StatusVariacao.values:
+            queryset = queryset.filter(status=status_variacao)
+
+        return queryset

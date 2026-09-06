@@ -1,4 +1,6 @@
 import { render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { InstanciasTable } from "./instancias-table";
 import type { InstanciaListagem } from "@/lib/api/types";
@@ -6,6 +8,16 @@ import type { InstanciaListagem } from "@/lib/api/types";
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn() }),
 }));
+
+// As linhas da tabela montam <AcoesMenu>, que chama useAutorizar/useDesconectar
+// (useMutation) — sem um QueryClientProvider no ambiente de teste, esses hooks
+// lançam "No QueryClient set". O client é só infraestrutura de teste.
+function renderComClient(ui: ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
 
 function criarInstancia(overrides: Partial<InstanciaListagem>): InstanciaListagem {
   return {
@@ -43,7 +55,7 @@ describe("InstanciasTable", () => {
       criarInstancia({ slug: "sem-conexao", nome: "Loja Sem Conexão", status: "nao_conectado" }),
     ];
 
-    render(<InstanciasTable itens={itens} isLoading={false} isError={false} onRetry={() => {}} />);
+    renderComClient(<InstanciasTable itens={itens} isLoading={false} isError={false} onRetry={() => {}} />);
 
     expect(screen.getByText("Loja Conectada")).toBeInTheDocument();
     expect(screen.getByText("Conectada")).toBeInTheDocument();
@@ -82,7 +94,7 @@ describe("InstanciasTable", () => {
       }),
     ];
 
-    render(<InstanciasTable itens={itens} isLoading={false} isError={false} onRetry={() => {}} />);
+    renderComClient(<InstanciasTable itens={itens} isLoading={false} isError={false} onRetry={() => {}} />);
 
     expect(screen.getByText("42")).toBeInTheDocument();
     expect(screen.getByText("30 cadastrados")).toBeInTheDocument();

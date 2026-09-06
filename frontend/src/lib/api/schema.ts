@@ -288,6 +288,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/instancias/{slug}/produtos/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description GET /api/instancias/<slug>/produtos/ — listagem paginada das variações
+         *     (SKUs) do espelho local PostgreSQL desta instância.
+         *
+         *     Somente consulta: não dispara sincronização, não fala com fornecedor
+         *     nem com o Tiny. Cada linha é uma Variacao (a unidade cadastrável no
+         *     Tiny — regra nº 1), com os campos do Produto-pai anexados via
+         *     `select_related` para não gerar N+1.
+         *
+         *     O queryset é sempre `produto__instancia == <slug>` — não existe forma de
+         *     pedir/filtrar variações de outra instância por esta rota.
+         */
+        get: operations["instancias_produtos_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/schema/": {
         parameters: {
             query?: never;
@@ -659,6 +687,21 @@ export interface components {
             previous?: string | null;
             results: components["schemas"]["InstanciaListagem"][];
         };
+        PaginatedVariacaoEspelhoList: {
+            /** @example 123 */
+            count: number;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=4
+             */
+            next?: string | null;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=2
+             */
+            previous?: string | null;
+            results: components["schemas"]["VariacaoEspelho"][];
+        };
         PatchedCadenciaFornecedor: {
             readonly fornecedor?: components["schemas"]["FornecedorEnum"];
             intervalo_minutos?: number;
@@ -759,10 +802,53 @@ export interface components {
          * @enum {string}
          */
         StatusExecucaoEnum: "rodando" | "sucesso" | "falha" | "parcial";
+        /**
+         * @description * `pendente` - Pendente
+         *     * `aguardando` - Aguardando reposição
+         *     * `cadastrado` - Cadastrado no Tiny
+         *     * `descontinuado` - Descontinuado
+         *     * `erro` - Erro ao cadastrar
+         * @enum {string}
+         */
+        StatusVariacaoEnum: "pendente" | "aguardando" | "cadastrado" | "descontinuado" | "erro";
         UltimaSincronizacao: {
             /** Format: date-time */
             em: string | null;
             fornecedor: (components["schemas"]["FornecedorEnum"] | components["schemas"]["NullEnum"]) | null;
+        };
+        /**
+         * @description Uma linha da aba "Produtos" do detalhe da instância.
+         *
+         *     A unidade é a Variacao — o SKU. É ela, não o Produto-pai, que vira um
+         *     produto no Tiny (regra de negócio nº 1, ver apps.catalogo.models.Variacao),
+         *     então cada linha aqui é uma unidade cadastrável independente. Os campos do
+         *     Produto-pai (fornecedor, código-pai, nome) vêm achatados só para leitura,
+         *     via `source`, sem duplicar a entidade.
+         */
+        VariacaoEspelho: {
+            readonly id: number;
+            readonly fornecedor: components["schemas"]["FornecedorEnum"];
+            readonly produto_codigo_pai: string;
+            readonly produto_nome: string;
+            readonly produto_descontinuado: boolean;
+            sku: string;
+            nome: string;
+            cor?: string;
+            tamanho?: string;
+            capacidade?: string;
+            /** Format: decimal */
+            preco: string;
+            estoque?: number;
+            status?: components["schemas"]["StatusVariacaoEnum"];
+            readonly status_rotulo: string;
+            tiny_id?: string | null;
+            /** @description Último valor de estoque efetivamente enviado ao Tiny. Enquanto for diferente de `estoque` (ou nulo), o comando de atualização de estoque considera esta variação pendente de sincronização. */
+            estoque_tiny_sincronizado?: number | null;
+            ultimo_erro?: string;
+            /** Format: date-time */
+            cadastrado_em?: string | null;
+            /** Format: date-time */
+            readonly atualizado_em: string;
         };
     };
     responses: never;
@@ -1191,6 +1277,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SincronizarResposta"];
+                };
+            };
+        };
+    };
+    instancias_produtos_list: {
+        parameters: {
+            query?: {
+                /** @description Busca textual em SKU, código-pai, nome da variação e nome do produto. */
+                busca?: string;
+                /** @description Filtra por fornecedor do produto-pai. */
+                fornecedor?: "asia" | "somarcas" | "spot" | "xbz";
+                /** @description Um número de página dentro do conjunto de resultados paginado. */
+                page?: number;
+                /** @description Número de resultados a serem retornados por página. */
+                page_size?: number;
+                /** @description Filtra pela situação da variação em relação ao Tiny. */
+                status?: "aguardando" | "cadastrado" | "descontinuado" | "erro" | "pendente";
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedVariacaoEspelhoList"];
                 };
             };
         };

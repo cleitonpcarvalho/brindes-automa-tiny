@@ -19,6 +19,10 @@ export type FornecedorDetalhe = components["schemas"]["FornecedorDetalhe"];
 export type ProdutosDetalheContagem = components["schemas"]["ProdutosDetalheContagem"];
 export type ExecucaoResumida = components["schemas"]["ExecucaoResumida"];
 
+export type VariacaoEspelho = components["schemas"]["VariacaoEspelho"];
+export type PaginatedVariacaoEspelhoList = components["schemas"]["PaginatedVariacaoEspelhoList"];
+export type StatusVariacao = components["schemas"]["StatusVariacaoEnum"];
+
 export type CredencialFornecedorResposta = components["schemas"]["CredencialFornecedorResposta"];
 export type CredencialFornecedorEntrada = components["schemas"]["CredencialFornecedorEntrada"];
 export type CadenciaFornecedor = components["schemas"]["CadenciaFornecedor"];

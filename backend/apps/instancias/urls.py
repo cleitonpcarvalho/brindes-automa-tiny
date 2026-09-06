@@ -8,6 +8,7 @@ from .views import (
     CredencialFornecedorDetailView,
     CredenciaisFornecedorView,
     InstanciaViewSet,
+    ProdutosEspelhoView,
     SincronizarFornecedorView,
     TinyOAuthCallbackView,
 )
@@ -45,6 +46,11 @@ urlpatterns = router.urls + [
         "instancias/<slug:slug>/fornecedores/<str:fornecedor>/sincronizar/",
         SincronizarFornecedorView.as_view(),
         name="instancia-fornecedor-sincronizar",
+    ),
+    path(
+        "instancias/<slug:slug>/produtos/",
+        ProdutosEspelhoView.as_view(),
+        name="instancia-produtos",
     ),
     path("auth/login/", LoginView.as_view(), name="auth-login"),
     path("auth/logout/", LogoutView.as_view(), name="auth-logout"),

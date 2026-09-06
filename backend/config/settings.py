@@ -135,6 +135,11 @@ SPECTACULAR_SETTINGS = {
         # senão o frontend (lib/api/types.ts) perde a referência.
         "StatusEnum": "apps.instancias.models.STATUS_INSTANCIA_CHOICES",
         "StatusExecucaoEnum": "apps.sincronizacao.models.StatusExecucao.choices",
+        # Terceiro campo "status" no schema (o de Variacao, na aba Produtos do
+        # detalhe da instância) — nomeado à parte pela mesma razão dos dois
+        # acima: sem isso o drf-spectacular gera sufixos aleatórios a cada
+        # regeração e o frontend perde a referência.
+        "StatusVariacaoEnum": "apps.catalogo.models.StatusVariacao.choices",
     },
 }
 

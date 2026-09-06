@@ -23,6 +23,13 @@ export type VariacaoEspelho = components["schemas"]["VariacaoEspelho"];
 export type PaginatedVariacaoEspelhoList = components["schemas"]["PaginatedVariacaoEspelhoList"];
 export type StatusVariacao = components["schemas"]["StatusVariacaoEnum"];
 
+export type Execucao = components["schemas"]["Execucao"];
+export type PaginatedExecucaoList = components["schemas"]["PaginatedExecucaoList"];
+export type TipoExecucao = components["schemas"]["TipoExecucaoEnum"];
+export type LogItem = components["schemas"]["LogItem"];
+export type PaginatedLogItemList = components["schemas"]["PaginatedLogItemList"];
+export type NivelLog = components["schemas"]["NivelLogEnum"];
+
 export type CredencialFornecedorResposta = components["schemas"]["CredencialFornecedorResposta"];
 export type CredencialFornecedorEntrada = components["schemas"]["CredencialFornecedorEntrada"];
 export type CadenciaFornecedor = components["schemas"]["CadenciaFornecedor"];

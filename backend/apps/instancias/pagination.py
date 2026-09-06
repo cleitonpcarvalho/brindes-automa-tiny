@@ -14,3 +14,20 @@ class ProdutoEspelhoPagination(PageNumberPagination):
     page_size = 20
     page_size_query_param = "page_size"
     max_page_size = 100
+
+
+class ExecucaoPagination(PageNumberPagination):
+    """Aba Execuções do detalhe da instância — histórico de sincronizações."""
+
+    page_size = 20
+    page_size_query_param = "page_size"
+    max_page_size = 100
+
+
+class LogItemPagination(PageNumberPagination):
+    """Logs de uma execução — página grande porque a UI mostra o log inteiro
+    de uma vez (modal somente-leitura), sem paginação visível."""
+
+    page_size = 200
+    page_size_query_param = "page_size"
+    max_page_size = 500

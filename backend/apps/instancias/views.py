@@ -3,7 +3,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.http import HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -23,7 +23,8 @@ from apps.fornecedores.services import (
     obter_credencial_ativa,
 )
 from apps.fornecedores.tasks import executar_sincronizacao_manual_task
-from apps.sincronizacao.models import Execucao, StatusExecucao, TipoExecucao
+from apps.sincronizacao.models import Execucao, NivelLog, StatusExecucao, TipoExecucao
+from apps.sincronizacao.serializers import ExecucaoSerializer, LogItemSerializer
 
 from .constants import CAMPOS_POR_FORNECEDOR, Fornecedor
 from .listagem import (
@@ -33,7 +34,12 @@ from .listagem import (
     queryset_listagem,
 )
 from .models import CredencialFornecedor, Instancia
-from .pagination import InstanciaPagination, ProdutoEspelhoPagination
+from .pagination import (
+    ExecucaoPagination,
+    InstanciaPagination,
+    LogItemPagination,
+    ProdutoEspelhoPagination,
+)
 from .serializers import (
     AutorizarRespostaSerializer,
     CadenciaFornecedorSerializer,
@@ -422,5 +428,102 @@ class ProdutosEspelhoView(generics.ListAPIView):
         status_variacao = params.get("status")
         if status_variacao in StatusVariacao.values:
             queryset = queryset.filter(status=status_variacao)
+
+        return queryset
+
+
+@extend_schema_view(
+    get=extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "fornecedor",
+                str,
+                enum=list(Fornecedor.values),
+                required=False,
+                description="Filtra por fornecedor da execução.",
+            ),
+            OpenApiParameter(
+                "status",
+                str,
+                enum=list(StatusExecucao.values),
+                required=False,
+                description="Filtra pelo status da execução.",
+            ),
+        ]
+    )
+)
+class ExecucoesInstanciaView(generics.ListAPIView):
+    """
+    GET /api/instancias/<slug>/execucoes/ — histórico paginado das execuções
+    (rodadas de sincronização) desta instância, da mais recente para a mais
+    antiga.
+
+    Somente leitura/observabilidade: não inicia, cancela nem reprocessa nada.
+    O queryset é sempre `instancia == <slug>`; `total_logs` é anotado para
+    não gerar N+1 ao contar os logs de cada linha.
+    """
+
+    serializer_class = ExecucaoSerializer
+    pagination_class = ExecucaoPagination
+
+    def get_queryset(self):
+        instancia = get_object_or_404(Instancia, slug=self.kwargs["slug"])
+        queryset = (
+            Execucao.objects.filter(instancia=instancia)
+            .annotate(total_logs=Count("logs"))
+            .order_by("-iniciada_em", "-id")
+        )
+
+        params = self.request.query_params
+
+        # Filtros silenciosamente ignorados quando o valor não é choice válida
+        # — mesma política dos outros endpoints da instância.
+        fornecedor = params.get("fornecedor")
+        if fornecedor in Fornecedor.values:
+            queryset = queryset.filter(fornecedor=fornecedor)
+
+        status_execucao = params.get("status")
+        if status_execucao in StatusExecucao.values:
+            queryset = queryset.filter(status=status_execucao)
+
+        return queryset
+
+
+@extend_schema_view(
+    get=extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "nivel",
+                str,
+                enum=list(NivelLog.values),
+                required=False,
+                description="Filtra as linhas de log por nível.",
+            ),
+        ]
+    )
+)
+class ExecucaoLogsView(generics.ListAPIView):
+    """
+    GET /api/instancias/<slug>/execucoes/<execucao_id>/logs/ — linhas de log
+    de UMA execução, em ordem cronológica. Leitura apenas.
+
+    Isolamento: a execução é resolvida por (id E instancia__slug) — pedir o
+    id de uma execução de outra instância devolve 404, não os logs dela.
+    """
+
+    serializer_class = LogItemSerializer
+    pagination_class = LogItemPagination
+
+    def get_queryset(self):
+        execucao = get_object_or_404(
+            Execucao,
+            id=self.kwargs["execucao_id"],
+            instancia__slug=self.kwargs["slug"],
+        )
+        queryset = execucao.logs.select_related("variacao").order_by("criado_em", "id")
+
+        nivel = self.request.query_params.get("nivel")
+        if nivel in NivelLog.values:
+            queryset = queryset.filter(nivel=nivel)
 
         return queryset

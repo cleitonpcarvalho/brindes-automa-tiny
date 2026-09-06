@@ -140,6 +140,11 @@ SPECTACULAR_SETTINGS = {
         # acima: sem isso o drf-spectacular gera sufixos aleatórios a cada
         # regeração e o frontend perde a referência.
         "StatusVariacaoEnum": "apps.catalogo.models.StatusVariacao.choices",
+        # Aba Execuções: ExecucaoSerializer/LogItemSerializer introduzem os
+        # campos `tipo` e `nivel` como enum no schema — fixados aqui pelo
+        # mesmo motivo dos demais (nome estável entre regerações).
+        "TipoExecucaoEnum": "apps.sincronizacao.models.TipoExecucao.choices",
+        "NivelLogEnum": "apps.sincronizacao.models.NivelLog.choices",
     },
 }
 

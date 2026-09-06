@@ -12,9 +12,9 @@ import { useInstancia } from "@/lib/api/hooks"
 import { VisaoGeralTab } from "./visao-geral-tab"
 import { FornecedoresTab } from "./fornecedores-tab"
 import { ProdutosTab } from "./produtos-tab"
+import { ExecucoesTab } from "./execucoes-tab"
 
 const ABAS_PLACEHOLDER = [
-  { valor: "execucoes", rotulo: "Execuções" },
   { valor: "configuracoes", rotulo: "Configurações" },
 ] as const
 
@@ -86,6 +86,7 @@ export function InstanciaDetalheView({ slug }: { slug: string }) {
             <TabsTrigger value="visao-geral">Visão geral</TabsTrigger>
             <TabsTrigger value="fornecedores">Fornecedores</TabsTrigger>
             <TabsTrigger value="produtos">Produtos</TabsTrigger>
+            <TabsTrigger value="execucoes">Execuções</TabsTrigger>
             {ABAS_PLACEHOLDER.map((placeholder) => (
               <TabsTrigger key={placeholder.valor} value={placeholder.valor}>
                 {placeholder.rotulo}
@@ -103,6 +104,10 @@ export function InstanciaDetalheView({ slug }: { slug: string }) {
 
           <TabsContent value="produtos">
             <ProdutosTab slug={slug} />
+          </TabsContent>
+
+          <TabsContent value="execucoes">
+            <ExecucoesTab slug={slug} />
           </TabsContent>
 
           {ABAS_PLACEHOLDER.map((placeholder) => (

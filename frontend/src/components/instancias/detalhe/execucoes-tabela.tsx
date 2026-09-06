@@ -1,35 +1,8 @@
 import { Badge } from "@/components/ui/badge"
-import { formatarDuracao, formatarNumero, formatarTempoRelativo } from "@/lib/format"
+import { formatarDuracao, formatarTempoRelativo } from "@/lib/format"
 import { ROTULO_FORNECEDOR } from "../cor-fornecedor"
+import { ROTULO_TIPO, badgeStatus, resultadoTexto } from "./execucao-formato"
 import type { ExecucaoResumida } from "@/lib/api/types"
-
-// `status`/`tipo` vêm como string livre do backend (ExecucaoResumidaSerializer usa
-// CharField, não ChoiceField — mesmo padrão de ExecucaoAtividadeSerializer no
-// dashboard), por isso os mapas abaixo são indexados por string, com fallback.
-const BADGE_POR_STATUS_EXECUCAO: Record<string, { variant: "success" | "error" | "warning" | "neutral"; rotulo: string }> = {
-  sucesso: { variant: "success", rotulo: "Sucesso" },
-  falha: { variant: "error", rotulo: "Falha" },
-  parcial: { variant: "warning", rotulo: "Parcial" },
-  rodando: { variant: "neutral", rotulo: "Rodando" },
-}
-
-const ROTULO_TIPO: Record<string, string> = {
-  carga_inicial: "Carga inicial",
-  incremental: "Incremental",
-}
-
-function badgeStatus(status: string) {
-  return BADGE_POR_STATUS_EXECUCAO[status] ?? { variant: "neutral" as const, rotulo: status };
-}
-
-function resultadoTexto(execucao: ExecucaoResumida): string {
-  if (execucao.status === "falha") {
-    return execucao.mensagem_erro || "Falha sem detalhe registrado";
-  }
-  return `${formatarNumero(execucao.total_lidos)} lidos · ${formatarNumero(execucao.total_novos)} novos · ${formatarNumero(
-    execucao.total_atualizados
-  )} atualizados · ${formatarNumero(execucao.total_erros)} erros`;
-}
 
 export function ExecucoesTabela({ execucoes }: { execucoes: ExecucaoResumida[] }) {
   return (

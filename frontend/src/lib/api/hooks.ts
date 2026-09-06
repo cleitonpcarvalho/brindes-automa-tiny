@@ -13,11 +13,14 @@ import type {
   InstanciaDetalhe,
   LoginRequest,
   MeResponse,
+  PaginatedExecucaoList,
   PaginatedInstanciaListagem,
+  PaginatedLogItemList,
   PaginatedVariacaoEspelhoList,
   Periodo,
   Resumo,
   SincronizarResposta,
+  StatusExecucao,
   StatusInstancia,
   StatusVariacao,
 } from "./types";
@@ -156,6 +159,51 @@ export function useProdutosInstancia(slug: string, filtros: FiltrosProdutos = {}
       ),
     enabled: Boolean(slug),
     placeholderData: (dadosAnteriores) => dadosAnteriores,
+  });
+}
+
+export interface FiltrosExecucoes {
+  fornecedor?: FornecedorEnum | "";
+  status?: StatusExecucao | "";
+  page?: number;
+  pageSize?: number;
+}
+
+/**
+ * Aba Execuções do detalhe — histórico paginado (server-side) das rodadas de
+ * sincronização desta instância. Só observabilidade; nenhuma ação.
+ */
+export function useExecucoesInstancia(slug: string, filtros: FiltrosExecucoes = {}) {
+  const params = new URLSearchParams();
+  if (filtros.fornecedor) params.set("fornecedor", filtros.fornecedor);
+  if (filtros.status) params.set("status", filtros.status);
+  if (filtros.page) params.set("page", String(filtros.page));
+  if (filtros.pageSize) params.set("page_size", String(filtros.pageSize));
+  const query = params.toString();
+
+  return useQuery({
+    queryKey: ["instancias", "execucoes", slug, filtros],
+    queryFn: () =>
+      apiClient.get<PaginatedExecucaoList>(
+        `/instancias/${slug}/execucoes${query ? `?${query}` : ""}`,
+      ),
+    enabled: Boolean(slug),
+    placeholderData: (dadosAnteriores) => dadosAnteriores,
+  });
+}
+
+/**
+ * Logs de UMA execução, para o modal de detalhes. Busca uma página grande de
+ * uma vez (a UI não pagina os logs) e só dispara quando há execução selecionada.
+ */
+export function useExecucaoLogs(slug: string, execucaoId: number | null) {
+  return useQuery({
+    queryKey: ["instancias", "execucoes", "logs", slug, execucaoId],
+    queryFn: () =>
+      apiClient.get<PaginatedLogItemList>(
+        `/instancias/${slug}/execucoes/${execucaoId}/logs?page_size=200`,
+      ),
+    enabled: Boolean(slug && execucaoId),
   });
 }
 

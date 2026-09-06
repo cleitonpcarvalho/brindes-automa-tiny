@@ -265,6 +265,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/instancias/{slug}/execucoes/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description GET /api/instancias/<slug>/execucoes/ — histórico paginado das execuções
+         *     (rodadas de sincronização) desta instância, da mais recente para a mais
+         *     antiga.
+         *
+         *     Somente leitura/observabilidade: não inicia, cancela nem reprocessa nada.
+         *     O queryset é sempre `instancia == <slug>`; `total_logs` é anotado para
+         *     não gerar N+1 ao contar os logs de cada linha.
+         */
+        get: operations["instancias_execucoes_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/instancias/{slug}/execucoes/{execucao_id}/logs/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description GET /api/instancias/<slug>/execucoes/<execucao_id>/logs/ — linhas de log
+         *     de UMA execução, em ordem cronológica. Leitura apenas.
+         *
+         *     Isolamento: a execução é resolvida por (id E instancia__slug) — pedir o
+         *     id de uma execução de outra instância devolve 404, não os logs dela.
+         */
+        get: operations["instancias_execucoes_logs_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/instancias/{slug}/fornecedores/{fornecedor}/sincronizar/": {
         parameters: {
             query?: never;
@@ -453,6 +501,35 @@ export interface components {
         };
         ErrorResponse: {
             detail: string;
+        };
+        /**
+         * @description Uma linha do histórico da aba "Execuções" do detalhe da instância.
+         *
+         *     Só leitura. `fornecedor`, `tipo` e `status` são CharField com choices no
+         *     model, então o ModelSerializer já os expõe como enums. `duracao_segundos`
+         *     vem da property do model (derivada de finalizada_em - iniciada_em; nula
+         *     enquanto a execução não terminou). `total_logs` é anotado no queryset da
+         *     view para não gerar N+1.
+         */
+        Execucao: {
+            readonly id: number;
+            fornecedor: components["schemas"]["FornecedorEnum"];
+            tipo: components["schemas"]["TipoExecucaoEnum"];
+            status?: components["schemas"]["StatusExecucaoEnum"];
+            /** Format: date-time */
+            readonly iniciada_em: string;
+            /** Format: date-time */
+            finalizada_em?: string | null;
+            /** Format: double */
+            readonly duracao_segundos: number | null;
+            total_lidos?: number;
+            total_novos?: number;
+            total_atualizados?: number;
+            total_cadastrados?: number;
+            total_ignorados?: number;
+            total_erros?: number;
+            mensagem_erro?: string;
+            readonly total_logs: number;
         };
         ExecucaoAtividade: {
             id: number;
@@ -654,6 +731,16 @@ export interface components {
             ativas: number;
             total: number;
         };
+        /** @description Uma linha de log de UMA execução — leitura, para o modal de detalhes. */
+        LogItem: {
+            readonly id: number;
+            nivel?: components["schemas"]["NivelLogEnum"];
+            mensagem: string;
+            detalhe?: unknown;
+            /** Format: date-time */
+            readonly criado_em: string;
+            readonly variacao_sku: string | null;
+        };
         LoginRequest: {
             /** Format: email */
             email: string;
@@ -670,8 +757,30 @@ export interface components {
             email: string;
             nome: string;
         };
+        /**
+         * @description * `info` - Info
+         *     * `aviso` - Aviso
+         *     * `erro` - Erro
+         * @enum {string}
+         */
+        NivelLogEnum: "info" | "aviso" | "erro";
         /** @enum {unknown} */
         NullEnum: null;
+        PaginatedExecucaoList: {
+            /** @example 123 */
+            count: number;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=4
+             */
+            next?: string | null;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=2
+             */
+            previous?: string | null;
+            results: components["schemas"]["Execucao"][];
+        };
         PaginatedInstanciaListagemList: {
             /** @example 123 */
             count: number;
@@ -686,6 +795,21 @@ export interface components {
              */
             previous?: string | null;
             results: components["schemas"]["InstanciaListagem"][];
+        };
+        PaginatedLogItemList: {
+            /** @example 123 */
+            count: number;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=4
+             */
+            next?: string | null;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=2
+             */
+            previous?: string | null;
+            results: components["schemas"]["LogItem"][];
         };
         PaginatedVariacaoEspelhoList: {
             /** @example 123 */
@@ -811,6 +935,12 @@ export interface components {
          * @enum {string}
          */
         StatusVariacaoEnum: "pendente" | "aguardando" | "cadastrado" | "descontinuado" | "erro";
+        /**
+         * @description * `carga_inicial` - Carga inicial
+         *     * `incremental` - Incremental
+         * @enum {string}
+         */
+        TipoExecucaoEnum: "carga_inicial" | "incremental";
         UltimaSincronizacao: {
             /** Format: date-time */
             em: string | null;
@@ -1255,6 +1385,65 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Instancia"];
+                };
+            };
+        };
+    };
+    instancias_execucoes_list: {
+        parameters: {
+            query?: {
+                /** @description Filtra por fornecedor da execução. */
+                fornecedor?: "asia" | "somarcas" | "spot" | "xbz";
+                /** @description Um número de página dentro do conjunto de resultados paginado. */
+                page?: number;
+                /** @description Número de resultados a serem retornados por página. */
+                page_size?: number;
+                /** @description Filtra pelo status da execução. */
+                status?: "falha" | "parcial" | "rodando" | "sucesso";
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedExecucaoList"];
+                };
+            };
+        };
+    };
+    instancias_execucoes_logs_list: {
+        parameters: {
+            query?: {
+                /** @description Filtra as linhas de log por nível. */
+                nivel?: "aviso" | "erro" | "info";
+                /** @description Um número de página dentro do conjunto de resultados paginado. */
+                page?: number;
+                /** @description Número de resultados a serem retornados por página. */
+                page_size?: number;
+            };
+            header?: never;
+            path: {
+                execucao_id: number;
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedLogItemList"];
                 };
             };
         };

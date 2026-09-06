@@ -12,6 +12,11 @@ x-backend-env: &backend-env
   DJANGO_ALLOWED_HOSTS: "sync-api.automasoluct.com.br,backend"
   DJANGO_CSRF_TRUSTED_ORIGINS: "https://sync-api.automasoluct.com.br"
   CORS_ALLOWED_ORIGINS: "https://sync.automasoluct.com.br"
+  # Passo 10: redirect_uri do OAuth do Tiny (PUBLIC_BASE_URL, fixo — não
+  # depende do Host da requisição) e destino do redirect pós-callback
+  # (FRONTEND_BASE_URL).
+  PUBLIC_BASE_URL: "https://sync-api.automasoluct.com.br"
+  FRONTEND_BASE_URL: "https://sync.automasoluct.com.br"
   FERNET_KEY: ${FERNET_KEY}
   REDIS_URL: "redis://redis:6379"
   POSTGRES_HOST: "postgres"

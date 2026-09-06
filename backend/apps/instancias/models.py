@@ -10,6 +10,13 @@ from .constants import Fornecedor
 from .fields import EncryptedJSONField, EncryptedTextField
 
 
+# Palavras reservadas por rotas estáticas do frontend (ex.: /instancias/novo é
+# o wizard de criação) — uma instância com slug igual a uma dessas ficaria
+# permanentemente inacessível pela tela de detalhe. Tratadas como "já
+# existentes" para cair no mesmo sufixo numérico usado para colisão de nome.
+_SLUGS_RESERVADOS = {"novo", "nova"}
+
+
 def _gerar_slug_unico(nome, *, excluir_pk=None):
     base = slugify(nome, allow_unicode=False) or "instancia"
     slug = base
@@ -17,7 +24,7 @@ def _gerar_slug_unico(nome, *, excluir_pk=None):
     qs = Instancia.objects.all()
     if excluir_pk is not None:
         qs = qs.exclude(pk=excluir_pk)
-    while qs.filter(slug=slug).exists():
+    while slug in _SLUGS_RESERVADOS or qs.filter(slug=slug).exists():
         slug = f"{base}-{contador}"
         contador += 1
     return slug
@@ -203,6 +210,13 @@ class Instancia(models.Model):
         return bool(self.refresh_expira_em and self.refresh_expira_em <= agora)
 
 
+# Alias em nível de módulo só para o drf-spectacular conseguir resolver
+# `ENUM_NAME_OVERRIDES["StatusEnum"]` (config/settings.py) — o loader dele
+# (deep_import_string) resolve MODULO.ATRIBUTO ou MODULO.CLASSE.ATRIBUTO, mas
+# não um nível a mais de classe aninhada como Instancia.Status.choices.
+STATUS_INSTANCIA_CHOICES = Instancia.Status.choices
+
+
 class CredencialFornecedor(models.Model):
     """
     Credenciais de um fornecedor para uma instância. Cada fornecedor tem um
@@ -218,7 +232,7 @@ class CredencialFornecedor(models.Model):
         default=dict,
         blank=True,
         help_text="Ex.: xbz={cnpj, token}; asia={api_key, secret_key}; "
-        "somarcas={usuario, senha, estado}; spot={client_id, access_key}.",
+        "somarcas={usuario, senha, estado}; spot={access_key}.",
     )
     ativo = models.BooleanField(default=True)
     criado_em = models.DateTimeField(auto_now_add=True)

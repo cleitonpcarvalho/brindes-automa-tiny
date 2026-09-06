@@ -49,6 +49,12 @@ class Execucao(models.Model):
     def __str__(self):
         return f"{self.instancia} · {self.fornecedor} · {self.iniciada_em:%Y-%m-%d %H:%M}"
 
+    @property
+    def duracao_segundos(self):
+        if not self.finalizada_em:
+            return None
+        return (self.finalizada_em - self.iniciada_em).total_seconds()
+
 
 class NivelLog(models.TextChoices):
     INFO = "info", "Info"

@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s -b cookies.txt -L http://localhost:3000/api/backend/instancias/smoke-test-brindes/credenciais/ -w \"\\\\nHTTP:%{http_code}\\\\n\")",
+      "Bash(curl -s -b cookies.txt -L -X PUT http://localhost:3000/api/backend/instancias/smoke-test-brindes/credenciais/xbz/ -H \"Content-Type: application/json\" -d '{\"credenciais\":{\"cnpj\":\"12345678000190\",\"token\":\"tok-secreto-9876\"}}' -w \"\\\\nHTTP:%{http_code}\\\\n\")",
+      "Bash(curl -sv -b cookies.txt -L -X PUT http://localhost:3000/api/backend/instancias/smoke-test-brindes/credenciais/xbz/ -H \"Content-Type: application/json\" -d '{\"credenciais\":{\"cnpj\":\"12345678000190\",\"token\":\"tok-secreto-9876\"}}')",
+      "Bash(curl -s -b cookies.txt -L -X PATCH http://localhost:3000/api/backend/instancias/smoke-test-brindes/cadencias/xbz/ -H \"Content-Type: application/json\" -d '{\"ativo\":true,\"intervalo_minutos\":120}' -w \"\\\\nHTTP:%{http_code}\\\\n\")",
+      "Bash(curl -s -b cookies.txt -L -X POST http://localhost:3000/api/backend/instancias/smoke-test-brindes/fornecedores/xbz/sincronizar/ -w \"\\\\nHTTP:%{http_code}\\\\n\")",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s -b cookies.txt http://localhost:3000/api/backend/instancias/smoke-test-brindes)",
+      "Bash(git status *)"
+    ]
+  }
+}

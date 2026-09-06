@@ -15,10 +15,23 @@ from urllib.parse import urlencode
 
 import requests
 from django.conf import settings
+from django.urls import reverse
 
 
 class TinyOAuthError(Exception):
     """Erro ao trocar/renovar token com o Tiny (Keycloak)."""
+
+
+def montar_url_callback(slug: str) -> str:
+    """
+    redirect_uri registrada no app do Tiny para esta instância. Vem de
+    `settings.PUBLIC_BASE_URL` (fixo por ambiente, passo 10) — não de
+    `request.build_absolute_uri` — porque o Tiny exige essa URL
+    byte-idêntica entre a chamada de autorizar e a de troca de token, e
+    confiar no Host header da requisição corrente é frágil atrás de proxy.
+    """
+    caminho = reverse("tiny-oauth-callback", kwargs={"slug": slug})
+    return f"{settings.PUBLIC_BASE_URL.rstrip('/')}{caminho}"
 
 
 def montar_url_autorizacao(client_id: str, redirect_uri: str, state: str) -> str:

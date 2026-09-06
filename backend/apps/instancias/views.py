@@ -1,8 +1,10 @@
 import secrets
 from datetime import timedelta
 
+from django.conf import settings
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.http import HttpResponseRedirect
 from django.shortcuts import get_object_or_404
-from django.urls import reverse
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import status, viewsets
@@ -11,16 +13,35 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.fornecedores.models import CadenciaFornecedor
+from apps.fornecedores.services import (
+    checar_limite_diario_xbz,
+    listar_cadencias_com_defaults,
+    obter_credencial_ativa,
+)
+from apps.fornecedores.tasks import executar_sincronizacao_manual_task
+from apps.sincronizacao.models import Execucao, StatusExecucao, TipoExecucao
+
+from .constants import CAMPOS_POR_FORNECEDOR, Fornecedor
 from .listagem import (
     aplicar_busca,
     aplicar_filtro_status,
     aplicar_ordenacao_problema_primeiro,
     queryset_listagem,
 )
-from .models import Instancia
+from .models import CredencialFornecedor, Instancia
 from .pagination import InstanciaPagination
-from .serializers import InstanciaListagemSerializer, InstanciaSerializer
-from .tiny_oauth import TinyOAuthError, montar_url_autorizacao, trocar_code_por_token
+from .serializers import (
+    AutorizarRespostaSerializer,
+    CadenciaFornecedorSerializer,
+    CredencialFornecedorEntradaSerializer,
+    CredencialFornecedorRespostaSerializer,
+    InstanciaDetalheSerializer,
+    InstanciaListagemSerializer,
+    InstanciaSerializer,
+    SincronizarRespostaSerializer,
+)
+from .tiny_oauth import TinyOAuthError, montar_url_autorizacao, montar_url_callback, trocar_code_por_token
 
 # Validade curta do state gerado a cada URL de autorização — o usuário
 # normalmente autoriza em segundos/poucos minutos; 10 minutos dá folga sem
@@ -56,6 +77,8 @@ class InstanciaViewSet(viewsets.ModelViewSet):
     def get_serializer_class(self):
         if self.action == "list":
             return InstanciaListagemSerializer
+        if self.action == "retrieve":
+            return InstanciaDetalheSerializer
         return InstanciaSerializer
 
     def get_queryset(self):
@@ -68,6 +91,7 @@ class InstanciaViewSet(viewsets.ModelViewSet):
         queryset = aplicar_filtro_status(queryset, params.get("status"))
         return aplicar_ordenacao_problema_primeiro(queryset)
 
+    @extend_schema(responses=AutorizarRespostaSerializer)
     @action(detail=True, methods=["get"])
     def autorizar(self, request, slug=None):
         """Gera um state novo e devolve a URL de autorização do Tiny para o usuário abrir."""
@@ -83,7 +107,7 @@ class InstanciaViewSet(viewsets.ModelViewSet):
         instancia.oauth_state_expira_em = timezone.now() + VALIDADE_OAUTH_STATE
         instancia.save(update_fields=["oauth_state", "oauth_state_expira_em", "atualizado_em"])
 
-        redirect_uri = _url_callback(request, instancia.slug)
+        redirect_uri = montar_url_callback(instancia.slug)
         url_autorizacao = montar_url_autorizacao(
             instancia.client_id, redirect_uri, instancia.oauth_state
         )
@@ -118,6 +142,17 @@ class TinyOAuthCallbackView(APIView):
     Única rota pública da API (passo 5: todo o resto exige token) — quem
     chama aqui é o navegador redirecionado pelo Tiny, sem nenhum token
     nosso, então a proteção real já é o state.
+
+    Passo 10: como quem chega aqui é o navegador (não a SPA via AJAX — o
+    clique em "Autorizar no ERP" é uma navegação de página inteira para o
+    Tiny), a resposta é sempre um redirect (302) de volta para o frontend,
+    nunca JSON — não existe "retomar o wizard client-side" depois dessa
+    navegação. Sucesso volta para a aba Fornecedores do detalhe da
+    instância (que cumpre o papel do "passo 4" do wizard); qualquer falha
+    (state inválido/expirado, code ausente, erro do Tiny) volta para o
+    wizard no passo de autorização, para o usuário tentar de novo. O único
+    caso que continua sendo JSON é o slug inexistente (404) — não é parte
+    do fluxo normal do wizard, é uma URL malformada.
     """
 
     authentication_classes = []
@@ -128,10 +163,7 @@ class TinyOAuthCallbackView(APIView):
 
         state_recebido = request.query_params.get("state", "")
         if not self._state_valido(instancia, state_recebido):
-            return Response(
-                {"detail": "state ausente, inválido ou expirado."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return self._redirecionar_erro(slug)
 
         instancia.oauth_state = ""
         instancia.oauth_state_expira_em = None
@@ -139,9 +171,9 @@ class TinyOAuthCallbackView(APIView):
 
         code = request.query_params.get("code")
         if not code:
-            return Response({"detail": "code ausente."}, status=status.HTTP_400_BAD_REQUEST)
+            return self._redirecionar_erro(slug)
 
-        redirect_uri = _url_callback(request, slug)
+        redirect_uri = montar_url_callback(slug)
 
         try:
             corpo = trocar_code_por_token(
@@ -151,7 +183,7 @@ class TinyOAuthCallbackView(APIView):
             instancia.status = Instancia.Status.ERRO
             instancia.ultimo_erro = str(exc)
             instancia.save(update_fields=["status", "ultimo_erro", "atualizado_em"])
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            return self._redirecionar_erro(slug)
 
         instancia.aplicar_tokens(
             access_token=corpo["access_token"],
@@ -160,8 +192,13 @@ class TinyOAuthCallbackView(APIView):
             refresh_expires_in=int(corpo["refresh_expires_in"]),
         )
 
-        serializer = InstanciaSerializer(instancia, context={"request": request})
-        return Response(serializer.data)
+        base = settings.FRONTEND_BASE_URL.rstrip("/")
+        return HttpResponseRedirect(f"{base}/instancias/{slug}?autorizado=1")
+
+    @staticmethod
+    def _redirecionar_erro(slug):
+        base = settings.FRONTEND_BASE_URL.rstrip("/")
+        return HttpResponseRedirect(f"{base}/instancias/novo?slug={slug}&erro=1")
 
     @staticmethod
     def _state_valido(instancia, state_recebido):
@@ -174,6 +211,138 @@ class TinyOAuthCallbackView(APIView):
         return True
 
 
-def _url_callback(request, slug):
-    caminho = reverse("tiny-oauth-callback", kwargs={"slug": slug})
-    return request.build_absolute_uri(caminho)
+def _obter_instancia_ou_404(slug):
+    return get_object_or_404(Instancia, slug=slug)
+
+
+class CredenciaisFornecedorView(APIView):
+    """GET .../credenciais/ — lista os 4 fornecedores, sempre, mesmo sem credencial configurada."""
+
+    @extend_schema(responses=CredencialFornecedorRespostaSerializer(many=True))
+    def get(self, request, slug):
+        instancia = _obter_instancia_ou_404(slug)
+        credenciais = {c.fornecedor: c for c in instancia.credenciais_fornecedor.all()}
+        dados = [
+            CredencialFornecedorRespostaSerializer.montar(valor, credenciais.get(valor))
+            for valor, _rotulo in Fornecedor.choices
+        ]
+        return Response(CredencialFornecedorRespostaSerializer(dados, many=True).data)
+
+
+class CredencialFornecedorDetailView(APIView):
+    """PUT .../credenciais/<fornecedor>/ — upsert; nunca ecoa a credencial recebida."""
+
+    @extend_schema(
+        request=CredencialFornecedorEntradaSerializer, responses=CredencialFornecedorRespostaSerializer
+    )
+    def put(self, request, slug, fornecedor):
+        instancia = _obter_instancia_ou_404(slug)
+        if fornecedor not in CAMPOS_POR_FORNECEDOR:
+            return Response({"detail": f"Fornecedor '{fornecedor}' desconhecido."}, status=status.HTTP_404_NOT_FOUND)
+
+        entrada = CredencialFornecedorEntradaSerializer(data=request.data, fornecedor=fornecedor)
+        entrada.is_valid(raise_exception=True)
+
+        credencial, _criada = CredencialFornecedor.objects.update_or_create(
+            instancia=instancia,
+            fornecedor=fornecedor,
+            defaults={
+                "credenciais": entrada.validated_data["credenciais"],
+                "ativo": entrada.validated_data.get("ativo", True),
+            },
+        )
+
+        dados = CredencialFornecedorRespostaSerializer.montar(fornecedor, credencial)
+        return Response(CredencialFornecedorRespostaSerializer(dados).data)
+
+
+class CadenciasFornecedorView(APIView):
+    """GET .../cadencias/ — lista as 4, com defaults quando ainda não configurada."""
+
+    @extend_schema(responses=CadenciaFornecedorSerializer(many=True))
+    def get(self, request, slug):
+        instancia = _obter_instancia_ou_404(slug)
+        dados = listar_cadencias_com_defaults(instancia)
+        return Response(CadenciaFornecedorSerializer(dados, many=True).data)
+
+
+class CadenciaFornecedorDetailView(APIView):
+    """PATCH .../cadencias/<fornecedor>/ — upsert de intervalo/ativo, com a regra de mínimo da xbz."""
+
+    @extend_schema(request=CadenciaFornecedorSerializer, responses=CadenciaFornecedorSerializer)
+    def patch(self, request, slug, fornecedor):
+        instancia = _obter_instancia_ou_404(slug)
+        if fornecedor not in CAMPOS_POR_FORNECEDOR:
+            return Response({"detail": f"Fornecedor '{fornecedor}' desconhecido."}, status=status.HTTP_404_NOT_FOUND)
+
+        entrada = CadenciaFornecedorSerializer(data=request.data, partial=True)
+        entrada.is_valid(raise_exception=True)
+
+        # Busca sem criar: só grava depois de validar (full_clean, abaixo) —
+        # um PATCH inválido (ex.: xbz < 60min) não pode deixar pra trás uma
+        # CadenciaFornecedor "default" que não existia antes da tentativa.
+        cadencia = CadenciaFornecedor.objects.filter(instancia=instancia, fornecedor=fornecedor).first()
+        if cadencia is None:
+            cadencia = CadenciaFornecedor(instancia=instancia, fornecedor=fornecedor)
+
+        if "intervalo_minutos" in entrada.validated_data:
+            cadencia.intervalo_minutos = entrada.validated_data["intervalo_minutos"]
+        if "ativo" in entrada.validated_data:
+            cadencia.ativo = entrada.validated_data["ativo"]
+
+        try:
+            cadencia.full_clean()
+        except DjangoValidationError as exc:  # ex.: xbz com intervalo_minutos < 60
+            mensagens = getattr(exc, "messages", [str(exc)])
+            return Response({"detail": " ".join(mensagens)}, status=status.HTTP_400_BAD_REQUEST)
+
+        cadencia.save()
+        return Response(
+            CadenciaFornecedorSerializer(
+                {
+                    "fornecedor": fornecedor,
+                    "intervalo_minutos": cadencia.intervalo_minutos,
+                    "ativo": cadencia.ativo,
+                    "proxima_execucao_em": cadencia.proxima_execucao_em,
+                }
+            ).data
+        )
+
+
+class SincronizarFornecedorView(APIView):
+    """
+    POST .../fornecedores/<fornecedor>/sincronizar/ — dispara a sincronização
+    manual (passo 10). As mesmas checagens de negócio do comando CLI
+    (credencial ativa, limite diário da xbz) rodam aqui de forma síncrona,
+    ANTES de criar a Execucao e enfileirar, para poder devolver um erro
+    imediato em vez de um execucao_id que nunca vai sair de "rodando".
+    """
+
+    @extend_schema(request=None, responses=SincronizarRespostaSerializer)
+    def post(self, request, slug, fornecedor):
+        instancia = _obter_instancia_ou_404(slug)
+        if fornecedor not in CAMPOS_POR_FORNECEDOR:
+            return Response({"detail": f"Fornecedor '{fornecedor}' desconhecido."}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            obter_credencial_ativa(instancia, fornecedor)
+            checar_limite_diario_xbz(instancia, fornecedor)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        ja_rodando = Execucao.objects.filter(
+            instancia=instancia, fornecedor=fornecedor, status=StatusExecucao.RODANDO
+        ).exists()
+        if ja_rodando:
+            return Response(
+                {"detail": "Já existe uma sincronização em andamento para este fornecedor."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        execucao = Execucao.objects.create(
+            instancia=instancia, fornecedor=fornecedor, tipo=TipoExecucao.INCREMENTAL
+        )
+        executar_sincronizacao_manual_task.delay(execucao.id)
+        return Response(
+            {"execucao_id": execucao.id, "status": execucao.status}, status=status.HTTP_202_ACCEPTED
+        )

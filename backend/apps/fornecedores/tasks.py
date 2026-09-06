@@ -6,6 +6,7 @@ from django.core.management.base import CommandError
 from django.utils import timezone
 
 from apps.instancias.models import Instancia
+from apps.sincronizacao.models import Execucao, StatusExecucao
 
 from .models import CadenciaFornecedor
 
@@ -43,3 +44,35 @@ def sincronizar_fornecedor_task(instancia_id, fornecedor):
         call_command("importar_fornecedor", instancia.slug, fornecedor, tipo="incremental")
     except CommandError as exc:
         logger.info("sincronização de %s/%s pulada: %s", instancia.slug, fornecedor, exc)
+
+
+@shared_task
+def executar_sincronizacao_manual_task(execucao_id):
+    """
+    Disparo manual (passo 10): a view já criou a Execucao (status=rodando) e
+    devolveu o id ao usuário antes de enfileirar — aqui só roda o mesmo
+    comando de sempre, reaproveitando essa Execucao (`--execucao-id`) em vez
+    de criar uma nova. O comando já marca a Execucao como falha em qualquer
+    erro previsto (ver importar_fornecedor.py); este try/except é só uma
+    rede de segurança para o caso de o próprio call_command explodir antes
+    disso (ex.: argumento inválido).
+    """
+    execucao = Execucao.objects.select_related("instancia").get(pk=execucao_id)
+    try:
+        call_command(
+            "importar_fornecedor",
+            execucao.instancia.slug,
+            execucao.fornecedor,
+            tipo=execucao.tipo,
+            execucao_id=execucao.id,
+        )
+    except Exception as exc:
+        logger.exception(
+            "sincronização manual de %s/%s falhou", execucao.instancia.slug, execucao.fornecedor
+        )
+        execucao.refresh_from_db()
+        if execucao.status == StatusExecucao.RODANDO:
+            execucao.status = StatusExecucao.FALHA
+            execucao.mensagem_erro = str(exc)
+            execucao.finalizada_em = timezone.now()
+            execucao.save()

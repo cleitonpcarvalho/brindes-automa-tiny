@@ -23,12 +23,37 @@ export function formatarTempoRelativo(iso: string | null | undefined): string {
   return `há ${diffDias}d`;
 }
 
+/** "em 20min", "em 1h05", "agora" — o inverso de formatarTempoRelativo, para próximas execuções agendadas. */
+export function formatarTempoAte(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const diffMs = new Date(iso).getTime() - Date.now();
+  if (diffMs <= 0) return "agora";
+
+  const diffMin = Math.ceil(diffMs / 60000);
+  if (diffMin < 60) return `em ${diffMin}min`;
+
+  const diffH = Math.floor(diffMin / 60);
+  const restoMin = diffMin % 60;
+  return restoMin > 0 ? `em ${diffH}h${String(restoMin).padStart(2, "0")}` : `em ${diffH}h`;
+}
+
 export function formatarDuracao(segundos: number | null | undefined): string {
   if (segundos == null) return "—";
   if (segundos < 60) return `${Math.round(segundos)}s`;
   const minutos = Math.floor(segundos / 60);
   const resto = Math.round(segundos % 60);
   return resto > 0 ? `${minutos}min ${resto}s` : `${minutos}min`;
+}
+
+/** "a cada 1 hora", "a cada 12 horas", "diariamente" — rótulo do intervalo de cadência (minutos). */
+export function formatarIntervalo(minutos: number | null | undefined): string {
+  minutos = minutos ?? 60; // mesmo default do backend (CadenciaFornecedor.intervalo_minutos)
+  if (minutos % 1440 === 0 && minutos > 0) return minutos === 1440 ? "diariamente" : `a cada ${minutos / 1440} dias`;
+  if (minutos % 60 === 0) {
+    const horas = minutos / 60;
+    return `a cada ${horas} ${horas === 1 ? "hora" : "horas"}`;
+  }
+  return `a cada ${minutos}min`;
 }
 
 export type EstadoToken = "expirado" | "urgente" | "ok" | "pendente";

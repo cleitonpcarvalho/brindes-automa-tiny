@@ -56,6 +56,18 @@ TINY_OAUTH_AUTHORIZE_URL = env(
 # corrigido aqui para a URL que o próprio spec oficial declara.
 TINY_API_BASE_URL = env("TINY_API_BASE_URL", "https://api.tiny.com.br/public-api/v3")
 
+# URL pública do próprio backend (passo 10) — usada para montar a redirect_uri
+# registrada no app do Tiny, no lugar de `request.build_absolute_uri`. O Tiny
+# exige que a redirect_uri seja byte-idêntica entre a chamada de autorizar e a
+# de troca de token; confiar no Host header da requisição corrente é frágil
+# (proxy, CDN, host alternativo) — fixar por env elimina essa variável.
+PUBLIC_BASE_URL = env("PUBLIC_BASE_URL", "http://localhost:8000")
+
+# Para onde o callback OAuth redireciona o navegador depois de processar o
+# retorno do Tiny (passo 10) — sucesso ou falha. O frontend roda numa origem
+# separada (Next.js), por isso isso não pode ser um caminho relativo.
+FRONTEND_BASE_URL = env("FRONTEND_BASE_URL", "http://localhost:3000")
+
 # Redis: broker/result-backend do Celery (db 0) e store do throttle
 # compartilhado do TinyApiClient (db 1) — mesma instância, DBs lógicos
 # separados para não misturar chaves.
@@ -114,6 +126,15 @@ SPECTACULAR_SETTINGS = {
     "ENUM_NAME_OVERRIDES": {
         "FornecedorEnum": "apps.instancias.constants.Fornecedor.choices",
         "CorFornecedorEnum": "apps.instancias.serializers.CORES_FORNECEDOR",
+        # Passo 10: novos serializers de detalhe/sincronização introduzem um
+        # segundo campo "status" (o de Execucao) além do de Instancia — sem
+        # isso, drf-spectacular nomeia os dois com sufixos aleatórios
+        # (StatusA80Enum, StatusA6eEnum) toda vez que o schema é regerado.
+        # "StatusEnum" preserva o nome que o schema já gerava pra
+        # Instancia.status antes de existir essa colisão — não renomear,
+        # senão o frontend (lib/api/types.ts) perde a referência.
+        "StatusEnum": "apps.instancias.models.STATUS_INSTANCIA_CHOICES",
+        "StatusExecucaoEnum": "apps.sincronizacao.models.StatusExecucao.choices",
     },
 }
 

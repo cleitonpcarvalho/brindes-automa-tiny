@@ -54,6 +54,9 @@ export async function GET(request: NextRequest, context: RouteContext) {
 export async function POST(request: NextRequest, context: RouteContext) {
   return proxy(request, (await context.params).path);
 }
+export async function PUT(request: NextRequest, context: RouteContext) {
+  return proxy(request, (await context.params).path);
+}
 export async function PATCH(request: NextRequest, context: RouteContext) {
   return proxy(request, (await context.params).path);
 }

@@ -7,12 +7,24 @@
 import type { components } from "./schema";
 
 export type Instancia = components["schemas"]["Instancia"];
+export type InstanciaDetalhe = components["schemas"]["InstanciaDetalhe"];
 export type InstanciaListagem = components["schemas"]["InstanciaListagem"];
 export type PaginatedInstanciaListagem = components["schemas"]["PaginatedInstanciaListagemList"];
 export type PatchedInstancia = components["schemas"]["PatchedInstancia"];
 export type StatusInstancia = components["schemas"]["StatusEnum"];
+export type StatusExecucao = components["schemas"]["StatusExecucaoEnum"];
 export type FornecedorEnum = components["schemas"]["FornecedorEnum"];
 export type CorFornecedor = components["schemas"]["CorFornecedorEnum"];
+export type FornecedorDetalhe = components["schemas"]["FornecedorDetalhe"];
+export type ProdutosDetalheContagem = components["schemas"]["ProdutosDetalheContagem"];
+export type ExecucaoResumida = components["schemas"]["ExecucaoResumida"];
+
+export type CredencialFornecedorResposta = components["schemas"]["CredencialFornecedorResposta"];
+export type CredencialFornecedorEntrada = components["schemas"]["CredencialFornecedorEntrada"];
+export type CadenciaFornecedor = components["schemas"]["CadenciaFornecedor"];
+export type PatchedCadenciaFornecedor = components["schemas"]["PatchedCadenciaFornecedor"];
+export type SincronizarResposta = components["schemas"]["SincronizarResposta"];
+export type AutorizarResposta = components["schemas"]["AutorizarResposta"];
 
 export type LoginRequest = components["schemas"]["LoginRequest"];
 export type LoginResponse = components["schemas"]["LoginResponse"];

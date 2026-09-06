@@ -239,9 +239,6 @@ def calcular_atividade(limit=20):
 
     resultado = []
     for execucao in execucoes:
-        duracao = None
-        if execucao.finalizada_em:
-            duracao = (execucao.finalizada_em - execucao.iniciada_em).total_seconds()
         resultado.append(
             {
                 "id": execucao.id,
@@ -251,7 +248,7 @@ def calcular_atividade(limit=20):
                 "status": execucao.status,
                 "iniciada_em": execucao.iniciada_em,
                 "finalizada_em": execucao.finalizada_em,
-                "duracao_segundos": duracao,
+                "duracao_segundos": execucao.duracao_segundos,
                 "total_lidos": execucao.total_lidos,
                 "total_novos": execucao.total_novos,
                 "total_atualizados": execucao.total_atualizados,

@@ -180,6 +180,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/instancias/{slug}/cadencias/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description GET .../cadencias/ — lista as 4, com defaults quando ainda não configurada. */
+        get: operations["instancias_cadencias_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/instancias/{slug}/cadencias/{fornecedor}/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** @description PATCH .../cadencias/<fornecedor>/ — upsert de intervalo/ativo, com a regra de mínimo da xbz. */
+        patch: operations["instancias_cadencias_partial_update"];
+        trace?: never;
+    };
+    "/api/instancias/{slug}/credenciais/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description GET .../credenciais/ — lista os 4 fornecedores, sempre, mesmo sem credencial configurada. */
+        get: operations["instancias_credenciais_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/instancias/{slug}/credenciais/{fornecedor}/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** @description PUT .../credenciais/<fornecedor>/ — upsert; nunca ecoa a credencial recebida. */
+        put: operations["instancias_credenciais_update"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/instancias/{slug}/desconectar/": {
         parameters: {
             query?: never;
@@ -191,6 +259,29 @@ export interface paths {
         put?: never;
         /** @description Limpa os tokens e volta para nao_conectado. Não libera o slug (ja_foi_autorizada fica True). */
         post: operations["instancias_desconectar_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/instancias/{slug}/fornecedores/{fornecedor}/sincronizar/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description POST .../fornecedores/<fornecedor>/sincronizar/ — dispara a sincronização
+         *     manual (passo 10). As mesmas checagens de negócio do comando CLI
+         *     (credencial ativa, limite diário da xbz) rodam aqui de forma síncrona,
+         *     ANTES de criar a Execucao e enfileirar, para poder devolver um erro
+         *     imediato em vez de um execucao_id que nunca vai sair de "rodando".
+         */
+        post: operations["instancias_fornecedores_sincronizar_create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -235,6 +326,17 @@ export interface paths {
          *     Única rota pública da API (passo 5: todo o resto exige token) — quem
          *     chama aqui é o navegador redirecionado pelo Tiny, sem nenhum token
          *     nosso, então a proteção real já é o state.
+         *
+         *     Passo 10: como quem chega aqui é o navegador (não a SPA via AJAX — o
+         *     clique em "Autorizar no ERP" é uma navegação de página inteira para o
+         *     Tiny), a resposta é sempre um redirect (302) de volta para o frontend,
+         *     nunca JSON — não existe "retomar o wizard client-side" depois dessa
+         *     navegação. Sucesso volta para a aba Fornecedores do detalhe da
+         *     instância (que cumpre o papel do "passo 4" do wizard); qualquer falha
+         *     (state inválido/expirado, code ausente, erro do Tiny) volta para o
+         *     wizard no passo de autorização, para o usuário tentar de novo. O único
+         *     caso que continua sendo JSON é o slug inexistente (404) — não é parte
+         *     do fluxo normal do wizard, é uma URL malformada.
          */
         get: operations["tiny_oauth_callback_retrieve"];
         put?: never;
@@ -269,6 +371,32 @@ export interface components {
             requerem_acao: number;
         };
         /**
+         * @description Corpo real da action `autorizar` — documentado à parte porque, sem
+         *     `@extend_schema_field`/`@extend_schema`, o drf-spectacular inferia o
+         *     schema de retorno a partir do `serializer_class` do ViewSet (Instancia),
+         *     que não bate com o que a view de fato devolve.
+         */
+        AutorizarResposta: {
+            /** Format: uri */
+            url_autorizacao: string;
+            /** Format: uri */
+            redirect_uri: string;
+        };
+        CadenciaDetalhe: {
+            fornecedor: components["schemas"]["FornecedorEnum"];
+            intervalo_minutos: number;
+            ativo: boolean;
+            /** Format: date-time */
+            proxima_execucao_em: string | null;
+        };
+        CadenciaFornecedor: {
+            readonly fornecedor: components["schemas"]["FornecedorEnum"];
+            intervalo_minutos?: number;
+            ativo?: boolean;
+            /** Format: date-time */
+            readonly proxima_execucao_em: string | null;
+        };
+        /**
          * @description * `ok` - ok
          *     * `atencao` - atencao
          *     * `erro` - erro
@@ -276,6 +404,25 @@ export interface components {
          * @enum {string}
          */
         CorFornecedorEnum: "ok" | "atencao" | "erro" | "nao_configurado";
+        /** @description Corpo do PUT .../credenciais/<fornecedor>/ — nunca ecoa o que recebeu. */
+        CredencialFornecedorEntrada: {
+            credenciais: {
+                [key: string]: string;
+            };
+            /** @default true */
+            ativo: boolean;
+        };
+        /** @description Saída de GET/PUT — nunca inclui um valor sensível completo (ver mascaramento.py). */
+        CredencialFornecedorResposta: {
+            fornecedor: components["schemas"]["FornecedorEnum"];
+            ativo: boolean;
+            configurado: boolean;
+            campos_mascarados: {
+                [key: string]: unknown;
+            };
+            /** Format: date-time */
+            criado_em: string | null;
+        };
         ErrorResponse: {
             detail: string;
         };
@@ -298,9 +445,36 @@ export interface components {
             total_ignorados: number;
             total_erros: number;
         };
+        ExecucaoResumida: {
+            id: number;
+            fornecedor: components["schemas"]["FornecedorEnum"];
+            tipo: string;
+            status: string;
+            /** Format: date-time */
+            iniciada_em: string;
+            /** Format: date-time */
+            finalizada_em: string | null;
+            /** Format: double */
+            duracao_segundos: number | null;
+            total_lidos: number;
+            total_novos: number;
+            total_atualizados: number;
+            total_erros: number;
+            mensagem_erro: string;
+        };
         ExecucoesContagem: {
             total: number;
             sucesso: number;
+        };
+        FornecedorDetalhe: {
+            fornecedor: components["schemas"]["FornecedorEnum"];
+            cor: components["schemas"]["CorFornecedorEnum"];
+            /** Format: date-time */
+            ultima_execucao_em: string | null;
+            ultima_execucao_status: (components["schemas"]["StatusExecucaoEnum"] | components["schemas"]["NullEnum"]) | null;
+            produtos_total: number;
+            credencial_configurada: boolean;
+            credencial_ativa: boolean;
         };
         /**
          * @description * `xbz` - XBZ
@@ -335,6 +509,11 @@ export interface components {
             readonly ultimo_erro: string;
             readonly access_token_preenchido: string;
             readonly refresh_token_preenchido: string;
+            /**
+             * Format: date-time
+             * @description Quando o access_token atual foi emitido — usado para calcular a fração do tempo de vida já decorrida (renovação proativa a 70%).
+             */
+            readonly token_emitido_em: string | null;
             /** Format: date-time */
             readonly token_expira_em: string | null;
             /** Format: date-time */
@@ -350,6 +529,50 @@ export interface components {
             readonly criado_em: string;
             /** Format: date-time */
             readonly atualizado_em: string;
+        };
+        /**
+         * @description Serializer do `retrieve` (passo 10) — só usado para 1 instância por vez,
+         *     por isso faz contagens diretas em vez do aparato de Subquery/Prefetch de
+         *     `listagem.py` (que existe para evitar N+1 numa lista de N linhas).
+         */
+        InstanciaDetalhe: {
+            readonly id: number;
+            nome: string;
+            /** @description CNPJ do cliente, formato livre (ex.: 12.345.678/0001-90). Usado na busca da listagem de instâncias (passo 8). */
+            cnpj?: string;
+            /** @description Gerado automaticamente a partir do nome na criação. Fica imutável a partir do momento em que o access_token é preenchido pela primeira vez — não quando o status muda, e não volta a ser editável depois de um desconectar. */
+            readonly slug: string;
+            client_id?: string;
+            client_secret?: string;
+            readonly status: components["schemas"]["StatusEnum"];
+            readonly tentativas_falha: number;
+            readonly ultimo_erro: string;
+            readonly access_token_preenchido: string;
+            readonly refresh_token_preenchido: string;
+            /**
+             * Format: date-time
+             * @description Quando o access_token atual foi emitido — usado para calcular a fração do tempo de vida já decorrida (renovação proativa a 70%).
+             */
+            readonly token_emitido_em: string | null;
+            /** Format: date-time */
+            readonly token_expira_em: string | null;
+            /** Format: date-time */
+            readonly refresh_expira_em: string | null;
+            /** @description Último valor visto no header x-limit-api do Tiny (limite é por conta). */
+            readonly rate_limit_por_minuto: number | null;
+            /** @description Código de origem da mercadoria (tabela de origem da legislação fiscal — NF-e): 0 = nacional, 1 = estrangeira, importação direta, 2 a 8 = demais casos da tabela. Sem valor padrão fixo — configure antes de cadastrar produtos. */
+            tiny_origem_padrao?: number | null;
+            /** @description Unidade de medida padrão (ex.: UN, PC, CX). Sem valor padrão fixo — configure antes de cadastrar produtos. */
+            tiny_unidade_medida_padrao?: string;
+            readonly url_callback: string;
+            /** Format: date-time */
+            readonly criado_em: string;
+            /** Format: date-time */
+            readonly atualizado_em: string;
+            readonly produtos: components["schemas"]["ProdutosDetalheContagem"];
+            readonly fornecedores: components["schemas"]["FornecedorDetalhe"][];
+            readonly cadencias: components["schemas"]["CadenciaDetalhe"][];
+            readonly ultimas_execucoes: components["schemas"]["ExecucaoResumida"][];
         };
         /**
          * @description Serializer da listagem (passo 8): acrescenta métricas agregadas por
@@ -371,6 +594,11 @@ export interface components {
             readonly ultimo_erro: string;
             readonly access_token_preenchido: string;
             readonly refresh_token_preenchido: string;
+            /**
+             * Format: date-time
+             * @description Quando o access_token atual foi emitido — usado para calcular a fração do tempo de vida já decorrida (renovação proativa a 70%).
+             */
+            readonly token_emitido_em: string | null;
             /** Format: date-time */
             readonly token_expira_em: string | null;
             /** Format: date-time */
@@ -431,6 +659,13 @@ export interface components {
             previous?: string | null;
             results: components["schemas"]["InstanciaListagem"][];
         };
+        PatchedCadenciaFornecedor: {
+            readonly fornecedor?: components["schemas"]["FornecedorEnum"];
+            intervalo_minutos?: number;
+            ativo?: boolean;
+            /** Format: date-time */
+            readonly proxima_execucao_em?: string | null;
+        };
         /**
          * @description Nunca inclui client_secret, access_token ou refresh_token — só
          *     indicadores (se está preenchido, quando expira, qual o status).
@@ -449,6 +684,11 @@ export interface components {
             readonly ultimo_erro?: string;
             readonly access_token_preenchido?: string;
             readonly refresh_token_preenchido?: string;
+            /**
+             * Format: date-time
+             * @description Quando o access_token atual foi emitido — usado para calcular a fração do tempo de vida já decorrida (renovação proativa a 70%).
+             */
+            readonly token_emitido_em?: string | null;
             /** Format: date-time */
             readonly token_expira_em?: string | null;
             /** Format: date-time */
@@ -476,6 +716,12 @@ export interface components {
             total: number;
             cadastrados: number;
         };
+        ProdutosDetalheContagem: {
+            total: number;
+            cadastrados: number;
+            aguardando: number;
+            com_erro: number;
+        };
         ProdutosSincronizados: {
             total: number;
             periodo_anterior: number;
@@ -494,6 +740,10 @@ export interface components {
          * @enum {string}
          */
         SeveridadeEnum: "critica" | "atencao";
+        SincronizarResposta: {
+            execucao_id: number;
+            status: components["schemas"]["StatusExecucaoEnum"];
+        };
         /**
          * @description * `nao_conectado` - Não conectado
          *     * `conectado` - Conectado
@@ -501,6 +751,14 @@ export interface components {
          * @enum {string}
          */
         StatusEnum: "nao_conectado" | "conectado" | "erro";
+        /**
+         * @description * `rodando` - Rodando
+         *     * `sucesso` - Sucesso
+         *     * `falha` - Falha
+         *     * `parcial` - Parcial
+         * @enum {string}
+         */
+        StatusExecucaoEnum: "rodando" | "sucesso" | "falha" | "parcial";
         UltimaSincronizacao: {
             /** Format: date-time */
             em: string | null;
@@ -717,7 +975,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Instancia"];
+                    "application/json": components["schemas"]["InstanciaDetalhe"];
                 };
             };
         };
@@ -785,7 +1043,105 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Instancia"];
+                    "application/json": components["schemas"]["AutorizarResposta"];
+                };
+            };
+        };
+    };
+    instancias_cadencias_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CadenciaFornecedor"][];
+                };
+            };
+        };
+    };
+    instancias_cadencias_partial_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fornecedor: string;
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["PatchedCadenciaFornecedor"];
+                "application/x-www-form-urlencoded": components["schemas"]["PatchedCadenciaFornecedor"];
+                "multipart/form-data": components["schemas"]["PatchedCadenciaFornecedor"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CadenciaFornecedor"];
+                };
+            };
+        };
+    };
+    instancias_credenciais_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredencialFornecedorResposta"][];
+                };
+            };
+        };
+    };
+    instancias_credenciais_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fornecedor: string;
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredencialFornecedorEntrada"];
+                "application/x-www-form-urlencoded": components["schemas"]["CredencialFornecedorEntrada"];
+                "multipart/form-data": components["schemas"]["CredencialFornecedorEntrada"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredencialFornecedorResposta"];
                 };
             };
         };
@@ -813,6 +1169,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Instancia"];
+                };
+            };
+        };
+    };
+    instancias_fornecedores_sincronizar_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fornecedor: string;
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SincronizarResposta"];
                 };
             };
         };

@@ -52,5 +52,8 @@ class AutenticacaoObrigatoriaTests(TestCase):
         """A única exceção: o callback é chamado pelo Tiny, não pelo nosso frontend."""
         instancia = Instancia.objects.create(nome="Loja Callback Publico")
         resposta = self.client.get(f"/api/tiny/oauth/callback/{instancia.slug}/")
-        # sem state válido é rejeitado (400) — mas nunca 401: a rota em si é pública
-        self.assertEqual(resposta.status_code, status.HTTP_400_BAD_REQUEST)
+        # sem state válido, o callback redireciona de volta pro wizard (passo 10) —
+        # nunca 401: a rota em si é pública, e nunca 400: quem chama é o navegador,
+        # não um cliente de API.
+        self.assertEqual(resposta.status_code, status.HTTP_302_FOUND)
+        self.assertIn(f"/instancias/novo?slug={instancia.slug}&erro=1", resposta["Location"])

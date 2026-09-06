@@ -41,6 +41,21 @@ class InstanciaEndpointsCrudTests(TestCase):
         instancia = Instancia.objects.get(slug=resposta.data["slug"])
         self.assertEqual(instancia.client_secret, "segredo-123")
 
+    def test_criar_instancia_com_cnpj(self):
+        resposta = self.client.post(
+            "/api/instancias/",
+            {
+                "nome": "Loja Com CNPJ",
+                "cnpj": "12.345.678/0001-90",
+                "client_id": "cid-456",
+                "client_secret": "segredo-456",
+            },
+        )
+        self.assertEqual(resposta.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(resposta.data["cnpj"], "12.345.678/0001-90")
+        instancia = Instancia.objects.get(slug=resposta.data["slug"])
+        self.assertEqual(instancia.cnpj, "12.345.678/0001-90")
+
     def test_criar_sem_client_secret_falha(self):
         resposta = self.client.post("/api/instancias/", {"nome": "Loja Incompleta", "client_id": "cid"})
         self.assertEqual(resposta.status_code, status.HTTP_400_BAD_REQUEST)
@@ -91,6 +106,63 @@ class InstanciaEndpointsCrudTests(TestCase):
         resposta = self.client.delete(f"/api/instancias/{instancia.slug}/")
         self.assertEqual(resposta.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(Instancia.objects.filter(pk=instancia.pk).exists())
+
+
+class InstanciaDetalheSerializerTests(TestCase):
+    """Passo 10: retrieve ganha produtos/fornecedores/cadencias/ultimas_execucoes."""
+
+    def setUp(self):
+        self.client = _client_autenticado()
+
+    def test_retrieve_traz_agregados_de_detalhe(self):
+        from apps.catalogo.models import Produto, StatusVariacao, Variacao
+        from apps.instancias.models import CredencialFornecedor
+        from apps.sincronizacao.models import Execucao, StatusExecucao, TipoExecucao
+
+        instancia = Instancia.objects.create(nome="Loja Detalhada")
+        CredencialFornecedor.objects.create(
+            instancia=instancia, fornecedor="xbz", credenciais={"cnpj": "1", "token": "2"}, ativo=True
+        )
+        produto = Produto.objects.create(instancia=instancia, fornecedor="xbz", codigo_pai="P1", nome="Produto 1")
+        Variacao.objects.create(produto=produto, sku="S1", nome="V1", preco=10, status=StatusVariacao.CADASTRADO)
+        Variacao.objects.create(produto=produto, sku="S2", nome="V2", preco=10, status=StatusVariacao.ERRO)
+        Variacao.objects.create(produto=produto, sku="S3", nome="V3", preco=10, status=StatusVariacao.AGUARDANDO)
+        Execucao.objects.create(
+            instancia=instancia,
+            fornecedor="xbz",
+            tipo=TipoExecucao.INCREMENTAL,
+            status=StatusExecucao.SUCESSO,
+        )
+
+        resposta = self.client.get(f"/api/instancias/{instancia.slug}/")
+        self.assertEqual(resposta.status_code, status.HTTP_200_OK)
+
+        self.assertEqual(
+            resposta.data["produtos"],
+            {"total": 3, "cadastrados": 1, "aguardando": 1, "com_erro": 1},
+        )
+
+        fornecedores = {linha["fornecedor"]: linha for linha in resposta.data["fornecedores"]}
+        self.assertEqual(len(fornecedores), 4)
+        self.assertEqual(fornecedores["xbz"]["produtos_total"], 3)
+        self.assertTrue(fornecedores["xbz"]["credencial_ativa"])
+        self.assertEqual(fornecedores["xbz"]["cor"], "ok")
+        self.assertFalse(fornecedores["asia"]["credencial_ativa"])
+
+        cadencias = {linha["fornecedor"]: linha for linha in resposta.data["cadencias"]}
+        self.assertEqual(len(cadencias), 4)
+        self.assertEqual(cadencias["xbz"]["intervalo_minutos"], 60)  # default, sem CadenciaFornecedor gravada
+
+        self.assertEqual(len(resposta.data["ultimas_execucoes"]), 1)
+        self.assertEqual(resposta.data["ultimas_execucoes"][0]["status"], "sucesso")
+
+    def test_list_nao_ganha_os_campos_do_detalhe(self):
+        Instancia.objects.create(nome="Loja Listagem")
+        resposta = self.client.get("/api/instancias/")
+        self.assertEqual(resposta.status_code, status.HTTP_200_OK)
+        item = resposta.data["results"][0]
+        self.assertNotIn("cadencias", item)
+        self.assertNotIn("ultimas_execucoes", item)
 
 
 class AutorizarActionTests(TestCase):
@@ -162,15 +234,22 @@ class TinyOAuthCallbackTests(TestCase):
         self.instancia.oauth_state_expira_em = expira_em or (timezone.now() + timedelta(minutes=10))
         self.instancia.save()
 
+    def _assertRedirecionaParaErro(self, resposta):
+        # Passo 10: quem chega no callback é o navegador (redirecionado pelo Tiny),
+        # não um cliente de API — a resposta é sempre um redirect de volta pro
+        # wizard, nunca um JSON de erro.
+        self.assertEqual(resposta.status_code, status.HTTP_302_FOUND)
+        self.assertIn(f"/instancias/novo?slug={self.instancia.slug}&erro=1", resposta["Location"])
+
     def test_callback_sem_state_e_rejeitado(self):
         self._definir_state("state-correto")
         resposta = self.client.get(self._url(code="algum-code"))
-        self.assertEqual(resposta.status_code, status.HTTP_400_BAD_REQUEST)
+        self._assertRedirecionaParaErro(resposta)
 
     def test_callback_com_state_divergente_e_rejeitado_mesmo_com_slug_correto(self):
         self._definir_state("state-correto")
         resposta = self.client.get(self._url(code="algum-code", state="state-errado"))
-        self.assertEqual(resposta.status_code, status.HTTP_400_BAD_REQUEST)
+        self._assertRedirecionaParaErro(resposta)
 
         self.instancia.refresh_from_db()
         # nada foi trocado — o state salvo nem foi consumido nessa tentativa inválida
@@ -179,9 +258,12 @@ class TinyOAuthCallbackTests(TestCase):
     def test_callback_com_state_expirado_e_rejeitado(self):
         self._definir_state("state-correto", expira_em=timezone.now() - timedelta(seconds=1))
         resposta = self.client.get(self._url(code="algum-code", state="state-correto"))
-        self.assertEqual(resposta.status_code, status.HTTP_400_BAD_REQUEST)
+        self._assertRedirecionaParaErro(resposta)
 
     def test_callback_com_slug_inexistente_retorna_404(self):
+        # Único caso que continua JSON: não é parte do fluxo normal do wizard,
+        # é uma URL malformada — não faz sentido redirecionar pra um slug que
+        # não existe.
         url = reverse("tiny-oauth-callback", kwargs={"slug": "slug-que-nao-existe"})
         resposta = self.client.get(f"{url}?code=x&state=y")
         self.assertEqual(resposta.status_code, status.HTTP_404_NOT_FOUND)
@@ -198,12 +280,12 @@ class TinyOAuthCallbackTests(TestCase):
 
         resposta = self.client.get(self._url(code="code-valido", state="state-correto"))
 
-        self.assertEqual(resposta.status_code, status.HTTP_200_OK)
+        self.assertEqual(resposta.status_code, status.HTTP_302_FOUND)
+        self.assertIn(f"/instancias/{self.instancia.slug}?autorizado=1", resposta["Location"])
         self.instancia.refresh_from_db()
         self.assertEqual(self.instancia.access_token, "access-final")
         self.assertEqual(self.instancia.status, Instancia.Status.CONECTADO)
         self.assertEqual(self.instancia.oauth_state, "")  # state consumido, não reaproveitável
-        self.assertFalse(CAMPOS_PROIBIDOS & resposta.data.keys())
 
     @patch("apps.instancias.views.trocar_code_por_token")
     def test_callback_com_erro_do_tiny_marca_status_erro(self, mock_trocar):
@@ -212,7 +294,7 @@ class TinyOAuthCallbackTests(TestCase):
 
         resposta = self.client.get(self._url(code="code-invalido", state="state-correto"))
 
-        self.assertEqual(resposta.status_code, status.HTTP_400_BAD_REQUEST)
+        self._assertRedirecionaParaErro(resposta)
         self.instancia.refresh_from_db()
         self.assertEqual(self.instancia.status, Instancia.Status.ERRO)
         self.assertEqual(self.instancia.ultimo_erro, "code inválido")

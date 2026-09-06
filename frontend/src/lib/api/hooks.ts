@@ -4,13 +4,19 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "./client";
 import type {
   Alerta,
+  AutorizarResposta,
+  CadenciaFornecedor,
+  CredencialFornecedorResposta,
   ExecucaoAtividade,
+  FornecedorEnum,
   Instancia,
+  InstanciaDetalhe,
   LoginRequest,
   MeResponse,
   PaginatedInstanciaListagem,
   Periodo,
   Resumo,
+  SincronizarResposta,
   StatusInstancia,
 } from "./types";
 
@@ -110,11 +116,125 @@ export function useInstanciasListagem(filtros: FiltrosInstancias = {}) {
   });
 }
 
-/** Detalhe de uma instância por slug — usado na tela de detalhe (placeholder no passo 8). */
+/** Detalhe de uma instância por slug — traz os agregados da tela de detalhe (passo 10). */
 export function useInstancia(slug: string) {
   return useQuery({
     queryKey: ["instancias", "detalhe", slug],
-    queryFn: () => apiClient.get<Instancia>(`/instancias/${slug}`),
+    queryFn: () => apiClient.get<InstanciaDetalhe>(`/instancias/${slug}`),
     enabled: Boolean(slug),
+  });
+}
+
+interface DadosInstancia {
+  nome: string;
+  cnpj?: string;
+  client_id: string;
+  client_secret: string;
+}
+
+/** Passo 1/2 do wizard: cria a instância — é aqui que o slug nasce (passo 10). */
+export function useCriarInstancia() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (dados: DadosInstancia) => apiClient.post<Instancia>("/instancias/", dados),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["instancias", "listagem"] });
+    },
+  });
+}
+
+/** Editar identificação/credenciais de uma instância já criada (link "Editar" do wizard). */
+export function useAtualizarInstancia(slug: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (dados: Partial<DadosInstancia>) => apiClient.patch<Instancia>(`/instancias/${slug}/`, dados),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["instancias", "detalhe", slug] });
+      queryClient.invalidateQueries({ queryKey: ["instancias", "listagem"] });
+    },
+  });
+}
+
+/** Passo 3 do wizard: gera a URL de autorização do Tiny (state novo a cada chamada). */
+export function useAutorizar(slug: string) {
+  return useMutation({
+    mutationFn: () => apiClient.get<AutorizarResposta>(`/instancias/${slug}/autorizar/`),
+  });
+}
+
+/** Botão "Desconectar" do detalhe — limpa os tokens, mantém a instância. */
+export function useDesconectar(slug: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiClient.post<Instancia>(`/instancias/${slug}/desconectar/`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["instancias", "detalhe", slug] });
+      queryClient.invalidateQueries({ queryKey: ["instancias", "listagem"] });
+    },
+  });
+}
+
+/** Aba Fornecedores — credenciais mascaradas dos 4 fornecedores (nunca em texto pleno se sensíveis). */
+export function useCredenciais(slug: string) {
+  return useQuery({
+    queryKey: ["instancias", "credenciais", slug],
+    queryFn: () => apiClient.get<CredencialFornecedorResposta[]>(`/instancias/${slug}/credenciais/`),
+    enabled: Boolean(slug),
+  });
+}
+
+interface DadosCredencial {
+  credenciais: Record<string, string>;
+  ativo?: boolean;
+}
+
+/** Salva (upsert) a credencial de um fornecedor — nunca ecoa o valor enviado de volta. */
+export function useAtualizarCredencial(slug: string, fornecedor: FornecedorEnum) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (dados: DadosCredencial) =>
+      apiClient.put<CredencialFornecedorResposta>(`/instancias/${slug}/credenciais/${fornecedor}/`, dados),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["instancias", "credenciais", slug] });
+      queryClient.invalidateQueries({ queryKey: ["instancias", "detalhe", slug] });
+    },
+  });
+}
+
+/** Aba Fornecedores — cadência (intervalo/ativo) dos 4 fornecedores, com defaults quando ainda não configurada. */
+export function useCadencias(slug: string) {
+  return useQuery({
+    queryKey: ["instancias", "cadencias", slug],
+    queryFn: () => apiClient.get<CadenciaFornecedor[]>(`/instancias/${slug}/cadencias/`),
+    enabled: Boolean(slug),
+  });
+}
+
+interface DadosCadencia {
+  intervalo_minutos?: number;
+  ativo?: boolean;
+}
+
+export function useAtualizarCadencia(slug: string, fornecedor: FornecedorEnum) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (dados: DadosCadencia) =>
+      apiClient.patch<CadenciaFornecedor>(`/instancias/${slug}/cadencias/${fornecedor}/`, dados),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["instancias", "cadencias", slug] });
+      queryClient.invalidateQueries({ queryKey: ["instancias", "detalhe", slug] });
+    },
+  });
+}
+
+/** Dispara a sincronização manual de um fornecedor — devolve o id da execução na hora. */
+export function useSincronizarFornecedor(slug: string, fornecedor: FornecedorEnum) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiClient.post<SincronizarResposta>(`/instancias/${slug}/fornecedores/${fornecedor}/sincronizar/`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["instancias", "detalhe", slug] });
+    },
   });
 }

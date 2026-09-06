@@ -19,6 +19,7 @@ function criarInstancia(overrides: Partial<InstanciaListagem>): InstanciaListage
     ultimo_erro: "",
     access_token_preenchido: "",
     refresh_token_preenchido: "",
+    token_emitido_em: null,
     token_expira_em: null,
     refresh_expira_em: null,
     rate_limit_por_minuto: null,

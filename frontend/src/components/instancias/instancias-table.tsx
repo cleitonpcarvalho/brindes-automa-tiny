@@ -2,20 +2,14 @@
 
 import { useRouter } from "next/navigation"
 import { cn } from "cn"
-import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { FornecedorPills } from "./fornecedor-pills"
 import { AcoesMenu } from "./acoes-menu"
+import { StatusBadge } from "./status-badge"
 import { formatarExpiracaoToken, formatarNumero, formatarTempoRelativo } from "@/lib/format"
-import type { InstanciaListagem, StatusInstancia } from "@/lib/api/types"
-
-const BADGE_POR_STATUS: Record<StatusInstancia, { variant: "success" | "error" | "neutral"; rotulo: string }> = {
-  conectado: { variant: "success", rotulo: "Conectada" },
-  erro: { variant: "error", rotulo: "Erro" },
-  nao_conectado: { variant: "neutral", rotulo: "Não conectada" },
-}
+import type { InstanciaListagem } from "@/lib/api/types"
 
 const FORNECEDOR_ABREVIADO: Record<string, string> = {
   xbz: "XBZ",
@@ -116,9 +110,7 @@ export function InstanciasTable({ itens, isLoading, isError, onRetry }: Props) {
                     </span>
                   </TableCell>
                   <TableCell>
-                    <Badge variant={BADGE_POR_STATUS[instancia.status].variant}>
-                      {BADGE_POR_STATUS[instancia.status].rotulo}
-                    </Badge>
+                    <StatusBadge status={instancia.status} />
                   </TableCell>
                   <TableCell>
                     <FornecedorPills fornecedores={instancia.fornecedores} />

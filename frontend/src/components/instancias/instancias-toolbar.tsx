@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { Search } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -44,8 +45,8 @@ export function InstanciasToolbar({ busca, onBuscaChange, status, onStatusChange
           </SelectContent>
         </Select>
       </div>
-      <Button variant="primary" disabled title="Cadastro de instância chega em um passo futuro">
-        Nova instância
+      <Button variant="primary" asChild>
+        <Link href="/instancias/novo">Nova instância</Link>
       </Button>
     </div>
   )

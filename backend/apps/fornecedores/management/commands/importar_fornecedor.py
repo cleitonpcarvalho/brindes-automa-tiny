@@ -3,7 +3,7 @@ from django.utils import timezone
 
 from apps.catalogo.models import Produto, Variacao, calcular_hash_conteudo
 from apps.instancias.constants import Fornecedor
-from apps.instancias.models import CredencialFornecedor, Instancia
+from apps.instancias.models import Instancia
 from apps.sincronizacao.models import (
     Execucao,
     LogItem,
@@ -12,8 +12,8 @@ from apps.sincronizacao.models import (
     TipoExecucao,
 )
 
-from ...models import ConfiguracaoFornecedor
 from ...registry import obter_cliente
+from ...services import checar_limite_diario_xbz, obter_configuracao, obter_credencial_ativa
 
 
 class Command(BaseCommand):
@@ -37,34 +37,65 @@ class Command(BaseCommand):
             help="ignora a checagem de 'já importei esse fornecedor hoje' (relevante para a "
             "xbz, que tem limite de 24 chamadas/dia).",
         )
+        parser.add_argument(
+            "--execucao-id",
+            type=int,
+            default=None,
+            help="reusa uma Execucao já criada (passo 10: sincronização manual via API, que "
+            "precisa devolver o id da execução antes de enfileirar) em vez de criar uma nova "
+            "e pula as checagens de limite diário/credencial — quem criou a Execucao já as fez.",
+        )
 
     def handle(self, *args, **options):
         instancia = self._obter_instancia(options["instancia_slug"])
         fornecedor = options["fornecedor"]
+        execucao_id = options["execucao_id"]
 
-        self._checar_limite_diario(instancia, fornecedor, options["force"])
-        credencial = self._obter_credencial(instancia, fornecedor)
-        configuracao = self._obter_configuracao(fornecedor)
+        if execucao_id is None:
+            self._checar_limite_diario(instancia, fornecedor, options["force"])
+            credencial = self._obter_credencial(instancia, fornecedor)
+            execucao = Execucao.objects.create(
+                instancia=instancia, fornecedor=fornecedor, tipo=options["tipo"]
+            )
+        else:
+            execucao = self._obter_execucao(execucao_id)
+            credencial = None  # buscada dentro do try — ver comentário abaixo
 
-        execucao = Execucao.objects.create(
-            instancia=instancia, fornecedor=fornecedor, tipo=options["tipo"]
-        )
+        try:
+            if credencial is None:
+                # Caminho da sincronização manual (passo 10): a view já validou
+                # a credencial de forma síncrona antes de criar a Execucao e
+                # enfileirar, mas entre o enqueue e esta chamada ela pode ter
+                # sido desativada/removida (corrida rara) — nesse caso, cair no
+                # `except Exception` abaixo e marcar a Execucao como falha é o
+                # comportamento certo, em vez de deixá-la presa em "rodando".
+                credencial = obter_credencial_ativa(instancia, fornecedor)
 
-        cliente = obter_cliente(fornecedor, configuracao=configuracao)
+            configuracao = obter_configuracao(fornecedor)
+            cliente = obter_cliente(fornecedor, configuracao=configuracao)
 
-        payload_bruto = self._buscar(cliente, credencial, execucao)
-        produtos_normalizados = self._normalizar(cliente, payload_bruto, execucao)
+            payload_bruto = self._buscar(cliente, credencial, execucao)
+            produtos_normalizados = self._normalizar(cliente, payload_bruto, execucao)
 
-        totais = self._gravar(instancia, fornecedor, produtos_normalizados, execucao)
+            totais = self._gravar(instancia, fornecedor, produtos_normalizados, execucao)
 
-        execucao.finalizada_em = timezone.now()
-        execucao.total_lidos = totais["lidos"]
-        execucao.total_novos = totais["novos"]
-        execucao.total_atualizados = totais["atualizados"]
-        execucao.total_ignorados = totais["ignorados"]
-        execucao.total_erros = totais["erros"]
-        execucao.status = StatusExecucao.SUCESSO if totais["erros"] == 0 else StatusExecucao.PARCIAL
-        execucao.save()
+            execucao.finalizada_em = timezone.now()
+            execucao.total_lidos = totais["lidos"]
+            execucao.total_novos = totais["novos"]
+            execucao.total_atualizados = totais["atualizados"]
+            execucao.total_ignorados = totais["ignorados"]
+            execucao.total_erros = totais["erros"]
+            execucao.status = StatusExecucao.SUCESSO if totais["erros"] == 0 else StatusExecucao.PARCIAL
+            execucao.save()
+        except CommandError:
+            raise
+        except Exception as exc:
+            # Qualquer falha não prevista nos pontos específicos abaixo (ex.:
+            # erro ao gravar fora do loop de itens) não pode deixar a Execucao
+            # presa em "rodando" para sempre — a sincronização manual (passo
+            # 10) mostra esse status ao usuário em tempo real.
+            self._falhar_execucao(execucao, "Falha inesperada na importação", exc)
+            raise CommandError(str(exc)) from exc
 
         LogItem.objects.create(
             execucao=execucao,
@@ -83,36 +114,23 @@ class Command(BaseCommand):
         except Instancia.DoesNotExist:
             raise CommandError(f"Instância com slug '{slug}' não encontrada.") from None
 
+    def _obter_execucao(self, execucao_id):
+        try:
+            return Execucao.objects.get(pk=execucao_id)
+        except Execucao.DoesNotExist:
+            raise CommandError(f"Execucao com id '{execucao_id}' não encontrada.") from None
+
     def _checar_limite_diario(self, instancia, fornecedor, force):
-        # A xbz tem limite de 24 chamadas/dia compartilhado com o cliente
-        # final (ver apps/fornecedores/xbz.py) — nunca repetir sem querer.
-        if fornecedor != Fornecedor.XBZ or force:
-            return
-        ja_rodou_hoje = Execucao.objects.filter(
-            instancia=instancia,
-            fornecedor=fornecedor,
-            status__in=[StatusExecucao.SUCESSO, StatusExecucao.PARCIAL],
-            iniciada_em__date=timezone.localdate(),
-        ).exists()
-        if ja_rodou_hoje:
-            raise CommandError(
-                "xbz já foi importado hoje para esta instância. Use --force para repetir "
-                "(lembre-se do limite de 24 chamadas/dia, compartilhado com o cliente final)."
-            )
+        try:
+            checar_limite_diario_xbz(instancia, fornecedor, force=force)
+        except ValueError as exc:
+            raise CommandError(str(exc)) from exc
 
     def _obter_credencial(self, instancia, fornecedor):
         try:
-            return CredencialFornecedor.objects.get(
-                instancia=instancia, fornecedor=fornecedor, ativo=True
-            )
-        except CredencialFornecedor.DoesNotExist:
-            raise CommandError(
-                f"Não há credencial ativa de '{fornecedor}' para a instância '{instancia}'."
-            ) from None
-
-    def _obter_configuracao(self, fornecedor):
-        config = ConfiguracaoFornecedor.objects.filter(fornecedor=fornecedor).first()
-        return {"url_base_imagens": config.url_base_imagens} if config else {}
+            return obter_credencial_ativa(instancia, fornecedor)
+        except ValueError as exc:
+            raise CommandError(str(exc)) from exc
 
     def _buscar(self, cliente, credencial, execucao):
         try:

@@ -13,10 +13,7 @@ import { VisaoGeralTab } from "./visao-geral-tab"
 import { FornecedoresTab } from "./fornecedores-tab"
 import { ProdutosTab } from "./produtos-tab"
 import { ExecucoesTab } from "./execucoes-tab"
-
-const ABAS_PLACEHOLDER = [
-  { valor: "configuracoes", rotulo: "Configurações" },
-] as const
+import { ConfiguracoesTab } from "./configuracoes-tab"
 
 export function InstanciaDetalheView({ slug }: { slug: string }) {
   const router = useRouter()
@@ -87,11 +84,7 @@ export function InstanciaDetalheView({ slug }: { slug: string }) {
             <TabsTrigger value="fornecedores">Fornecedores</TabsTrigger>
             <TabsTrigger value="produtos">Produtos</TabsTrigger>
             <TabsTrigger value="execucoes">Execuções</TabsTrigger>
-            {ABAS_PLACEHOLDER.map((placeholder) => (
-              <TabsTrigger key={placeholder.valor} value={placeholder.valor}>
-                {placeholder.rotulo}
-              </TabsTrigger>
-            ))}
+            <TabsTrigger value="configuracoes">Configurações</TabsTrigger>
           </TabsList>
 
           <TabsContent value="visao-geral">
@@ -110,16 +103,9 @@ export function InstanciaDetalheView({ slug }: { slug: string }) {
             <ExecucoesTab slug={slug} />
           </TabsContent>
 
-          {ABAS_PLACEHOLDER.map((placeholder) => (
-            <TabsContent key={placeholder.valor} value={placeholder.valor}>
-              <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-border bg-card py-16 text-center">
-                <p className="text-body-medium text-foreground">Tela em construção</p>
-                <p className="max-w-md text-caption-label text-muted-foreground">
-                  A aba &quot;{placeholder.rotulo}&quot; chega em um passo futuro.
-                </p>
-              </div>
-            </TabsContent>
-          ))}
+          <TabsContent value="configuracoes">
+            <ConfiguracoesTab slug={slug} />
+          </TabsContent>
         </Tabs>
       )}
     </div>

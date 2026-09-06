@@ -5,6 +5,7 @@ from .auth_views import LoginView, LogoutView, MeView
 from .views import (
     CadenciaFornecedorDetailView,
     CadenciasFornecedorView,
+    ConfiguracoesInstanciaView,
     CredencialFornecedorDetailView,
     CredenciaisFornecedorView,
     ExecucaoLogsView,
@@ -33,6 +34,11 @@ urlpatterns = router.urls + [
         "instancias/<slug:slug>/credenciais/<str:fornecedor>/",
         CredencialFornecedorDetailView.as_view(),
         name="instancia-credencial-detalhe",
+    ),
+    path(
+        "instancias/<slug:slug>/configuracoes/",
+        ConfiguracoesInstanciaView.as_view(),
+        name="instancia-configuracoes",
     ),
     path(
         "instancias/<slug:slug>/cadencias/",

@@ -23,6 +23,9 @@ export type VariacaoEspelho = components["schemas"]["VariacaoEspelho"];
 export type PaginatedVariacaoEspelhoList = components["schemas"]["PaginatedVariacaoEspelhoList"];
 export type StatusVariacao = components["schemas"]["StatusVariacaoEnum"];
 
+export type ConfiguracoesInstancia = components["schemas"]["ConfiguracoesInstancia"];
+export type PatchedConfiguracoesInstancia = components["schemas"]["PatchedConfiguracoesInstancia"];
+
 export type Execucao = components["schemas"]["Execucao"];
 export type PaginatedExecucaoList = components["schemas"]["PaginatedExecucaoList"];
 export type TipoExecucao = components["schemas"]["TipoExecucaoEnum"];

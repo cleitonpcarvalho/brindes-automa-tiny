@@ -214,6 +214,61 @@ export interface paths {
         patch: operations["instancias_cadencias_partial_update"];
         trace?: never;
     };
+    "/api/instancias/{slug}/configuracoes/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description GET / PATCH / PUT /api/instancias/<slug>/configuracoes/
+         *
+         *     Lê e grava só as configurações operacionais do Tiny da instância
+         *     (`tiny_origem_padrao`, `tiny_unidade_medida_padrao`) — os campos que
+         *     antes só o Django Admin editava. A superfície é o
+         *     `ConfiguracoesInstanciaSerializer`, que só conhece esses dois campos;
+         *     qualquer outra chave enviada é ignorada. Nenhuma ação de
+         *     sincronização/Tiny: só persiste.
+         *
+         *     Isolamento: resolve exatamente uma instância pelo slug da URL; não há
+         *     parâmetro que alcance outra.
+         */
+        get: operations["instancias_configuracoes_retrieve"];
+        /**
+         * @description GET / PATCH / PUT /api/instancias/<slug>/configuracoes/
+         *
+         *     Lê e grava só as configurações operacionais do Tiny da instância
+         *     (`tiny_origem_padrao`, `tiny_unidade_medida_padrao`) — os campos que
+         *     antes só o Django Admin editava. A superfície é o
+         *     `ConfiguracoesInstanciaSerializer`, que só conhece esses dois campos;
+         *     qualquer outra chave enviada é ignorada. Nenhuma ação de
+         *     sincronização/Tiny: só persiste.
+         *
+         *     Isolamento: resolve exatamente uma instância pelo slug da URL; não há
+         *     parâmetro que alcance outra.
+         */
+        put: operations["instancias_configuracoes_update"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * @description GET / PATCH / PUT /api/instancias/<slug>/configuracoes/
+         *
+         *     Lê e grava só as configurações operacionais do Tiny da instância
+         *     (`tiny_origem_padrao`, `tiny_unidade_medida_padrao`) — os campos que
+         *     antes só o Django Admin editava. A superfície é o
+         *     `ConfiguracoesInstanciaSerializer`, que só conhece esses dois campos;
+         *     qualquer outra chave enviada é ignorada. Nenhuma ação de
+         *     sincronização/Tiny: só persiste.
+         *
+         *     Isolamento: resolve exatamente uma instância pelo slug da URL; não há
+         *     parâmetro que alcance outra.
+         */
+        patch: operations["instancias_configuracoes_partial_update"];
+        trace?: never;
+    };
     "/api/instancias/{slug}/credenciais/": {
         parameters: {
             query?: never;
@@ -471,6 +526,23 @@ export interface components {
             ativo?: boolean;
             /** Format: date-time */
             readonly proxima_execucao_em: string | null;
+        };
+        /**
+         * @description Configurações operacionais do Tiny da instância — os dois campos que hoje
+         *     só o Django Admin edita. É deliberadamente estreito: nenhum campo sensível
+         *     (slug, cnpj, client_id/secret, tokens, status) está nos `fields`, então um
+         *     PATCH/PUT por esta rota não tem como tocá-los — chaves extras no corpo são
+         *     ignoradas pelo DRF.
+         *
+         *     As validações vêm do próprio model: `tiny_origem_padrao` herda os
+         *     MinValueValidator(0)/MaxValueValidator(8) e `tiny_unidade_medida_padrao`
+         *     herda max_length=10.
+         */
+        ConfiguracoesInstancia: {
+            /** @description Código de origem da mercadoria (tabela de origem da legislação fiscal — NF-e): 0 = nacional, 1 = estrangeira, importação direta, 2 a 8 = demais casos da tabela. Sem valor padrão fixo — configure antes de cadastrar produtos. */
+            tiny_origem_padrao?: number | null;
+            /** @description Unidade de medida padrão (ex.: UN, PC, CX). Sem valor padrão fixo — configure antes de cadastrar produtos. */
+            tiny_unidade_medida_padrao?: string;
         };
         /**
          * @description * `ok` - ok
@@ -832,6 +904,23 @@ export interface components {
             ativo?: boolean;
             /** Format: date-time */
             readonly proxima_execucao_em?: string | null;
+        };
+        /**
+         * @description Configurações operacionais do Tiny da instância — os dois campos que hoje
+         *     só o Django Admin edita. É deliberadamente estreito: nenhum campo sensível
+         *     (slug, cnpj, client_id/secret, tokens, status) está nos `fields`, então um
+         *     PATCH/PUT por esta rota não tem como tocá-los — chaves extras no corpo são
+         *     ignoradas pelo DRF.
+         *
+         *     As validações vêm do próprio model: `tiny_origem_padrao` herda os
+         *     MinValueValidator(0)/MaxValueValidator(8) e `tiny_unidade_medida_padrao`
+         *     herda max_length=10.
+         */
+        PatchedConfiguracoesInstancia: {
+            /** @description Código de origem da mercadoria (tabela de origem da legislação fiscal — NF-e): 0 = nacional, 1 = estrangeira, importação direta, 2 a 8 = demais casos da tabela. Sem valor padrão fixo — configure antes de cadastrar produtos. */
+            tiny_origem_padrao?: number | null;
+            /** @description Unidade de medida padrão (ex.: UN, PC, CX). Sem valor padrão fixo — configure antes de cadastrar produtos. */
+            tiny_unidade_medida_padrao?: string;
         };
         /**
          * @description Nunca inclui client_secret, access_token ou refresh_token — só
@@ -1309,6 +1398,81 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CadenciaFornecedor"];
+                };
+            };
+        };
+    };
+    instancias_configuracoes_retrieve: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfiguracoesInstancia"];
+                };
+            };
+        };
+    };
+    instancias_configuracoes_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ConfiguracoesInstancia"];
+                "application/x-www-form-urlencoded": components["schemas"]["ConfiguracoesInstancia"];
+                "multipart/form-data": components["schemas"]["ConfiguracoesInstancia"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfiguracoesInstancia"];
+                };
+            };
+        };
+    };
+    instancias_configuracoes_partial_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["PatchedConfiguracoesInstancia"];
+                "application/x-www-form-urlencoded": components["schemas"]["PatchedConfiguracoesInstancia"];
+                "multipart/form-data": components["schemas"]["PatchedConfiguracoesInstancia"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfiguracoesInstancia"];
                 };
             };
         };

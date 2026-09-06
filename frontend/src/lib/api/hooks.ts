@@ -6,6 +6,7 @@ import type {
   Alerta,
   AutorizarResposta,
   CadenciaFornecedor,
+  ConfiguracoesInstancia,
   CredencialFornecedorResposta,
   ExecucaoAtividade,
   FornecedorEnum,
@@ -17,6 +18,7 @@ import type {
   PaginatedInstanciaListagem,
   PaginatedLogItemList,
   PaginatedVariacaoEspelhoList,
+  PatchedConfiguracoesInstancia,
   Periodo,
   Resumo,
   SincronizarResposta,
@@ -204,6 +206,31 @@ export function useExecucaoLogs(slug: string, execucaoId: number | null) {
         `/instancias/${slug}/execucoes/${execucaoId}/logs?page_size=200`,
       ),
     enabled: Boolean(slug && execucaoId),
+  });
+}
+
+/** Aba Configurações — só os campos operacionais do Tiny editáveis (origem, unidade). */
+export function useConfiguracoesInstancia(slug: string) {
+  return useQuery({
+    queryKey: ["instancias", "configuracoes", slug],
+    queryFn: () =>
+      apiClient.get<ConfiguracoesInstancia>(`/instancias/${slug}/configuracoes/`),
+    enabled: Boolean(slug),
+  });
+}
+
+/** Salva (PATCH) as configurações do Tiny — endpoint estreito, não toca campos sensíveis. */
+export function useAtualizarConfiguracoes(slug: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (dados: PatchedConfiguracoesInstancia) =>
+      apiClient.patch<ConfiguracoesInstancia>(`/instancias/${slug}/configuracoes/`, dados),
+    onSuccess: (dados) => {
+      queryClient.setQueryData(["instancias", "configuracoes", slug], dados);
+      queryClient.invalidateQueries({ queryKey: ["instancias", "configuracoes", slug] });
+      queryClient.invalidateQueries({ queryKey: ["instancias", "detalhe", slug] });
+      queryClient.invalidateQueries({ queryKey: ["instancias", "listagem"] });
+    },
   });
 }
 

@@ -345,6 +345,24 @@ class CadenciaFornecedorSerializer(serializers.Serializer):
     proxima_execucao_em = serializers.DateTimeField(read_only=True, allow_null=True)
 
 
+class ConfiguracoesInstanciaSerializer(serializers.ModelSerializer):
+    """
+    Configurações operacionais do Tiny da instância — os dois campos que hoje
+    só o Django Admin edita. É deliberadamente estreito: nenhum campo sensível
+    (slug, cnpj, client_id/secret, tokens, status) está nos `fields`, então um
+    PATCH/PUT por esta rota não tem como tocá-los — chaves extras no corpo são
+    ignoradas pelo DRF.
+
+    As validações vêm do próprio model: `tiny_origem_padrao` herda os
+    MinValueValidator(0)/MaxValueValidator(8) e `tiny_unidade_medida_padrao`
+    herda max_length=10.
+    """
+
+    class Meta:
+        model = Instancia
+        fields = ["tiny_origem_padrao", "tiny_unidade_medida_padrao"]
+
+
 class SincronizarRespostaSerializer(serializers.Serializer):
     execucao_id = serializers.IntegerField()
     status = serializers.ChoiceField(choices=StatusExecucao.choices)

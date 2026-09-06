@@ -43,6 +43,7 @@ from .pagination import (
 from .serializers import (
     AutorizarRespostaSerializer,
     CadenciaFornecedorSerializer,
+    ConfiguracoesInstanciaSerializer,
     CredencialFornecedorEntradaSerializer,
     CredencialFornecedorRespostaSerializer,
     InstanciaDetalheSerializer,
@@ -527,3 +528,24 @@ class ExecucaoLogsView(generics.ListAPIView):
             queryset = queryset.filter(nivel=nivel)
 
         return queryset
+
+
+class ConfiguracoesInstanciaView(generics.RetrieveUpdateAPIView):
+    """
+    GET / PATCH / PUT /api/instancias/<slug>/configuracoes/
+
+    Lê e grava só as configurações operacionais do Tiny da instância
+    (`tiny_origem_padrao`, `tiny_unidade_medida_padrao`) — os campos que
+    antes só o Django Admin editava. A superfície é o
+    `ConfiguracoesInstanciaSerializer`, que só conhece esses dois campos;
+    qualquer outra chave enviada é ignorada. Nenhuma ação de
+    sincronização/Tiny: só persiste.
+
+    Isolamento: resolve exatamente uma instância pelo slug da URL; não há
+    parâmetro que alcance outra.
+    """
+
+    serializer_class = ConfiguracoesInstanciaSerializer
+    queryset = Instancia.objects.all()
+    lookup_field = "slug"
+    http_method_names = ["get", "patch", "put", "head", "options"]

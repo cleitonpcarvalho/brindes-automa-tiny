@@ -31,7 +31,7 @@ class ImportarFornecedorIdempotenciaTests(TestCase):
     @patch("apps.fornecedores.xbz.XbzFornecedor.buscar")
     def test_primeira_importacao_cria_produto_e_variacoes(self, mock_buscar):
         mock_buscar.return_value = XBZ_GRUPO_06520
-        call_command("importar_fornecedor", self.instancia.slug, "xbz")
+        call_command("importar_fornecedor", self.instancia.slug, "xbz", "--mirror-only")
 
         self.assertEqual(Produto.objects.count(), 1)
         self.assertEqual(Variacao.objects.count(), 6)
@@ -46,8 +46,8 @@ class ImportarFornecedorIdempotenciaTests(TestCase):
     @patch("apps.fornecedores.xbz.XbzFornecedor.buscar")
     def test_rodar_duas_vezes_seguidas_nao_duplica_nada(self, mock_buscar):
         mock_buscar.return_value = XBZ_GRUPO_06520
-        call_command("importar_fornecedor", self.instancia.slug, "xbz")
-        call_command("importar_fornecedor", self.instancia.slug, "xbz", "--force")
+        call_command("importar_fornecedor", self.instancia.slug, "xbz", "--mirror-only")
+        call_command("importar_fornecedor", self.instancia.slug, "xbz", "--force", "--mirror-only")
 
         self.assertEqual(Produto.objects.count(), 1)
         self.assertEqual(Variacao.objects.count(), 6)
@@ -60,14 +60,14 @@ class ImportarFornecedorIdempotenciaTests(TestCase):
     @patch("apps.fornecedores.xbz.XbzFornecedor.buscar")
     def test_status_ja_definido_nao_e_alterado_pela_segunda_rodada(self, mock_buscar):
         mock_buscar.return_value = XBZ_GRUPO_06520
-        call_command("importar_fornecedor", self.instancia.slug, "xbz")
+        call_command("importar_fornecedor", self.instancia.slug, "xbz", "--mirror-only")
 
         variacao = Variacao.objects.get(sku="X000019")
         variacao.status = StatusVariacao.CADASTRADO
         variacao.tiny_id = "999"
         variacao.save()
 
-        call_command("importar_fornecedor", self.instancia.slug, "xbz", "--force")
+        call_command("importar_fornecedor", self.instancia.slug, "xbz", "--force", "--mirror-only")
 
         variacao.refresh_from_db()
         self.assertEqual(variacao.status, StatusVariacao.CADASTRADO)
@@ -76,13 +76,13 @@ class ImportarFornecedorIdempotenciaTests(TestCase):
     @patch("apps.fornecedores.xbz.XbzFornecedor.buscar")
     def test_preco_ou_estoque_mudando_conta_como_atualizado_nao_como_novo(self, mock_buscar):
         mock_buscar.return_value = XBZ_GRUPO_06520
-        call_command("importar_fornecedor", self.instancia.slug, "xbz")
+        call_command("importar_fornecedor", self.instancia.slug, "xbz", "--mirror-only")
 
         grupo_com_reposicao = [dict(linha) for linha in XBZ_GRUPO_06520]
         grupo_com_reposicao[0]["QuantidadeDisponivel"] = 99999
         mock_buscar.return_value = grupo_com_reposicao
 
-        call_command("importar_fornecedor", self.instancia.slug, "xbz", "--force")
+        call_command("importar_fornecedor", self.instancia.slug, "xbz", "--force", "--mirror-only")
 
         self.assertEqual(Variacao.objects.count(), 6)  # continua sem duplicar
         variacao = Variacao.objects.get(sku="X000019")
@@ -96,10 +96,10 @@ class ImportarFornecedorIdempotenciaTests(TestCase):
     @patch("apps.fornecedores.xbz.XbzFornecedor.buscar")
     def test_segunda_chamada_no_mesmo_dia_e_bloqueada_sem_force(self, mock_buscar):
         mock_buscar.return_value = XBZ_GRUPO_06520
-        call_command("importar_fornecedor", self.instancia.slug, "xbz")
+        call_command("importar_fornecedor", self.instancia.slug, "xbz", "--mirror-only")
 
         with self.assertRaises(CommandError):
-            call_command("importar_fornecedor", self.instancia.slug, "xbz")
+            call_command("importar_fornecedor", self.instancia.slug, "xbz", "--mirror-only")
 
         # a checagem falha ANTES de qualquer nova chamada de rede
         self.assertEqual(mock_buscar.call_count, 1)
@@ -107,7 +107,7 @@ class ImportarFornecedorIdempotenciaTests(TestCase):
     @patch("apps.fornecedores.xbz.XbzFornecedor.buscar")
     def test_produto_com_prefixo_p_arroba_entra_direto_como_descontinuado(self, mock_buscar):
         mock_buscar.return_value = XBZ_GRUPO_P12288
-        call_command("importar_fornecedor", self.instancia.slug, "xbz")
+        call_command("importar_fornecedor", self.instancia.slug, "xbz", "--mirror-only")
 
         produto = Produto.objects.get(codigo_pai="P@12288")
         self.assertTrue(produto.descontinuado)
@@ -137,7 +137,7 @@ class ImportarFornecedorComExecucaoIdTests(TestCase):
         )
 
         call_command(
-            "importar_fornecedor", self.instancia.slug, "xbz", execucao_id=execucao.id
+            "importar_fornecedor", self.instancia.slug, "xbz", execucao_id=execucao.id, mirror_only=True
         )
 
         self.assertEqual(Execucao.objects.count(), 1)
@@ -148,7 +148,7 @@ class ImportarFornecedorComExecucaoIdTests(TestCase):
     @patch("apps.fornecedores.xbz.XbzFornecedor.buscar")
     def test_pula_a_checagem_de_limite_diario_quando_execucao_id_e_passado(self, mock_buscar):
         mock_buscar.return_value = XBZ_GRUPO_06520
-        call_command("importar_fornecedor", self.instancia.slug, "xbz")  # já rodou hoje
+        call_command("importar_fornecedor", self.instancia.slug, "xbz", "--mirror-only")  # já rodou hoje
 
         execucao_manual = Execucao.objects.create(
             instancia=self.instancia, fornecedor="xbz", tipo=TipoExecucao.INCREMENTAL
@@ -156,7 +156,7 @@ class ImportarFornecedorComExecucaoIdTests(TestCase):
         # sem --execucao-id isso levantaria CommandError (limite diário) — com
         # ele, a checagem é pulada porque quem chamou já validou antes
         call_command(
-            "importar_fornecedor", self.instancia.slug, "xbz", execucao_id=execucao_manual.id
+            "importar_fornecedor", self.instancia.slug, "xbz", execucao_id=execucao_manual.id, mirror_only=True
         )
 
         execucao_manual.refresh_from_db()
@@ -170,7 +170,7 @@ class ImportarFornecedorComExecucaoIdTests(TestCase):
 
         with self.assertRaises(CommandError):
             call_command(
-                "importar_fornecedor", self.instancia.slug, "xbz", execucao_id=execucao.id
+                "importar_fornecedor", self.instancia.slug, "xbz", execucao_id=execucao.id, mirror_only=True
             )
 
         execucao.refresh_from_db()

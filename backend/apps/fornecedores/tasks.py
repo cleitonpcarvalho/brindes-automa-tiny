@@ -41,7 +41,12 @@ def sincronizar_fornecedor_task(instancia_id, fornecedor):
     """
     instancia = Instancia.objects.get(pk=instancia_id)
     try:
-        call_command("importar_fornecedor", instancia.slug, fornecedor, tipo="incremental")
+        # A sincronização automática também é espelho-apenas: este comando não
+        # escreve no Tiny em nenhum modo. O passo de cadastro no Tiny é um
+        # comando separado (cadastrar_produtos_tiny), disparado à parte.
+        call_command(
+            "importar_fornecedor", instancia.slug, fornecedor, tipo="incremental", mirror_only=True
+        )
     except CommandError as exc:
         logger.info("sincronização de %s/%s pulada: %s", instancia.slug, fornecedor, exc)
 
@@ -65,6 +70,7 @@ def executar_sincronizacao_manual_task(execucao_id):
             execucao.fornecedor,
             tipo=execucao.tipo,
             execucao_id=execucao.id,
+            mirror_only=True,
         )
     except Exception as exc:
         logger.exception(

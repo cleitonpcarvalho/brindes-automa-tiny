@@ -1,7 +1,7 @@
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
-from apps.catalogo.models import Produto, Variacao, calcular_hash_conteudo
+from apps.catalogo.models import Produto, StatusVariacao, Variacao, calcular_hash_conteudo
 from apps.instancias.constants import Fornecedor
 from apps.instancias.models import Instancia
 from apps.sincronizacao.models import (
@@ -18,13 +18,30 @@ from ...services import checar_limite_diario_xbz, obter_configuracao, obter_cred
 
 class Command(BaseCommand):
     help = (
-        "Busca o catálogo de um fornecedor para uma instância, normaliza e grava no "
-        "espelho local (Produto/Variacao). Não escreve nada no Tiny."
+        "Busca o catálogo de UM fornecedor para UMA instância, normaliza e grava no "
+        "espelho local (Produto/Variacao). Modo espelho apenas: NÃO importa nenhum "
+        "código do Tiny, NÃO cria/atualiza produto no Tiny, NÃO mexe em cadências. "
+        "Exige --mirror-only explicitamente para deixar essa intenção registrada. "
+        "Com --dry-run, chama o fornecedor e normaliza mas não grava nada (nem "
+        "Execucao/LogItem) — só imprime um resumo do payload."
     )
 
     def add_arguments(self, parser):
         parser.add_argument("instancia_slug", help="slug da Instancia")
         parser.add_argument("fornecedor", choices=[f.value for f in Fornecedor])
+        parser.add_argument(
+            "--mirror-only",
+            action="store_true",
+            help="Confirma explicitamente que esta execução só popula o espelho "
+            "PostgreSQL e não escreve nada no Tiny. Obrigatório.",
+        )
+        parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="Faz a chamada real ao fornecedor e a normalização, imprime um "
+            "resumo do payload normalizado e NÃO grava nada: sem Produto, sem "
+            "Variacao, sem Execucao, sem LogItem, sem Tiny. Ainda exige --mirror-only.",
+        )
         parser.add_argument(
             "--tipo",
             choices=[t.value for t in TipoExecucao],
@@ -47,9 +64,21 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        if not options["mirror_only"]:
+            raise CommandError(
+                "Passe --mirror-only para confirmar que esta ingestão só popula o "
+                "espelho PostgreSQL (nenhuma escrita no Tiny, nenhuma cadência tocada, "
+                "só o fornecedor informado)."
+            )
+
         instancia = self._obter_instancia(options["instancia_slug"])
         fornecedor = options["fornecedor"]
         execucao_id = options["execucao_id"]
+
+        if options["dry_run"]:
+            if execucao_id is not None:
+                raise CommandError("--dry-run é incompatível com --execucao-id (o dry-run não toca nenhuma Execucao).")
+            return self._dry_run(instancia, fornecedor, options["force"])
 
         if execucao_id is None:
             self._checar_limite_diario(instancia, fornecedor, options["force"])
@@ -60,6 +89,18 @@ class Command(BaseCommand):
         else:
             execucao = self._obter_execucao(execucao_id)
             credencial = None  # buscada dentro do try — ver comentário abaixo
+
+        LogItem.objects.create(
+            execucao=execucao,
+            nivel=NivelLog.INFO,
+            mensagem="Ingestão iniciada — modo espelho apenas",
+            detalhe={
+                "modo": "mirror-only",
+                "instancia": instancia.slug,
+                "fornecedor": fornecedor,
+                "escreve_no_tiny": False,
+            },
+        )
 
         try:
             if credencial is None:
@@ -105,6 +146,124 @@ class Command(BaseCommand):
         )
 
         self.stdout.write(self.style.SUCCESS(f"[{fornecedor}] {instancia}: {totais}"))
+
+    # -- dry-run ------------------------------------------------------------
+
+    def _dry_run(self, instancia, fornecedor, force):
+        """
+        Chama o fornecedor de verdade e normaliza, mas NÃO grava nada: nenhum
+        Produto, Variacao, Execucao ou LogItem, e nenhuma chamada ao Tiny.
+        Serve para validar payload/normalização/contagens antes da 1ª ingestão.
+        """
+        self._checar_limite_diario(instancia, fornecedor, force)
+        credencial = self._obter_credencial(instancia, fornecedor)
+
+        configuracao = obter_configuracao(fornecedor)
+        cliente = obter_cliente(fornecedor, configuracao=configuracao)
+
+        try:
+            payload_bruto = cliente.buscar(credencial.credenciais)
+        except Exception as exc:
+            raise CommandError(f"Falha ao buscar dados do fornecedor: {exc}") from exc
+
+        try:
+            produtos_normalizados = cliente.normalizar(payload_bruto)
+        except Exception as exc:
+            raise CommandError(f"Falha ao normalizar payload do fornecedor: {exc}") from exc
+
+        resumo = self._resumo_dry_run(fornecedor, instancia, produtos_normalizados)
+        self._imprimir_resumo_dry_run(resumo)
+        return None
+
+    def _resumo_dry_run(self, fornecedor, instancia, produtos_normalizados):
+        # Só métricas determináveis a partir do payload normalizado, sem
+        # persistir. A regra do prefixo "P@" (só xbz) é determinística aqui —
+        # é exatamente o critério de Produto.esta_saindo_de_linha(). A regra
+        # de estoque zero coincide com "estoque <= 0", já contado à parte.
+        regra_p_arroba = fornecedor == Fornecedor.XBZ
+
+        resumo = {
+            "fornecedor": fornecedor,
+            "instancia": instancia.slug,
+            "produtos_pai": len(produtos_normalizados),
+            "variacoes": 0,
+            "com_estoque": 0,
+            "sem_estoque": 0,
+            "descontinuadas_por_regra": 0,
+            "com_ncm": 0,
+            "sem_ncm": 0,
+            "com_imagem": 0,
+            "sem_imagem": 0,
+            "avisos_normalizacao": [],
+        }
+
+        for produto in produtos_normalizados:
+            se_saindo_de_linha = regra_p_arroba and str(produto.codigo_pai).startswith(
+                Produto.PREFIXO_XBZ_SAINDO_DE_LINHA
+            )
+            if not produto.codigo_pai:
+                resumo["avisos_normalizacao"].append("produto-pai sem codigo_pai")
+
+            skus_no_produto = set()
+            for variacao in produto.variacoes:
+                resumo["variacoes"] += 1
+
+                if variacao.estoque and variacao.estoque > 0:
+                    resumo["com_estoque"] += 1
+                else:
+                    resumo["sem_estoque"] += 1
+
+                if se_saindo_de_linha:
+                    resumo["descontinuadas_por_regra"] += 1
+
+                if (variacao.ncm or "").strip():
+                    resumo["com_ncm"] += 1
+                else:
+                    resumo["sem_ncm"] += 1
+
+                if variacao.imagens:
+                    resumo["com_imagem"] += 1
+                else:
+                    resumo["sem_imagem"] += 1
+
+                if not variacao.sku:
+                    resumo["avisos_normalizacao"].append(
+                        f"variação sem sku no produto {produto.codigo_pai!r}"
+                    )
+                elif variacao.sku in skus_no_produto:
+                    resumo["avisos_normalizacao"].append(
+                        f"sku duplicado dentro do mesmo produto: {variacao.sku!r}"
+                    )
+                skus_no_produto.add(variacao.sku)
+
+        return resumo
+
+    def _imprimir_resumo_dry_run(self, resumo):
+        w = self.stdout.write
+        w(self.style.WARNING("DRY-RUN — nada foi gravado (sem Produto/Variacao/Execucao/LogItem, sem Tiny)."))
+        w("")
+        w(f"  Fornecedor .................. {resumo['fornecedor']}")
+        w(f"  Instância ................... {resumo['instancia']}")
+        w(f"  Produtos-pai ................ {resumo['produtos_pai']}")
+        w(f"  Variações (total) .......... {resumo['variacoes']}")
+        w(f"  Com estoque (> 0) .......... {resumo['com_estoque']}")
+        w(f"  Sem estoque (<= 0) ......... {resumo['sem_estoque']}")
+        w(f"  Descontinuadas por regra ... {resumo['descontinuadas_por_regra']}  (prefixo P@ — só xbz)")
+        w(f"  Com NCM .................... {resumo['com_ncm']}")
+        w(f"  Sem NCM ................... {resumo['sem_ncm']}")
+        w(f"  Com imagem ................. {resumo['com_imagem']}")
+        w(f"  Sem imagem ................ {resumo['sem_imagem']}")
+
+        avisos = resumo["avisos_normalizacao"]
+        if avisos:
+            w("")
+            w(self.style.WARNING(f"  Avisos de normalização ({len(avisos)}):"))
+            for aviso in avisos[:50]:
+                w(f"    - {aviso}")
+            if len(avisos) > 50:
+                w(f"    … e mais {len(avisos) - 50}")
+        else:
+            w("  Avisos de normalização ..... nenhum")
 
     # -- passos ---------------------------------------------------------
 
@@ -156,7 +315,25 @@ class Command(BaseCommand):
         )
 
     def _gravar(self, instancia, fornecedor, produtos_normalizados, execucao):
-        totais = {"lidos": 0, "novos": 0, "atualizados": 0, "ignorados": 0, "erros": 0}
+        # `lidos`/`novos`/`atualizados`/`ignorados`/`erros` alimentam os campos
+        # de Execucao (mesmos nomes). `produtos`, `sem_estoque` e
+        # `ignorados_regra` são um recorte extra que só vai para o LogItem
+        # final (detalhe JSON) — sem coluna nova em Execucao:
+        #   produtos        = quantos produtos-pai foram lidos/gravados
+        #   sem_estoque     = variações que terminaram como 'aguardando'
+        #                     (estoque 0 no fornecedor — regra nº 3)
+        #   ignorados_regra = variações que terminaram 'descontinuado'
+        #                     (prefixo P@ da xbz — regra nº 2)
+        totais = {
+            "produtos": 0,
+            "lidos": 0,
+            "novos": 0,
+            "atualizados": 0,
+            "ignorados": 0,
+            "sem_estoque": 0,
+            "ignorados_regra": 0,
+            "erros": 0,
+        }
 
         for produto_normalizado in produtos_normalizados:
             try:
@@ -171,11 +348,19 @@ class Command(BaseCommand):
                 )
                 continue
 
+            totais["produtos"] += 1
+
             for variacao_normalizada in produto_normalizado.variacoes:
                 totais["lidos"] += 1
                 try:
                     resultado, variacao = self._gravar_variacao(produto, variacao_normalizada)
                     totais[resultado] += 1
+                    # Recorte do estado final da variação no espelho (conta em
+                    # toda passada — nova, atualizada ou ignorada por hash).
+                    if variacao.status == StatusVariacao.AGUARDANDO:
+                        totais["sem_estoque"] += 1
+                    elif variacao.status == StatusVariacao.DESCONTINUADO:
+                        totais["ignorados_regra"] += 1
                 except Exception as exc:
                     totais["erros"] += 1
                     LogItem.objects.create(

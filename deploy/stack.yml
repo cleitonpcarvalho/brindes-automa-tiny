@@ -165,7 +165,12 @@ services:
 
   beat:
     image: *backend-image
-    command: ["celery", "-A", "config", "beat", "-l", "info"]
+    # --schedule fora de /app: a imagem final roda como usuário `app` e o
+    # WORKDIR /app não é gravável em runtime, então o celery beat não
+    # consegue criar o arquivo de schedule no caminho padrão (./celerybeat-schedule).
+    # /tmp é gravável. Mantenha este argumento — sem ele o beat entra em
+    # crash-loop em produção.
+    command: ["celery", "-A", "config", "beat", "-l", "info", "--schedule=/tmp/celerybeat-schedule"]
     environment: *backend-env
     networks:
       - interna

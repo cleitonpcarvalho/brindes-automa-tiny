@@ -29,6 +29,75 @@ torne os pacotes públicos, ou configure um Registry no Portainer
 (Registries > Add registry > GitHub Container Registry) com um Personal
 Access Token com escopo `read:packages`.
 
+## 1b. Deploy automático (stack já existente)
+
+Depois que a stack já está criada no Swarm, o job `deploy` do mesmo
+workflow (`.github/workflows/publish.yml`) atualiza os serviços sozinho a
+cada push em `main`, **só se** o job `publish` (build+push das duas
+imagens) terminar com sucesso.
+
+O que ele faz, via SSH na VPS:
+
+```
+docker login ghcr.io            # token efêmero do próprio run (GITHUB_TOKEN)
+docker service update --with-registry-auth --force --image <backend:latest>  brindes-automa-tiny_backend
+docker service update --with-registry-auth --force --image <backend:latest>  brindes-automa-tiny_worker
+docker service update --with-registry-auth --force --image <backend:latest>  brindes-automa-tiny_beat
+docker service update --with-registry-auth --force --image <frontend:latest> brindes-automa-tiny_frontend
+docker logout ghcr.io
+```
+
+Depois, o runner do GitHub confere `GET https://sync-api.automasoluct.com.br/health/`
+(até ~5 min de tentativas) e falha o workflow se não voltar `200`.
+
+**Por que `docker service update --force` e não `docker stack deploy`:** o
+`--force` só troca a imagem e força o redeploy — o `command` de cada
+serviço é preservado. Isso mantém o `--schedule=/tmp/celerybeat-schedule`
+do `beat`. Um `docker stack deploy -c stack.yml` reaplicaria o `command`
+do arquivo e, se o `stack.yml` estivesse desatualizado, quebraria o beat.
+O `stack.yml` neste repo já inclui esse argumento no `beat`, mas o deploy
+automático não depende disso.
+
+Isso **não** cria a stack, não roda migrações e não mexe em
+`postgres`/`redis`/`migrate`. Primeiro deploy e migrações continuam
+manuais (seções 2 e 4).
+
+### Secrets do GitHub necessários
+
+Em *Settings → Secrets and variables → Actions*:
+
+| Secret | Para que serve |
+|---|---|
+| `VPS_HOST` | IP ou hostname da VPS (ex.: `203.0.113.10`). |
+| `VPS_USER` | Usuário SSH usado no deploy (precisa estar no grupo `docker` da VPS). |
+| `VPS_SSH_KEY` | Chave **privada** SSH (conteúdo do arquivo, OpenPGP/OpenSSH), exclusiva do GitHub Actions. |
+| `VPS_SSH_PORT` | Opcional. Porta SSH; se não cadastrar, usa `22`. |
+
+Nenhum secret de GHCR é necessário — o job usa o `GITHUB_TOKEN` efêmero
+(com permissão `packages: read`) para o `docker login` no nó do Swarm.
+
+### Chave SSH exclusiva para o GitHub Actions
+
+Sim — gere um par dedicado, não reaproveite sua chave pessoal:
+
+```
+# na sua máquina
+ssh-keygen -t ed25519 -C "github-actions-deploy brindes-automa-tiny" -f ./gha_deploy -N ""
+```
+
+1. Copie a **pública** (`gha_deploy.pub`) para o usuário de deploy na VPS:
+   `ssh-copy-id -i ./gha_deploy.pub deployuser@VPS_HOST`
+   (ou cole a linha em `~deployuser/.ssh/authorized_keys`).
+2. Cole a **privada** (`gha_deploy`, arquivo inteiro incluindo as linhas
+   `-----BEGIN/END-----`) no secret `VPS_SSH_KEY`.
+3. Apague `gha_deploy`/`gha_deploy.pub` da sua máquina depois.
+4. O usuário de deploy precisa poder rodar `docker` sem `sudo` (estar no
+   grupo `docker`) e ter acesso ao socket do Swarm manager.
+
+Endurecimento opcional: restrinja a chave em `authorized_keys` com
+`command="..."`/`from="<ip-do-runner>"`, ou fixe o host key da VPS no input
+`fingerprint` da action.
+
 ## 2. Criar a stack no Portainer
 
 1. Stacks → Add stack → Web editor.

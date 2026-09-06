@@ -54,3 +54,78 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+
+  deploy:
+    # Só roda se as DUAS imagens (matriz backend + frontend) publicarem com
+    # sucesso — `needs` já implica `if: success()`.
+    needs: publish
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    # Nunca deixa dois deploys correrem em paralelo na VPS.
+    concurrency:
+      group: producao-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Atualizar serviços do Swarm via SSH
+        uses: appleboy/ssh-action@v1.2.2
+        env:
+          # Credencial efêmera do próprio job (expira ao fim do run); serve
+          # para o nó do Swarm resolver a tag :latest e dar `docker pull`.
+          GHCR_ACTOR: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || '22' }}
+          envs: GHCR_ACTOR,GHCR_TOKEN
+          script: |
+            set -eu
+
+            BACKEND_IMAGE="ghcr.io/cleitonpcarvalho/brindes-automa-tiny/backend:latest"
+            FRONTEND_IMAGE="ghcr.io/cleitonpcarvalho/brindes-automa-tiny/frontend:latest"
+
+            printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_ACTOR" --password-stdin
+            trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
+
+            # `docker service update --force` só altera os campos passados
+            # explicitamente (aqui: --image). O `command` de cada serviço —
+            # inclusive o `--schedule=/tmp/celerybeat-schedule` que o `beat`
+            # recebeu à mão em produção — é preservado. NÃO usar
+            # `docker stack deploy` aqui: ele sobrescreveria esse command.
+            for svc in \
+              brindes-automa-tiny_backend \
+              brindes-automa-tiny_worker \
+              brindes-automa-tiny_beat; do
+              echo "==> $svc"
+              docker service update \
+                --with-registry-auth \
+                --image "$BACKEND_IMAGE" \
+                --force \
+                "$svc"
+            done
+
+            echo "==> brindes-automa-tiny_frontend"
+            docker service update \
+              --with-registry-auth \
+              --image "$FRONTEND_IMAGE" \
+              --force \
+              brindes-automa-tiny_frontend
+
+            echo "Deploy aplicado."
+
+      - name: Verificar saúde do backend
+        run: |
+          for i in $(seq 1 20); do
+            if curl -fsS --max-time 10 https://sync-api.automasoluct.com.br/health/ > /dev/null; then
+              echo "Backend respondeu 200 em /health/."
+              exit 0
+            fi
+            echo "Tentativa $i: ainda não saudável, aguardando 15s..."
+            sleep 15
+          done
+          echo "::error::Backend não respondeu 200 em /health/ após o deploy."
+          exit 1

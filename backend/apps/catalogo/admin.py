@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Produto, Variacao
+from .models import Produto, ProdutoTiny, Variacao
 
 
 class VariacaoInline(admin.TabularInline):
@@ -43,3 +43,29 @@ class VariacaoAdmin(admin.ModelAdmin):
     list_filter = ("status", "produto__fornecedor")
     search_fields = ("sku", "nome", "tiny_id")
     readonly_fields = ("hash_conteudo", "criado_em", "atualizado_em", "cadastrado_em")
+
+
+@admin.register(ProdutoTiny)
+class ProdutoTinyAdmin(admin.ModelAdmin):
+    """Espelho somente leitura do catálogo do Tiny — nunca editar aqui."""
+
+    list_display = (
+        "tiny_id",
+        "sku",
+        "descricao",
+        "situacao",
+        "tipo",
+        "gtin",
+        "ncm",
+        "tem_detalhe",
+        "sincronizado_em",
+    )
+    list_filter = ("instancia", "situacao", "tipo", "tem_detalhe")
+    search_fields = ("sku", "descricao", "gtin", "ncm", "tiny_id")
+    readonly_fields = [f.name for f in ProdutoTiny._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False

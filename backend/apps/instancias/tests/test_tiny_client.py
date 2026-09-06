@@ -194,3 +194,56 @@ class DominioProdutosTests(TestCase):
         _, kwargs = mock_request.call_args
         self.assertEqual(kwargs["json"]["tipo"], "B")
         self.assertEqual(kwargs["json"]["quantidade"], 42.0)
+
+
+class ListagemCatalogoTests(TestCase):
+    @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.requests.request")
+    def test_listar_produtos_monta_paginacao_e_devolve_corpo_inteiro(self, mock_request):
+        instancia = _instancia()
+        corpo = {"itens": [{"id": 1}, {"id": 2}], "paginacao": {"limit": 100, "offset": 0, "total": 2}}
+        mock_request.return_value = _resposta(200, {}, corpo)
+
+        cliente = TinyApiClient(instancia, sleep_fn=lambda s: None, limiter=LimiterFalso())
+        resultado = cliente.listar_produtos(limit=50, offset=100, situacao="A")
+
+        metodo, url = mock_request.call_args[0]
+        self.assertEqual(metodo, "GET")
+        self.assertTrue(url.endswith("/produtos"))
+        self.assertEqual(mock_request.call_args[1]["params"], {"limit": 50, "offset": 100, "situacao": "A"})
+        self.assertEqual(resultado, corpo)
+
+    @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.requests.request")
+    def test_listar_produtos_sem_situacao_nao_manda_o_param(self, mock_request):
+        instancia = _instancia()
+        mock_request.return_value = _resposta(200, {}, {"itens": [], "paginacao": {"total": 0}})
+
+        cliente = TinyApiClient(instancia, sleep_fn=lambda s: None, limiter=LimiterFalso())
+        cliente.listar_produtos()
+
+        self.assertEqual(mock_request.call_args[1]["params"], {"limit": 100, "offset": 0})
+
+    @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.requests.request")
+    def test_obter_produto_usa_get_no_caminho_do_id(self, mock_request):
+        instancia = _instancia()
+        mock_request.return_value = _resposta(200, {}, {"id": 555, "ncm": "12345678"})
+
+        cliente = TinyApiClient(instancia, sleep_fn=lambda s: None, limiter=LimiterFalso())
+        resultado = cliente.obter_produto(555)
+
+        metodo, url = mock_request.call_args[0]
+        self.assertEqual(metodo, "GET")
+        self.assertTrue(url.endswith("/produtos/555"))
+        self.assertEqual(resultado["ncm"], "12345678")
+
+    @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.requests.request")
+    def test_listar_produtos_propaga_erro_da_api(self, mock_request):
+        instancia = _instancia()
+        mock_request.return_value = _resposta(500, {}, {"mensagem": "erro interno"})
+
+        cliente = TinyApiClient(instancia, sleep_fn=lambda s: None, limiter=LimiterFalso())
+        with self.assertRaises(TinyApiValidationError):
+            cliente.listar_produtos()

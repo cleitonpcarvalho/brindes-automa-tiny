@@ -68,6 +68,32 @@ class TinyApiClient:
         itens = resposta.json().get("itens", [])
         return itens[0] if itens else None
 
+    def listar_produtos(self, *, limit: int = 100, offset: int = 0, situacao: str | None = None) -> dict:
+        """
+        GET /produtos — uma página da listagem do catálogo (somente leitura).
+
+        Contrato v3 confirmado na doc oficial: paginação por `limit` (default
+        100) + `offset` (default 0); resposta
+        `{"itens": [...], "paginacao": {"limit", "offset", "total"}}`.
+        Devolve o corpo inteiro; a paginação/loop fica com quem chama.
+        """
+        params: dict = {"limit": limit, "offset": offset}
+        if situacao:
+            params["situacao"] = situacao
+        resposta = self.get("/produtos", params=params)
+        self._levantar_se_erro(resposta)
+        return resposta.json()
+
+    def obter_produto(self, id_produto) -> dict:
+        """
+        GET /produtos/{id} — detalhe completo de um produto (somente leitura).
+        Traz os campos que a listagem não devolve: ncm, origem, marca,
+        categoria, dimensoes, estoque.quantidade, etc.
+        """
+        resposta = self.get(f"/produtos/{id_produto}")
+        self._levantar_se_erro(resposta)
+        return resposta.json()
+
     def criar_produto(self, payload: dict) -> dict:
         """POST /produtos — cria um produto tipo 'S' (Simples). Uma Variacao = um produto."""
         resposta = self.post("/produtos", json=payload)

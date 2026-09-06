@@ -214,3 +214,130 @@ class Variacao(models.Model):
         if self.payload_bruto:
             self.hash_conteudo = calcular_hash_conteudo(self.payload_bruto)
         super().save(*args, **kwargs)
+
+
+class ProdutoTiny(models.Model):
+    """
+    Espelho local (somente leitura) do catálogo de produtos que JÁ EXISTE no
+    Tiny de uma instância.
+
+    NÃO tem nenhuma relação com Produto/Variacao (o espelho dos fornecedores)
+    e NUNCA é escrito de volta no Tiny — é populado só por
+    `importar_catalogo_tiny`, a partir de `GET /produtos` (listagem) e, para
+    os campos que só o detalhe traz, `GET /produtos/{id}`.
+
+    Divisão dos campos, conferida contra a doc oficial v3
+    (https://api-docs.erp.olist.com/api-reference/produtos):
+      - listagem devolve: id, sku, descricao, tipo, situacao, unidade, gtin,
+        dataCriacao, dataAlteracao, precos{...}, tipoVariacao;
+      - só o detalhe devolve: ncm, origem, marca{}, categoria{}, dimensoes{},
+        estoque.quantidade, descricaoComplementar, anexos, seo, tributacao.
+    O que não vier fica em branco/nulo — nada é inventado.
+    """
+
+    instancia = models.ForeignKey(
+        Instancia, on_delete=models.CASCADE, related_name="produtos_tiny"
+    )
+
+    tiny_id = models.BigIntegerField(help_text="Campo `id` do produto no Tiny.")
+    sku = models.CharField(
+        max_length=255, blank=True, help_text="Campo `sku` do Tiny (o código do produto)."
+    )
+    descricao = models.CharField(
+        max_length=500, blank=True, help_text="Campo `descricao` do Tiny (o nome do produto)."
+    )
+    descricao_complementar = models.TextField(
+        blank=True, help_text="`descricaoComplementar` — só no detalhe."
+    )
+
+    tipo = models.CharField(
+        max_length=1, blank=True, help_text="`tipo`: K/S/V/F/M (kit, simples, variação, fabricado, matéria-prima)."
+    )
+    situacao = models.CharField(
+        max_length=1, blank=True, help_text="`situacao`: A (ativo), I (inativo), E (excluído)."
+    )
+    tipo_variacao = models.CharField(
+        max_length=1, blank=True, help_text="`tipoVariacao`: N/P/V — vem na listagem."
+    )
+
+    gtin = models.CharField(
+        max_length=20, blank=True, help_text="`gtin` do Tiny (GTIN/EAN); string, pode vir vazio."
+    )
+    ncm = models.CharField(max_length=20, blank=True, help_text="`ncm` — só no detalhe.")
+    unidade = models.CharField(max_length=20, blank=True, help_text="`unidade`.")
+    origem = models.CharField(
+        max_length=2, blank=True, help_text="`origem`: código 0–8 da tabela de origem — só no detalhe."
+    )
+
+    marca = models.CharField(max_length=255, blank=True, help_text="`marca.nome` — só no detalhe.")
+    marca_id = models.BigIntegerField(null=True, blank=True, help_text="`marca.id` — só no detalhe.")
+    categoria = models.CharField(
+        max_length=500, blank=True, help_text="`categoria.caminhoCompleto` — só no detalhe."
+    )
+    categoria_id = models.BigIntegerField(null=True, blank=True, help_text="`categoria.id` — só no detalhe.")
+
+    preco = models.DecimalField(max_digits=15, decimal_places=4, null=True, blank=True, help_text="`precos.preco`.")
+    preco_promocional = models.DecimalField(
+        max_digits=15, decimal_places=4, null=True, blank=True, help_text="`precos.precoPromocional`."
+    )
+    preco_custo = models.DecimalField(
+        max_digits=15, decimal_places=4, null=True, blank=True, help_text="`precos.precoCusto`."
+    )
+
+    # dimensoes{} — só no detalhe; nas mesmas unidades que o Tiny devolve.
+    largura = models.FloatField(null=True, blank=True)
+    altura = models.FloatField(null=True, blank=True)
+    comprimento = models.FloatField(null=True, blank=True)
+    diametro = models.FloatField(null=True, blank=True)
+    peso_liquido = models.FloatField(null=True, blank=True, help_text="`dimensoes.pesoLiquido`.")
+    peso_bruto = models.FloatField(null=True, blank=True, help_text="`dimensoes.pesoBruto`.")
+
+    estoque_quantidade = models.FloatField(
+        null=True, blank=True, help_text="`estoque.quantidade` — só no detalhe."
+    )
+
+    data_criacao_tiny = models.CharField(
+        max_length=40, blank=True, help_text="`dataCriacao`, string exatamente como o Tiny devolve."
+    )
+    data_alteracao_tiny = models.CharField(
+        max_length=40,
+        blank=True,
+        help_text="`dataAlteracao` — usado como sinal barato de mudança para pular o detalhe numa nova passada.",
+    )
+
+    tem_detalhe = models.BooleanField(
+        default=False, help_text="True quando o GET /produtos/{id} já foi buscado e mesclado neste registro."
+    )
+
+    payload_bruto = models.JSONField(
+        default=dict, blank=True, help_text='Cru do Tiny: {"listagem": {...}, "detalhe": {...}}.'
+    )
+    hash_conteudo = models.CharField(max_length=64, blank=True)
+
+    sincronizado_em = models.DateTimeField(
+        null=True, blank=True, help_text="Última vez que este item foi lido do Tiny."
+    )
+    criado_em = models.DateTimeField(auto_now_add=True)
+    atualizado_em = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Produto do Tiny (espelho)"
+        verbose_name_plural = "Produtos do Tiny (espelho)"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["instancia", "tiny_id"], name="unico_produto_tiny_por_instancia"
+            )
+        ]
+        indexes = [
+            models.Index(fields=["instancia", "sku"]),
+            models.Index(fields=["instancia", "gtin"]),
+            models.Index(fields=["instancia", "situacao"]),
+        ]
+
+    def __str__(self):
+        return f"[Tiny {self.tiny_id}] {self.sku} · {self.descricao}"[:120]
+
+    def save(self, *args, **kwargs):
+        if self.payload_bruto:
+            self.hash_conteudo = calcular_hash_conteudo(self.payload_bruto)
+        super().save(*args, **kwargs)

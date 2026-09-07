@@ -368,6 +368,107 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/instancias/{slug}/fornecedores/{fornecedor}/cadastro-tiny/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description POST .../fornecedores/<fornecedor>/cadastro-tiny/ — agenda a
+         *     sincronização em massa de produtos deste fornecedor com o Tiny.
+         *
+         *     Cria a `Execucao` (tipo `cadastro_tiny`, status `rodando`) com um
+         *     `lease_token` novo, enfileira a task e devolve o `execucao_id` na hora.
+         *     O processamento roda em background com pause/resume e heartbeat.
+         *
+         *     Concorrência: sob `select_for_update` do par (instância, fornecedor).
+         *     Se JÁ existe uma Execucao de cadastro Tiny "aberta" (rodando, pausando,
+         *     pausado ou interrompido) para o par, devolve 409 — a interface deve
+         *     oferecer Pausar/Retomar, não iniciar outra. Também 409 se há uma
+         *     importação de espelho do fornecedor rodando.
+         */
+        post: operations["instancias_fornecedores_cadastro_tiny_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/instancias/{slug}/fornecedores/{fornecedor}/cadastro-tiny/pausar/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description POST .../fornecedores/<fornecedor>/cadastro-tiny/pausar/ — pede a pausa
+         *     COOPERATIVA da execução em andamento. Não mata a task: marca
+         *     `pausa_solicitada` e status `pausando`; a task detecta antes do próximo
+         *     produto, termina a unidade atual e encerra em `pausado`.
+         */
+        post: operations["instancias_fornecedores_cadastro_tiny_pausar_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/instancias/{slug}/fornecedores/{fornecedor}/cadastro-tiny/preview/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description GET .../fornecedores/<fornecedor>/cadastro-tiny/preview/ — estimativa
+         *     para a tela de confirmação do "Sincronizar com Tiny". SÓ consulta o
+         *     espelho local; NENHUMA chamada ao Tiny.
+         */
+        get: operations["instancias_fornecedores_cadastro_tiny_preview_retrieve"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/instancias/{slug}/fornecedores/{fornecedor}/cadastro-tiny/retomar/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description POST .../fornecedores/<fornecedor>/cadastro-tiny/retomar/ — retoma a
+         *     MESMA Execucao pausada/interrompida (ou uma `rodando` com heartbeat
+         *     expirado). Gera um `lease_token` novo (um eventual zumbi da rodada
+         *     anterior perde o lease e para), volta a `rodando` e enfileira a task.
+         *     A fila é reconstruída do banco (idempotência): produtos já cadastrados
+         *     não voltam, imagens já sincronizadas não são reenviadas.
+         *
+         *     Corrida de dois "retomar" simultâneos: sob `select_for_update`, só o
+         *     primeiro encontra a Execucao num estado retomável; o segundo a vê já
+         *     `rodando` (heartbeat fresco) e devolve 409.
+         */
+        post: operations["instancias_fornecedores_cadastro_tiny_retomar_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/instancias/{slug}/fornecedores/{fornecedor}/sincronizar/": {
         parameters: {
             query?: never;
@@ -540,6 +641,52 @@ export interface components {
             /** Format: uri */
             redirect_uri: string;
         };
+        /** @description Estado da sincronização em massa deste fornecedor com o Tiny (pause/resume). */
+        CadastroTinyEstado: {
+            execucao_id: number | null;
+            estado: components["schemas"]["CadastroTinyEstadoEnum"];
+            total_lidos: number;
+            total_cadastrados: number;
+            total_erros: number;
+            total_ignorados: number;
+            /** Format: double */
+            progresso: number;
+            /** Format: date-time */
+            atualizada_em: string | null;
+            mensagem_erro: string;
+            pode_iniciar: boolean;
+            pode_pausar: boolean;
+            pode_retomar: boolean;
+        };
+        /**
+         * @description * `pronto` - pronto
+         *     * `sincronizando` - sincronizando
+         *     * `pausando` - pausando
+         *     * `pausado` - pausado
+         *     * `interrompido` - interrompido
+         *     * `concluido` - concluido
+         *     * `parcial` - parcial
+         * @enum {string}
+         */
+        CadastroTinyEstadoEnum: "pronto" | "sincronizando" | "pausando" | "pausado" | "interrompido" | "concluido" | "parcial";
+        /**
+         * @description Números da tela de confirmação do "Sincronizar com Tiny" — SEM nenhuma
+         *     chamada ao Tiny (ver apps.catalogo.tiny_sync.estimar_cadastro).
+         *     `elegiveis` é um teto: a checagem "SKU já existe no Tiny" só acontece na
+         *     execução real.
+         */
+        CadastroTinyPreview: {
+            fornecedor: components["schemas"]["FornecedorEnum"];
+            elegiveis: number;
+            bloqueadas_local: number;
+            ja_cadastradas: number;
+            sem_estoque: number;
+            descontinuadas: number;
+            total_espelho: number;
+            pronta_para_cadastro: boolean;
+            motivo_nao_pronta: string;
+            sincronizacao_em_andamento: boolean;
+        };
         CadenciaDetalhe: {
             fornecedor: components["schemas"]["FornecedorEnum"];
             intervalo_minutos: number;
@@ -682,6 +829,7 @@ export interface components {
             produtos_descontinuados: number;
             credencial_configurada: boolean;
             credencial_ativa: boolean;
+            cadastro_tiny: components["schemas"]["CadastroTinyEstado"];
         };
         /**
          * @description * `xbz` - XBZ
@@ -1039,12 +1187,15 @@ export interface components {
         StatusEnum: "nao_conectado" | "conectado" | "erro";
         /**
          * @description * `rodando` - Rodando
+         *     * `pausando` - Pausando
+         *     * `pausado` - Pausado
          *     * `sucesso` - Sucesso
          *     * `falha` - Falha
          *     * `parcial` - Parcial
+         *     * `interrompido` - Interrompido
          * @enum {string}
          */
-        StatusExecucaoEnum: "rodando" | "sucesso" | "falha" | "parcial";
+        StatusExecucaoEnum: "rodando" | "pausando" | "pausado" | "sucesso" | "falha" | "parcial" | "interrompido";
         /**
          * @description * `pendente` - Pendente
          *     * `aguardando` - Aguardando reposição
@@ -1057,9 +1208,10 @@ export interface components {
         /**
          * @description * `carga_inicial` - Carga inicial
          *     * `incremental` - Incremental
+         *     * `cadastro_tiny` - Cadastro no Tiny
          * @enum {string}
          */
-        TipoExecucaoEnum: "carga_inicial" | "incremental";
+        TipoExecucaoEnum: "carga_inicial" | "incremental" | "cadastro_tiny";
         /** @description Resumo da rodada mais recente de UM fornecedor (para a área do fornecedor no detalhe). */
         UltimaExecucaoFornecedor: {
             id: number;
@@ -1699,7 +1851,7 @@ export interface operations {
                 /** @description Número de resultados a serem retornados por página. */
                 page_size?: number;
                 /** @description Filtra pelo status da execução. */
-                status?: "falha" | "parcial" | "rodando" | "sucesso";
+                status?: "falha" | "interrompido" | "parcial" | "pausado" | "pausando" | "rodando" | "sucesso";
             };
             header?: never;
             path: {
@@ -1744,6 +1896,94 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PaginatedLogItemList"];
+                };
+            };
+        };
+    };
+    instancias_fornecedores_cadastro_tiny_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fornecedor: string;
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SincronizarResposta"];
+                };
+            };
+        };
+    };
+    instancias_fornecedores_cadastro_tiny_pausar_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fornecedor: string;
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SincronizarResposta"];
+                };
+            };
+        };
+    };
+    instancias_fornecedores_cadastro_tiny_preview_retrieve: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fornecedor: string;
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CadastroTinyPreview"];
+                };
+            };
+        };
+    };
+    instancias_fornecedores_cadastro_tiny_retomar_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fornecedor: string;
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SincronizarResposta"];
                 };
             };
         };

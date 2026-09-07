@@ -12,6 +12,7 @@ import { badgeStatus, ROTULO_TIPO } from "./execucao-formato"
 import { FornecedorCredenciaisForm } from "./fornecedor-credenciais-form"
 import { FornecedorCadenciaForm } from "./fornecedor-cadencia-form"
 import { FornecedorCotaCallout } from "./fornecedor-cota-callout"
+import { FornecedorCadastroTiny } from "./fornecedor-cadastro-tiny"
 import type { CadenciaFornecedor, CredencialFornecedorResposta, FornecedorDetalhe } from "@/lib/api/types"
 
 const VARIANTE_BADGE_POR_COR = {
@@ -148,6 +149,13 @@ export function FornecedorAcordeao({
             <FornecedorCadenciaForm fornecedor={fornecedor} cadencia={cadencia} slug={slug} />
           </div>
           {fornecedor === "xbz" && <FornecedorCotaCallout />}
+          <div className="mt-6">
+            <FornecedorCadastroTiny
+              slug={slug}
+              fornecedor={fornecedor}
+              estado={statusDetalhe.cadastro_tiny}
+            />
+          </div>
         </div>
       )}
     </article>

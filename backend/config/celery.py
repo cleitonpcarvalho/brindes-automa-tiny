@@ -21,4 +21,10 @@ app.conf.beat_schedule = {
         "task": "apps.fornecedores.tasks.verificar_e_disparar_sincronizacoes",
         "schedule": crontab(minute="*/5"),
     },
+    # Reconhece execuções de cadastro Tiny travadas (worker morto) como
+    # `interrompido` — persistente, não depende do estado do Celery.
+    "reconciliar-execucoes-cadastro-tiny": {
+        "task": "apps.catalogo.tasks.reconciliar_execucoes_travadas",
+        "schedule": crontab(minute="*/5"),
+    },
 }

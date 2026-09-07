@@ -39,6 +39,9 @@ export type CredencialFornecedorEntrada = components["schemas"]["CredencialForne
 export type CadenciaFornecedor = components["schemas"]["CadenciaFornecedor"];
 export type PatchedCadenciaFornecedor = components["schemas"]["PatchedCadenciaFornecedor"];
 export type SincronizarResposta = components["schemas"]["SincronizarResposta"];
+export type CadastroTinyPreview = components["schemas"]["CadastroTinyPreview"];
+export type CadastroTinyEstado = components["schemas"]["CadastroTinyEstado"];
+export type CadastroTinyEstadoEnum = components["schemas"]["CadastroTinyEstadoEnum"];
 export type AutorizarResposta = components["schemas"]["AutorizarResposta"];
 
 export type LoginRequest = components["schemas"]["LoginRequest"];

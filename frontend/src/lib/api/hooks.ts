@@ -21,6 +21,7 @@ import type {
   PatchedConfiguracoesInstancia,
   Periodo,
   Resumo,
+  CadastroTinyPreview,
   SincronizarResposta,
   StatusExecucao,
   StatusInstancia,
@@ -137,10 +138,14 @@ export function useInstancia(slug: string) {
     queryFn: () => apiClient.get<InstanciaDetalhe>(`/instancias/${slug}`),
     enabled: Boolean(slug),
     refetchInterval: (query) => {
-      const alguemRodando = (query.state.data?.fornecedores ?? []).some(
-        (f) => f.ultima_execucao_status === "rodando",
+      const fornecedores = query.state.data?.fornecedores ?? [];
+      const algoAtivo = fornecedores.some(
+        (f) =>
+          f.ultima_execucao_status === "rodando" ||
+          f.cadastro_tiny.estado === "sincronizando" ||
+          f.cadastro_tiny.estado === "pausando",
       );
-      return alguemRodando ? 4000 : false;
+      return algoAtivo ? 4000 : false;
     },
   });
 }
@@ -374,6 +379,70 @@ export function useAtualizarCadencia(slug: string, fornecedor: FornecedorEnum) {
       queryClient.invalidateQueries({ queryKey: ["instancias", "detalhe", slug] });
     },
   });
+}
+
+/**
+ * Estimativa (sem tocar no Tiny) para a tela de confirmação do "Sincronizar
+ * com Tiny": quantos produtos elegíveis, se a instância está pronta, se já
+ * há uma sincronização rodando. Só busca quando habilitado (o dialog abriu).
+ */
+export function useCadastroTinyPreview(
+  slug: string,
+  fornecedor: FornecedorEnum,
+  { enabled = true }: { enabled?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: ["instancias", "cadastro-tiny", "preview", slug, fornecedor],
+    queryFn: () =>
+      apiClient.get<CadastroTinyPreview>(
+        `/instancias/${slug}/fornecedores/${fornecedor}/cadastro-tiny/preview`,
+      ),
+    enabled: Boolean(slug && fornecedor) && enabled,
+  });
+}
+
+/**
+ * Agenda a sincronização em massa de produtos deste fornecedor com o Tiny.
+ * O backend cria a Execucao e enfileira a task; a request devolve o id na
+ * hora e o processamento (que cria produtos no Tiny) roda em background.
+ */
+export function useCadastrarProdutosTiny(slug: string, fornecedor: FornecedorEnum) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiClient.post<SincronizarResposta>(
+        `/instancias/${slug}/fornecedores/${fornecedor}/cadastro-tiny/`,
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["instancias", "detalhe", slug] });
+      queryClient.invalidateQueries({ queryKey: ["instancias", "execucoes", slug] });
+      queryClient.invalidateQueries({ queryKey: ["instancias", "cadastro-tiny", "preview", slug] });
+    },
+  });
+}
+
+function useAcaoCadastroTiny(slug: string, fornecedor: FornecedorEnum, acao: "pausar" | "retomar") {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiClient.post<SincronizarResposta>(
+        `/instancias/${slug}/fornecedores/${fornecedor}/cadastro-tiny/${acao}/`,
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["instancias", "detalhe", slug] });
+      queryClient.invalidateQueries({ queryKey: ["instancias", "execucoes", slug] });
+    },
+  });
+}
+
+/** Pausa cooperativa da sincronização em andamento (não mata a task). */
+export function usePausarCadastroTiny(slug: string, fornecedor: FornecedorEnum) {
+  return useAcaoCadastroTiny(slug, fornecedor, "pausar");
+}
+
+/** Retoma a MESMA execução pausada/interrompida — continua o trabalho pendente. */
+export function useRetomarCadastroTiny(slug: string, fornecedor: FornecedorEnum) {
+  return useAcaoCadastroTiny(slug, fornecedor, "retomar");
 }
 
 /** Dispara a sincronização manual de um fornecedor — devolve o id da execução na hora. */

@@ -38,8 +38,21 @@ def sincronizar_fornecedor_task(instancia_id, fornecedor):
     Executa `importar_fornecedor` para (instancia, fornecedor). Para a xbz,
     a trava de "no máximo 1x/dia" já vive no próprio comando — aqui só
     tratamos isso como um skip esperado, não como falha da tarefa.
+
+    Pula (não falha) se há uma sincronização de produtos com o Tiny ATIVA
+    para o mesmo fornecedor — reimportar o espelho no meio mudaria a
+    elegibilidade do lote. Pausado não bloqueia.
     """
+    from apps.catalogo.tiny_sync import cadastro_tiny_bloqueia_espelho
+
     instancia = Instancia.objects.get(pk=instancia_id)
+    if cadastro_tiny_bloqueia_espelho(instancia, fornecedor):
+        logger.info(
+            "sincronização de espelho de %s/%s pulada: cadastro Tiny ativo",
+            instancia.slug,
+            fornecedor,
+        )
+        return
     try:
         # A sincronização automática também é espelho-apenas: este comando não
         # escreve no Tiny em nenhum modo. O passo de cadastro no Tiny é um

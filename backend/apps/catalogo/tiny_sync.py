@@ -1,0 +1,711 @@
+"""
+Regras de negócio da sincronização de produtos com o Tiny/Olist.
+
+FONTE ÚNICA da lógica — usada por:
+  - o management command `cadastrar_produtos_tiny` (decisão + criação/vínculo);
+  - o management command `sincronizar_imagens_tiny` (idempotência de imagens);
+  - o management command `sincronizar_com_tiny` (orquestra os dois);
+  - a task Celery `cadastrar_produtos_tiny_task` (sincronização em massa
+    disparada pela interface);
+  - o endpoint de estimativa/preview.
+
+Não há I/O de apresentação aqui (nem `stdout`, nem `LogItem`): quem chama
+decide como reportar, passando um `EventosSincronizacao`. Assim CLI e task
+compartilham exatamente as mesmas proteções e o mesmo caminho de código.
+
+Proteções (idênticas às validadas no piloto — ver README):
+  - correspondência com o Tiny SÓ por SKU EXATO (`buscar_produto_por_sku`);
+    nunca por nome/NCM/descrição/fuzzy, nunca consulta `ProdutoTiny`;
+  - `estoque <= 0` / status `aguardando` -> BLOQUEADO;
+  - regra P@ (produto descontinuado) -> BLOQUEADO;
+  - mesmo SKU em mais de um fornecedor na instância -> BLOQUEADO;
+  - SKU já existe no Tiny e a Variacao não tem vínculo confirmado ->
+    BLOQUEADO (não assume propriedade de produto preexistente);
+  - resposta ambígua do POST -> reconsulta por SKU exato; sem confirmação,
+    NÃO marca como cadastrado;
+  - imagens: idempotência por `Variacao.imagens_tiny_sincronizadas` (marcador
+    das URLs ORIGINAIS do fornecedor), nunca por igualdade de URL;
+  - legado EK/EKK do Tiny nunca é tocado (este fluxo só cria SKUs do
+    espelho e só mexe em produtos que ele mesmo criou/vinculou);
+  - um erro individual gera evento e NÃO interrompe o lote.
+"""
+
+from dataclasses import dataclass
+from decimal import Decimal
+
+from django.db.models import Count
+from django.utils import timezone
+
+from apps.instancias.tiny_client import TinyApiClient
+from apps.sincronizacao.models import (
+    STATUS_EXECUCAO_ABERTOS,
+    STATUS_EXECUCAO_ATIVOS,
+    Execucao,
+    StatusExecucao,
+    TipoExecucao,
+)
+
+from .models import StatusVariacao, Variacao
+
+# Teto de anexos (imagens) por produto — escolha nossa, não do cliente
+# (documentado no README). Mora aqui; o command re-exporta por compat.
+MAX_ANEXOS_POR_PRODUTO = 5
+
+# -- Heartbeat / lease da sincronização em massa ---------------------------
+#
+# A task bate o heartbeat da Execucao ANTES de cada produto. Uma Execucao
+# `rodando`/`pausando` cujo `heartbeat_em` está mais velho que este timeout
+# é considerada travada (worker morreu) e vira `interrompido`.
+#
+# 10 minutos é conservador de propósito: no pior caso patológico (um único
+# produto preso em tempestade de 429 — até 5 retentativas com backoff, ~2
+# min, mais a espera do rate-limiter compartilhado, ~1 min, por chamada; 2
+# chamadas Tiny por produto na fase 1) um produto legítimo leva ~6 min. 10
+# min dá ~1,6x de margem sobre esse pior caso e ~cem vezes o caso típico
+# (produto = poucos segundos). Um worker realmente morto é reconhecido em
+# no máximo 10 min.
+HEARTBEAT_TIMEOUT_SEGUNDOS = 600
+
+
+def heartbeat_expirado(heartbeat_em, agora, *, timeout_segundos: int = HEARTBEAT_TIMEOUT_SEGUNDOS) -> bool:
+    """`True` se `heartbeat_em` é nulo ou mais velho que o timeout."""
+    if heartbeat_em is None:
+        return True
+    return (agora - heartbeat_em).total_seconds() > timeout_segundos
+
+
+# Motivos pelos quais o orquestrador para antes de esvaziar a fila.
+PARADA_PAUSA = "pausa"
+PARADA_LEASE_PERDIDA = "lease_perdida"
+
+# Estados de UI da sincronização de um fornecedor com o Tiny.
+ESTADO_PRONTO = "pronto"
+ESTADO_SINCRONIZANDO = "sincronizando"
+ESTADO_PAUSANDO = "pausando"
+ESTADO_PAUSADO = "pausado"
+ESTADO_INTERROMPIDO = "interrompido"
+ESTADO_CONCLUIDO = "concluido"
+ESTADO_PARCIAL = "parcial"
+
+
+def execucao_cadastro_tiny_aberta(instancia, fornecedor):
+    """A Execucao de cadastro Tiny 'aberta' (rodando/pausando/pausado/interrompido) do par, ou None."""
+    return (
+        Execucao.objects.filter(
+            instancia=instancia,
+            fornecedor=fornecedor,
+            tipo=TipoExecucao.CADASTRO_TINY,
+            status__in=STATUS_EXECUCAO_ABERTOS,
+        )
+        .order_by("-iniciada_em")
+        .first()
+    )
+
+
+def cadastro_tiny_bloqueia_espelho(instancia, fornecedor, *, agora=None) -> bool:
+    """
+    True se há um cadastro Tiny ATIVO (rodando/pausando com heartbeat vivo)
+    para o par — nesse caso a importação/atualização do espelho do MESMO
+    fornecedor não deve ocorrer. Um `rodando` com heartbeat expirado é
+    considerado travado e NÃO bloqueia (será reconhecido como interrompido).
+    """
+    agora = agora or timezone.now()
+    for execucao in Execucao.objects.filter(
+        instancia=instancia,
+        fornecedor=fornecedor,
+        tipo=TipoExecucao.CADASTRO_TINY,
+        status__in=STATUS_EXECUCAO_ATIVOS,
+    ):
+        if not heartbeat_expirado(execucao.heartbeat_em, agora):
+            return True
+    return False
+
+
+def estado_cadastro_tiny(execucao, *, agora=None) -> str:
+    """
+    Estado de UI derivado da Execucao de cadastro Tiny mais recente do par
+    (pode ser None). Faz a checagem de heartbeat em tempo de leitura: um
+    `rodando`/`pausando` sem heartbeat recente já aparece como
+    `interrompido` mesmo antes do reaper rodar.
+    """
+    if execucao is None:
+        return ESTADO_PRONTO
+    agora = agora or timezone.now()
+    status = execucao.status
+    if status in STATUS_EXECUCAO_ATIVOS and heartbeat_expirado(execucao.heartbeat_em, agora):
+        return ESTADO_INTERROMPIDO
+    return {
+        StatusExecucao.RODANDO: ESTADO_SINCRONIZANDO,
+        StatusExecucao.PAUSANDO: ESTADO_PAUSANDO,
+        StatusExecucao.PAUSADO: ESTADO_PAUSADO,
+        StatusExecucao.INTERROMPIDO: ESTADO_INTERROMPIDO,
+        StatusExecucao.SUCESSO: ESTADO_CONCLUIDO,
+        StatusExecucao.PARCIAL: ESTADO_PARCIAL,
+        StatusExecucao.FALHA: ESTADO_PARCIAL,
+    }.get(status, ESTADO_PRONTO)
+
+# Ações neutras (sem texto de UI). Cada chamador rotula como quiser.
+ACAO_CRIAR = "criar"
+ACAO_VINCULAR = "vincular"
+ACAO_BLOQUEADO = "bloqueado"
+ACAO_JA_CADASTRADO = "ja_cadastrado"
+
+
+class TinySyncError(RuntimeError):
+    """Falha ao sincronizar UMA variação (não interrompe o lote)."""
+
+
+@dataclass
+class Decisao:
+    acao: str
+    motivo: str
+    tiny_existente: dict | None = None
+    payload: dict | None = None
+
+
+# ---------------------------------------------------------------------------
+# Seleção de variações
+# ---------------------------------------------------------------------------
+
+
+def colisoes_cross_fornecedor(instancia) -> dict[str, list[str]]:
+    """
+    `{sku: [fornecedores]}` para SKUs que aparecem em mais de um fornecedor
+    nesta instância — esses nunca são cadastrados automaticamente (não dá
+    para saber a qual produto o SKU do Tiny corresponderia).
+    """
+    skus_colididos = list(
+        Variacao.objects.filter(produto__instancia=instancia)
+        .exclude(sku="")
+        .values("sku")
+        .annotate(n=Count("produto__fornecedor", distinct=True))
+        .filter(n__gt=1)
+        .values_list("sku", flat=True)
+    )
+    if not skus_colididos:
+        return {}
+    mapa: dict[str, list[str]] = {}
+    for linha in (
+        Variacao.objects.filter(produto__instancia=instancia, sku__in=skus_colididos)
+        .values("sku", "produto__fornecedor")
+        .distinct()
+    ):
+        mapa.setdefault(linha["sku"], []).append(linha["produto__fornecedor"])
+    return {sku: sorted(set(forn)) for sku, forn in mapa.items()}
+
+
+def fila_cadastro(instancia, *, fornecedor=None, skus=None, limite=None):
+    """
+    Fila do management command `cadastrar_produtos_tiny`: quando `skus` é
+    dado, processa exatamente esses (status ignorado, permite retry de ERRO);
+    senão, só os `pendente`.
+    """
+    qs = Variacao.objects.filter(produto__instancia=instancia).select_related("produto")
+    if fornecedor:
+        qs = qs.filter(produto__fornecedor=fornecedor)
+    if skus:
+        qs = qs.filter(sku__in=skus)
+    else:
+        qs = qs.filter(status=StatusVariacao.PENDENTE)
+    qs = qs.order_by("produto__fornecedor", "sku", "id")
+    if limite:
+        qs = qs[:limite]
+    return list(qs)
+
+
+def fila_cadastro_massa(instancia, fornecedor, *, limite=None):
+    """
+    Fila da sincronização em massa (task/UI): de UM fornecedor, as variações
+    `pendente` E `erro` (reexecução retenta o que falhou). Nunca inclui
+    `cadastrado` (já sincronizado) nem `aguardando`/`descontinuado` (a
+    própria avaliação as bloquearia de qualquer forma).
+    """
+    qs = (
+        Variacao.objects.filter(
+            produto__instancia=instancia,
+            produto__fornecedor=fornecedor,
+            status__in=[StatusVariacao.PENDENTE, StatusVariacao.ERRO],
+        )
+        .select_related("produto")
+        .order_by("produto__codigo_pai", "sku", "id")
+    )
+    if limite:
+        qs = qs[:limite]
+    return list(qs)
+
+
+def fila_imagens(instancia, *, fornecedor=None, skus=None, limite=None):
+    """
+    Fila da fase de imagens — a mesma do command `sincronizar_imagens_tiny`:
+    variações `cadastrado` com `tiny_id` e com imagem no espelho. A
+    idempotência real (marcador / contagem no Tiny) é resolvida em
+    `sincronizar_imagens_variacao`.
+    """
+    qs = (
+        Variacao.objects.filter(
+            produto__instancia=instancia, status=StatusVariacao.CADASTRADO
+        )
+        .exclude(tiny_id__isnull=True)
+        .exclude(tiny_id="")
+        .exclude(imagens=[])
+        .select_related("produto")
+        .order_by("produto__fornecedor", "produto__codigo_pai", "sku", "id")
+    )
+    if fornecedor:
+        qs = qs.filter(produto__fornecedor=fornecedor)
+    if skus:
+        qs = qs.filter(sku__in=skus)
+    if limite:
+        qs = qs[:limite]
+    return list(qs)
+
+
+# ---------------------------------------------------------------------------
+# Decisão por variação
+# ---------------------------------------------------------------------------
+
+
+def bloqueio_local(variacao, colisoes_por_sku) -> str | None:
+    """
+    Motivo de bloqueio determinável SEM falar com o Tiny (para o preview e
+    como 1ª etapa da avaliação real). `None` = passou nas proteções locais.
+    """
+    sku = (variacao.sku or "").strip()
+    if not sku:
+        return "SKU vazio no espelho"
+    if variacao.status == StatusVariacao.DESCONTINUADO or (
+        variacao.produto_id and variacao.produto.descontinuado
+    ):
+        return "regra P@ / produto descontinuado — nunca vai ao Tiny"
+    if variacao.estoque <= 0 or variacao.status == StatusVariacao.AGUARDANDO:
+        return f"estoque <= 0 (estoque={variacao.estoque}) — aguarda reposição"
+    if sku in colisoes_por_sku:
+        forns = ", ".join(colisoes_por_sku[sku])
+        return f"mesmo SKU em mais de um fornecedor nesta instância: {forns}"
+    return None
+
+
+def avaliar_variacao(cliente, instancia, variacao, colisoes_por_sku, *, vincular_skus=()) -> Decisao:
+    """
+    Decisão completa (inclui o GET por SKU exato no Tiny). Chamada tanto pelo
+    command quanto pela task — mesma implementação, mesmas proteções.
+    """
+    vincular_skus = set(vincular_skus or ())
+    sku = (variacao.sku or "").strip()
+
+    motivo_local = bloqueio_local(variacao, colisoes_por_sku)
+    if motivo_local:
+        return Decisao(ACAO_BLOQUEADO, motivo_local)
+
+    if variacao.status == StatusVariacao.CADASTRADO and (variacao.tiny_id or "").strip():
+        return Decisao(ACAO_JA_CADASTRADO, f"já vinculada (tiny_id={variacao.tiny_id})")
+
+    existente = cliente.buscar_produto_por_sku(sku)  # GET — permitido no dry-run
+    if existente:
+        if sku in vincular_skus:
+            return Decisao(
+                ACAO_VINCULAR,
+                f"vínculo confirmado pelo operador (--vincular-skus); tiny_id={existente.get('id')}",
+                tiny_existente=existente,
+            )
+        return Decisao(
+            ACAO_BLOQUEADO,
+            f"SKU já existe no Tiny (id={existente.get('id')}) e não possui vínculo confirmado — "
+            f"revisar manualmente e, se for nosso, reprocessar com --vincular-skus",
+            tiny_existente=existente,
+        )
+
+    return Decisao(
+        ACAO_CRIAR, "SKU não existe no Tiny", payload=montar_payload_produto(variacao, instancia)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Escrita no Tiny + persistência local
+# ---------------------------------------------------------------------------
+
+
+def criar_produto_no_tiny(cliente, variacao, payload) -> str:
+    """
+    POST /produtos e devolve o `tiny_id` confirmado. Se a resposta for
+    ambígua, reconsulta pelo SKU EXATO; sem confirmação inequívoca,
+    levanta `TinySyncError` (a variação NÃO é marcada como cadastrada).
+    """
+    resultado = cliente.criar_produto(payload)
+    tiny_id = _id_do_resultado(resultado)
+    if not tiny_id:
+        confirmado = cliente.buscar_produto_por_sku(variacao.sku)
+        tiny_id = _id_do_resultado(confirmado) if confirmado else None
+    if not tiny_id:
+        raise TinySyncError(
+            "POST /produtos não devolveu um id utilizável e a reconsulta por SKU não "
+            f"confirmou — NÃO marcado como cadastrado. Resposta: {resultado!r}"
+        )
+    return str(tiny_id)
+
+
+def marcar_cadastrada(variacao, tiny_id, *, preco_publicado):
+    variacao.tiny_id = str(tiny_id)
+    variacao.status = StatusVariacao.CADASTRADO
+    variacao.cadastrado_em = timezone.now()
+    variacao.ultimo_erro = ""
+    campos = ["tiny_id", "status", "cadastrado_em", "ultimo_erro", "atualizado_em"]
+    if preco_publicado is not None:
+        variacao.preco_tiny_sincronizado = preco_publicado
+        campos.append("preco_tiny_sincronizado")
+    variacao.save(update_fields=campos)
+
+
+def marcar_erro(variacao, mensagem):
+    variacao.status = StatusVariacao.ERRO
+    variacao.ultimo_erro = str(mensagem)
+    variacao.save(update_fields=["status", "ultimo_erro", "atualizado_em"])
+
+
+# ---------------------------------------------------------------------------
+# Imagens (idempotência validada — ver sincronizar_imagens_tiny)
+# ---------------------------------------------------------------------------
+
+
+def imagens_utilizaveis(variacao) -> list[str]:
+    """URLs REAIS do espelho: strings não vazias, sem duplicata, na ordem, teto 5."""
+    vistas: set[str] = set()
+    urls: list[str] = []
+    for item in variacao.imagens or []:
+        if isinstance(item, str) and item.strip() and item.strip() not in vistas:
+            urls.append(item.strip())
+            vistas.add(item.strip())
+    return urls[:MAX_ANEXOS_POR_PRODUTO]
+
+
+# resultados possíveis de `sincronizar_imagens_variacao`
+IMG_SEM_IMAGEM = "sem_imagem"
+IMG_JA_OK = "ja_ok"          # marcador local já cobre — nada feito, sem GET
+IMG_RECONCILIADA = "reconciliada"  # Tiny já tinha o suficiente — só marcou local
+IMG_PENDENTE = "pendente"    # precisa de PUT (só acontece em modo só-reconciliar)
+IMG_ENVIADA = "enviada"      # PUT executado
+
+
+def sincronizar_imagens_variacao(cliente, variacao, *, so_reconciliar=False, dry_run=False) -> dict:
+    """
+    Sincroniza as imagens de UMA variação já cadastrada. Idempotente:
+      1. marcador local já cobre todas as URLs desejadas -> nada (sem GET);
+      2. GET dos anexos: Tiny já tem QUANTIDADE >= desejada -> só reconcilia
+         o marcador com as URLs ORIGINAIS (ex.: MC511 corrigido à mão);
+      3. senão -> PUT com a lista completa e marca todas como sincronizadas.
+
+    `so_reconciliar`: nunca faz PUT (para o caso MC511 sem risco de duplicar).
+    `dry_run`: nenhuma escrita (local ou Tiny) — o `cliente` deve estar em
+    modo somente-leitura; devolve o que faria.
+    """
+    desejadas = imagens_utilizaveis(variacao)
+    if not desejadas:
+        return {"resultado": IMG_SEM_IMAGEM, "desejadas": [], "atuais": None}
+
+    if set(desejadas).issubset(set(variacao.imagens_tiny_sincronizadas or [])):
+        return {"resultado": IMG_JA_OK, "desejadas": desejadas, "atuais": None}
+
+    atuais = cliente.anexos_do_produto(int(variacao.tiny_id))  # GET
+    if len(atuais) >= len(desejadas):
+        _marcar_imagens_sincronizadas(variacao, desejadas, dry_run=dry_run)
+        return {"resultado": IMG_RECONCILIADA, "desejadas": desejadas, "atuais": len(atuais)}
+
+    if so_reconciliar:
+        return {"resultado": IMG_PENDENTE, "desejadas": desejadas, "atuais": len(atuais)}
+
+    if not dry_run:
+        cliente.sincronizar_anexos_produto(int(variacao.tiny_id), desejadas)
+        _marcar_imagens_sincronizadas(variacao, desejadas, dry_run=False)
+    return {"resultado": IMG_ENVIADA, "desejadas": desejadas, "atuais": len(atuais)}
+
+
+def _marcar_imagens_sincronizadas(variacao, urls_originais, *, dry_run):
+    if dry_run:
+        return
+    variacao.imagens_tiny_sincronizadas = sorted(set(urls_originais))[:MAX_ANEXOS_POR_PRODUTO]
+    variacao.ultimo_erro = ""
+    variacao.save(update_fields=["imagens_tiny_sincronizadas", "ultimo_erro", "atualizado_em"])
+
+
+def registrar_erro_imagem(variacao, mensagem):
+    """Falha ao sincronizar imagem NÃO mexe em `status`/`tiny_id` — só grava o erro."""
+    variacao.ultimo_erro = str(mensagem)
+    variacao.save(update_fields=["ultimo_erro", "atualizado_em"])
+
+
+# ---------------------------------------------------------------------------
+# Estimativa (preview) — sem falar com o Tiny
+# ---------------------------------------------------------------------------
+
+
+def estimar_cadastro(instancia, fornecedor) -> dict:
+    """
+    Números para a tela de confirmação, SEM nenhuma chamada ao Tiny:
+      - `elegiveis`: passariam nas proteções LOCAIS e seriam avaliadas
+        (teto — a checagem "SKU já existe no Tiny" só ocorre na execução);
+      - `bloqueadas_local`: reprovadas por estoque/P@/SKU/colisão;
+      - `ja_cadastradas`: já têm vínculo (status cadastrado);
+      - `sem_estoque` / `descontinuadas`: recorte informativo.
+    """
+    colisoes_por_sku = colisoes_cross_fornecedor(instancia)
+    fila = fila_cadastro_massa(instancia, fornecedor)
+    elegiveis = bloqueadas = 0
+    for variacao in fila:
+        if bloqueio_local(variacao, colisoes_por_sku):
+            bloqueadas += 1
+        else:
+            elegiveis += 1
+
+    por_status = {
+        linha["status"]: linha["total"]
+        for linha in (
+            Variacao.objects.filter(
+                produto__instancia=instancia, produto__fornecedor=fornecedor
+            )
+            .values("status")
+            .annotate(total=Count("id"))
+        )
+    }
+    return {
+        "fornecedor": fornecedor,
+        "elegiveis": elegiveis,
+        "bloqueadas_local": bloqueadas,
+        "ja_cadastradas": por_status.get(StatusVariacao.CADASTRADO, 0),
+        "sem_estoque": por_status.get(StatusVariacao.AGUARDANDO, 0),
+        "descontinuadas": por_status.get(StatusVariacao.DESCONTINUADO, 0),
+        "total_espelho": sum(por_status.values()),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Orquestrador (create -> confirma -> imagens), por fornecedor
+# ---------------------------------------------------------------------------
+
+
+class EventosSincronizacao:
+    """Callbacks de progresso. Base no-op; a CLI escreve stdout, a task grava LogItem."""
+
+    def inicio(self, *, total_fila: int) -> None: ...
+    def variacao_avaliada(self, variacao, decisao: Decisao) -> None: ...
+    def variacao_criada(self, variacao, tiny_id: str) -> None: ...
+    def variacao_vinculada(self, variacao, tiny_id) -> None: ...
+    def variacao_bloqueada(self, variacao, motivo: str) -> None: ...
+    def variacao_ja_cadastrada(self, variacao) -> None: ...
+    def variacao_erro(self, variacao, exc: Exception) -> None: ...
+    def imagens(self, variacao, resultado: dict) -> None: ...
+    def fim(self, resultado: "ResultadoSincronizacao") -> None: ...
+
+
+class ControladorSincronizacao:
+    """
+    Deixa quem chama abortar o orquestrador de forma COOPERATIVA — a
+    verificação acontece só entre unidades de trabalho, nunca no meio de
+    uma. Base no-op; a task Celery usa uma subclasse que checa
+    pausa/lease no banco e bate o heartbeat.
+    """
+
+    def checar(self) -> str | None:
+        """`None` = seguir; `PARADA_PAUSA` / `PARADA_LEASE_PERDIDA` = parar já."""
+        return None
+
+
+@dataclass
+class ResultadoSincronizacao:
+    fila: int = 0
+    criadas: int = 0
+    vinculadas: int = 0
+    bloqueadas: int = 0
+    ja_cadastradas: int = 0
+    erros: int = 0
+    imagens_enviadas: int = 0
+    imagens_reconciliadas: int = 0
+    imagens_ja_ok: int = 0
+    imagens_sem: int = 0
+    imagens_erros: int = 0
+    #: motivo pelo qual parou antes de esvaziar a fila (pausa / lease perdida),
+    #: ou None quando processou tudo.
+    interrompida_por: str | None = None
+
+    def _contabilizar_imagem(self, resultado: dict) -> None:
+        r = resultado.get("resultado")
+        if r == IMG_ENVIADA:
+            self.imagens_enviadas += 1
+        elif r == IMG_RECONCILIADA:
+            self.imagens_reconciliadas += 1
+        elif r == IMG_JA_OK:
+            self.imagens_ja_ok += 1
+        elif r == IMG_SEM_IMAGEM:
+            self.imagens_sem += 1
+
+
+def executar_sincronizacao_tiny(
+    instancia,
+    fornecedor,
+    *,
+    cliente: TinyApiClient | None = None,
+    dry_run: bool = False,
+    limite: int | None = None,
+    vincular_skus=(),
+    eventos: EventosSincronizacao | None = None,
+    controlador: ControladorSincronizacao | None = None,
+) -> ResultadoSincronizacao:
+    """
+    Sincroniza UM fornecedor de UMA instância com o Tiny:
+      Fase 1 — para cada variação `pendente`/`erro`: avalia (proteções +
+               GET por SKU exato) e cria/vincula quando elegível.
+      Fase 2 — para cada variação `cadastrado` com tiny_id e imagem:
+               sincroniza os anexos (idempotente pelo marcador local).
+
+    Um erro individual gera evento e NÃO interrompe o lote. Reexecução é
+    idempotente: variações cadastradas na 1ª rodada saem da fila 1; a fase 2
+    não reenvia imagem já marcada.
+
+    `controlador.checar()` é consultado ANTES de cada produto (nunca no
+    meio): devolvendo um motivo, o orquestrador para imediatamente e
+    `resultado.interrompida_por` fica preenchido — a fila é reconstruída do
+    banco na retomada, sem depender de posição em memória.
+    """
+    eventos = eventos or EventosSincronizacao()
+    controlador = controlador or ControladorSincronizacao()
+    vincular_skus = set(vincular_skus or ())
+    if cliente is None:
+        cliente = TinyApiClient(instancia, somente_leitura=dry_run)
+
+    colisoes = colisoes_cross_fornecedor(instancia)
+    fila = fila_cadastro_massa(instancia, fornecedor, limite=limite)
+    resultado = ResultadoSincronizacao(fila=len(fila))
+    eventos.inicio(total_fila=len(fila))
+
+    for variacao in fila:
+        parada = controlador.checar()
+        if parada:
+            resultado.interrompida_por = parada
+            eventos.fim(resultado)
+            return resultado
+
+        try:
+            decisao = avaliar_variacao(
+                cliente, instancia, variacao, colisoes, vincular_skus=vincular_skus
+            )
+        except Exception as exc:  # falha na avaliação (ex.: GET explodiu)
+            resultado.erros += 1
+            if not dry_run:
+                marcar_erro(variacao, str(exc))
+            eventos.variacao_erro(variacao, exc)
+            continue
+
+        eventos.variacao_avaliada(variacao, decisao)
+
+        if decisao.acao == ACAO_BLOQUEADO:
+            resultado.bloqueadas += 1
+            eventos.variacao_bloqueada(variacao, decisao.motivo)
+            continue
+        if decisao.acao == ACAO_JA_CADASTRADO:
+            resultado.ja_cadastradas += 1
+            eventos.variacao_ja_cadastrada(variacao)
+            continue
+
+        if dry_run:
+            if decisao.acao == ACAO_CRIAR:
+                resultado.criadas += 1
+            elif decisao.acao == ACAO_VINCULAR:
+                resultado.vinculadas += 1
+            continue
+
+        try:
+            if decisao.acao == ACAO_CRIAR:
+                tiny_id = criar_produto_no_tiny(cliente, variacao, decisao.payload)
+                marcar_cadastrada(variacao, tiny_id, preco_publicado=_preco_publicado(variacao))
+                resultado.criadas += 1
+                eventos.variacao_criada(variacao, tiny_id)
+            elif decisao.acao == ACAO_VINCULAR:
+                marcar_cadastrada(variacao, decisao.tiny_existente["id"], preco_publicado=None)
+                resultado.vinculadas += 1
+                eventos.variacao_vinculada(variacao, decisao.tiny_existente["id"])
+        except Exception as exc:  # uma variação ruim não trava o lote
+            resultado.erros += 1
+            marcar_erro(variacao, str(exc))
+            eventos.variacao_erro(variacao, exc)
+
+    # -- Fase 2: imagens ------------------------------------------------
+    if not dry_run:
+        for variacao in fila_imagens(instancia, fornecedor=fornecedor):
+            parada = controlador.checar()
+            if parada:
+                resultado.interrompida_por = parada
+                eventos.fim(resultado)
+                return resultado
+            try:
+                r = sincronizar_imagens_variacao(cliente, variacao)
+            except Exception as exc:
+                resultado.imagens_erros += 1
+                registrar_erro_imagem(variacao, str(exc))
+                eventos.imagens(variacao, {"resultado": "erro", "erro": str(exc)})
+                continue
+            resultado._contabilizar_imagem(r)
+            eventos.imagens(variacao, r)
+
+    eventos.fim(resultado)
+    return resultado
+
+
+def _preco_publicado(variacao) -> Decimal:
+    """O payload de criação levou `precos.preco` = este valor (sem margem)."""
+    return variacao.preco_venda_tiny
+
+
+# ---------------------------------------------------------------------------
+# Payload de criação (contrato v3 — inalterado; ver README / piloto)
+# ---------------------------------------------------------------------------
+
+
+def montar_payload_produto(variacao, instancia) -> dict:
+    payload = {
+        "sku": variacao.sku,
+        "descricao": variacao.nome,
+        "tipo": "S",
+        "unidade": instancia.tiny_unidade_medida_padrao,
+        "origem": instancia.tiny_origem_padrao,
+        "ncm": variacao.ncm or None,
+        "precos": {"preco": float(variacao.preco_venda_tiny)},
+        "estoque": {"controlar": True, "inicial": float(variacao.estoque)},
+    }
+    dimensoes = _montar_dimensoes(variacao)
+    if dimensoes:
+        payload["dimensoes"] = dimensoes
+    garantia = (variacao.atributos or {}).get("garantia_do_produto")
+    if garantia:
+        payload["garantia"] = garantia
+    return payload
+
+
+def _montar_dimensoes(variacao):
+    campos = {
+        "largura": variacao.largura,
+        "altura": variacao.altura,
+        "comprimento": variacao.comprimento,
+        "diametro": variacao.diametro,
+        "pesoLiquido": variacao.peso_liquido,
+        "pesoBruto": variacao.peso_bruto,
+    }
+    preenchidos = {k: v for k, v in campos.items() if v is not None}
+    return preenchidos or None
+
+
+def _id_do_resultado(resultado):
+    if not isinstance(resultado, dict):
+        return None
+    if _id_valido(resultado.get("id")):
+        return resultado["id"]
+    for wrapper in ("produto", "data", "retorno", "registro"):
+        sub = resultado.get(wrapper)
+        if isinstance(sub, dict) and _id_valido(sub.get("id")):
+            return sub["id"]
+    return None
+
+
+def _id_valido(valor):
+    if valor is None:
+        return False
+    texto = str(valor).strip()
+    return bool(texto) and texto.lower() not in ("0", "none", "null", "")

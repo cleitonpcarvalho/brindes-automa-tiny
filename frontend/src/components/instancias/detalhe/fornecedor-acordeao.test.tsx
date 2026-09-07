@@ -9,6 +9,10 @@ vi.mock("@/lib/api/hooks", () => ({
   useSincronizarFornecedor: vi.fn(),
   useAtualizarCredencial: vi.fn(),
   useAtualizarCadencia: vi.fn(),
+  useCadastroTinyPreview: vi.fn(),
+  useCadastrarProdutosTiny: vi.fn(),
+  usePausarCadastroTiny: vi.fn(),
+  useRetomarCadastroTiny: vi.fn(),
 }));
 
 function mutacaoParada(overrides: Record<string, unknown> = {}) {
@@ -27,6 +31,14 @@ beforeEach(() => {
   vi.mocked(hooks.useSincronizarFornecedor).mockReturnValue(mutacaoParada());
   vi.mocked(hooks.useAtualizarCredencial).mockReturnValue(mutacaoParada());
   vi.mocked(hooks.useAtualizarCadencia).mockReturnValue(mutacaoParada());
+  vi.mocked(hooks.useCadastrarProdutosTiny).mockReturnValue(mutacaoParada());
+  vi.mocked(hooks.usePausarCadastroTiny).mockReturnValue(mutacaoParada());
+  vi.mocked(hooks.useRetomarCadastroTiny).mockReturnValue(mutacaoParada());
+  vi.mocked(hooks.useCadastroTinyPreview).mockReturnValue({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+  } as never);
 });
 
 const CADENCIA_XBZ: CadenciaFornecedor = { fornecedor: "xbz", intervalo_minutos: 60, ativo: true, proxima_execucao_em: null };
@@ -63,6 +75,20 @@ function fornecedorDetalhe(overrides: Partial<FornecedorDetalhe>): FornecedorDet
     produtos_descontinuados: 3,
     credencial_configurada: true,
     credencial_ativa: true,
+    cadastro_tiny: {
+      execucao_id: null,
+      estado: "pronto",
+      total_lidos: 0,
+      total_cadastrados: 0,
+      total_erros: 0,
+      total_ignorados: 0,
+      progresso: 0,
+      atualizada_em: null,
+      mensagem_erro: "",
+      pode_iniciar: true,
+      pode_pausar: false,
+      pode_retomar: false,
+    },
     ...overrides,
   };
 }
@@ -705,7 +731,7 @@ describe("persistência das credenciais pelo BFF", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Editar" })).toBeInTheDocument());
     expect(screen.getByLabelText("Token")).toHaveValue("••••••••ste");
     expect(screen.getByText("Configurado")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Sincronizar/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Sincronizar" })).toBeDisabled();
     expect(cliente.getQueryData(["instancias", "credenciais", "loja-x"])).toEqual([respostaMascarada, credencialOutroFornecedor]);
     expect(cliente.getQueryData(["instancias", "credenciais", "outra-loja"])).toEqual([CREDENCIAL_XBZ]);
     expect(JSON.stringify(cliente.getQueryCache().getAll().map((consulta) => consulta.state.data))).not.toContain("token-ficticio-de-teste");

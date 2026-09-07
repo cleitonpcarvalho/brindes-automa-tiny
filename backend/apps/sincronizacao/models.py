@@ -8,13 +8,37 @@ from apps.instancias.models import Instancia
 class TipoExecucao(models.TextChoices):
     CARGA_INICIAL = "carga_inicial", "Carga inicial"
     INCREMENTAL = "incremental", "Incremental"
+    # Sincronização de produtos com o Tiny (criação/vínculo + imagens),
+    # disparada pela interface. Não é ingestão de fornecedor.
+    CADASTRO_TINY = "cadastro_tiny", "Cadastro no Tiny"
 
 
 class StatusExecucao(models.TextChoices):
     RODANDO = "rodando", "Rodando"
+    # Pausa cooperativa da sincronização em massa com o Tiny: PAUSANDO = a
+    # task ainda está terminando a unidade de trabalho atual e vai encerrar;
+    # PAUSADO = encerrou por pausa e pode ser retomada (mesma Execucao).
+    PAUSANDO = "pausando", "Pausando"
+    PAUSADO = "pausado", "Pausado"
     SUCESSO = "sucesso", "Sucesso"
     FALHA = "falha", "Falha"
     PARCIAL = "parcial", "Parcial"
+    # A task ficou sem heartbeat (worker morreu/reiniciou). Não é falha
+    # definitiva — é retomável, com toda a idempotência do fluxo.
+    INTERROMPIDO = "interrompido", "Interrompido"
+
+
+# Estados "abertos": existe trabalho em andamento ou pausado para aquele
+# (instância, fornecedor) — não se pode iniciar outra Execucao do mesmo par.
+STATUS_EXECUCAO_ABERTOS = (
+    StatusExecucao.RODANDO,
+    StatusExecucao.PAUSANDO,
+    StatusExecucao.PAUSADO,
+    StatusExecucao.INTERROMPIDO,
+)
+# Estados em que uma task está (ou deveria estar) ativa — bloqueiam também a
+# sincronização de espelho do mesmo fornecedor.
+STATUS_EXECUCAO_ATIVOS = (StatusExecucao.RODANDO, StatusExecucao.PAUSANDO)
 
 
 class Execucao(models.Model):
@@ -37,6 +61,19 @@ class Execucao(models.Model):
     total_ignorados = models.PositiveIntegerField(default=0)
     total_erros = models.PositiveIntegerField(default=0)
     mensagem_erro = models.TextField(blank=True)
+
+    # -- Pause/resume + heartbeat (só a sincronização em massa com o Tiny) --
+    # Sinalizador cooperativo: a task o lê ANTES de cada produto e, se
+    # verdadeiro, termina a unidade atual e encerra em `pausado`.
+    pausa_solicitada = models.BooleanField(default=False)
+    # Token do "dono" atual da execução. Cada start/retomada gera um novo;
+    # a task só escreve enquanto `lease_token` no banco == o seu. Um zumbi
+    # de uma retomada anterior perde o lease e para sozinho.
+    lease_token = models.CharField(max_length=36, blank=True, default="")
+    # Última prova de vida da task. Se `status=rodando`/`pausando` e este
+    # timestamp está velho além do timeout, a execução está travada
+    # (worker morreu) e é reconhecida como `interrompido`.
+    heartbeat_em = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         verbose_name = "Execução"

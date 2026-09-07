@@ -3,8 +3,9 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from apps.catalogo.models import StatusVariacao, Variacao
+from apps.catalogo.tiny_sync import ESTADO_PRONTO, estado_cadastro_tiny
 from apps.fornecedores.services import listar_cadencias_com_defaults
-from apps.sincronizacao.models import Execucao, StatusExecucao
+from apps.sincronizacao.models import Execucao, StatusExecucao, TipoExecucao
 
 from .constants import CAMPOS_POR_FORNECEDOR, Fornecedor
 from .mascaramento import mascarar_credenciais
@@ -190,6 +191,35 @@ class UltimaExecucaoFornecedorSerializer(serializers.Serializer):
     mensagem_erro = serializers.CharField()
 
 
+CADASTRO_TINY_ESTADOS = (
+    "pronto",
+    "sincronizando",
+    "pausando",
+    "pausado",
+    "interrompido",
+    "concluido",
+    "parcial",
+)
+
+
+class CadastroTinyEstadoSerializer(serializers.Serializer):
+    """Estado da sincronização em massa deste fornecedor com o Tiny (pause/resume)."""
+
+    execucao_id = serializers.IntegerField(allow_null=True)
+    estado = serializers.ChoiceField(choices=CADASTRO_TINY_ESTADOS)
+    total_lidos = serializers.IntegerField()
+    total_cadastrados = serializers.IntegerField()
+    total_erros = serializers.IntegerField()
+    total_ignorados = serializers.IntegerField()  # pendentes/bloqueados restantes
+    progresso = serializers.FloatField()  # 0..1 (processados / universo cadastrável)
+    atualizada_em = serializers.DateTimeField(allow_null=True)
+    mensagem_erro = serializers.CharField(allow_blank=True)
+    # ações coerentes com o estado — a UI não mostra o que não estiver aqui:
+    pode_iniciar = serializers.BooleanField()
+    pode_pausar = serializers.BooleanField()
+    pode_retomar = serializers.BooleanField()
+
+
 class FornecedorDetalheSerializer(serializers.Serializer):
     fornecedor = serializers.ChoiceField(choices=Fornecedor.choices)
     cor = serializers.ChoiceField(choices=CORES_FORNECEDOR)
@@ -202,6 +232,60 @@ class FornecedorDetalheSerializer(serializers.Serializer):
     produtos_descontinuados = serializers.IntegerField()  # regra P@ da xbz — nunca vai ao Tiny
     credencial_configurada = serializers.BooleanField()
     credencial_ativa = serializers.BooleanField()
+    cadastro_tiny = CadastroTinyEstadoSerializer()
+
+
+def _resumo_cadastro_tiny(instancia, fornecedor):
+    """
+    Estado da sincronização em massa com o Tiny para (instância, fornecedor),
+    com checagem de heartbeat em tempo de leitura. Considera a Execucao
+    `cadastro_tiny` mais recente do par.
+    """
+    execucao = (
+        Execucao.objects.filter(
+            instancia=instancia, fornecedor=fornecedor, tipo=TipoExecucao.CADASTRO_TINY
+        )
+        .order_by("-iniciada_em")
+        .first()
+    )
+    estado = estado_cadastro_tiny(execucao)
+    aberta = execucao is not None and execucao.status in (
+        StatusExecucao.RODANDO,
+        StatusExecucao.PAUSANDO,
+        StatusExecucao.PAUSADO,
+        StatusExecucao.INTERROMPIDO,
+    )
+
+    if execucao is None:
+        lidos = cadastrados = erros = ignorados = 0
+        atualizada_em = None
+        mensagem_erro = ""
+    else:
+        lidos = execucao.total_lidos
+        cadastrados = execucao.total_cadastrados
+        erros = execucao.total_erros
+        ignorados = execucao.total_ignorados
+        atualizada_em = execucao.finalizada_em or execucao.heartbeat_em or execucao.iniciada_em
+        mensagem_erro = execucao.mensagem_erro
+
+    processados = cadastrados + erros
+    universo = max(lidos, processados)
+    progresso = (processados / universo) if universo else (1.0 if execucao and not aberta else 0.0)
+
+    return {
+        "execucao_id": execucao.id if execucao else None,
+        "estado": estado,
+        "total_lidos": lidos,
+        "total_cadastrados": cadastrados,
+        "total_erros": erros,
+        "total_ignorados": ignorados,
+        "progresso": round(progresso, 4),
+        "atualizada_em": atualizada_em,
+        "mensagem_erro": mensagem_erro,
+        "pode_iniciar": estado in (ESTADO_PRONTO, "concluido", "parcial"),
+        "pode_pausar": estado == "sincronizando",
+        "pode_retomar": estado in ("pausado", "interrompido"),
+    }
 
 
 class CadenciaDetalheSerializer(serializers.Serializer):
@@ -298,6 +382,7 @@ class InstanciaDetalheSerializer(InstanciaSerializer):
                     "produtos_descontinuados": por_status.get(StatusVariacao.DESCONTINUADO, 0),
                     "credencial_configurada": bool(credencial and credencial.credenciais),
                     "credencial_ativa": bool(credencial and credencial.ativo),
+                    "cadastro_tiny": _resumo_cadastro_tiny(obj, valor),
                 }
             )
         return resultado
@@ -411,6 +496,26 @@ class ConfiguracoesInstanciaSerializer(serializers.ModelSerializer):
 class SincronizarRespostaSerializer(serializers.Serializer):
     execucao_id = serializers.IntegerField()
     status = serializers.ChoiceField(choices=StatusExecucao.choices)
+
+
+class CadastroTinyPreviewSerializer(serializers.Serializer):
+    """
+    Números da tela de confirmação do "Sincronizar com Tiny" — SEM nenhuma
+    chamada ao Tiny (ver apps.catalogo.tiny_sync.estimar_cadastro).
+    `elegiveis` é um teto: a checagem "SKU já existe no Tiny" só acontece na
+    execução real.
+    """
+
+    fornecedor = serializers.ChoiceField(choices=Fornecedor.choices)
+    elegiveis = serializers.IntegerField()
+    bloqueadas_local = serializers.IntegerField()
+    ja_cadastradas = serializers.IntegerField()
+    sem_estoque = serializers.IntegerField()
+    descontinuadas = serializers.IntegerField()
+    total_espelho = serializers.IntegerField()
+    pronta_para_cadastro = serializers.BooleanField()
+    motivo_nao_pronta = serializers.CharField(allow_blank=True)
+    sincronizacao_em_andamento = serializers.BooleanField()
 
 
 class AutorizarRespostaSerializer(serializers.Serializer):

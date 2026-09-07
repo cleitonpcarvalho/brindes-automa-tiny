@@ -68,7 +68,7 @@ export function ExecucaoLogsDialog({ slug, execucao, onOpenChange }: Props) {
 
   return (
     <Dialog open={execucao !== null} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-[42rem]">
         {execucao && (
           <div className="flex flex-col gap-4">
             <DialogHeader>

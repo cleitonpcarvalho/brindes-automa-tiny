@@ -22,6 +22,10 @@ vi.mock("@/lib/api/hooks", () => ({
   useDesconectar: vi.fn(),
   useAtualizarCredencial: vi.fn(),
   useAtualizarCadencia: vi.fn(),
+  useCadastroTinyPreview: vi.fn(),
+  useCadastrarProdutosTiny: vi.fn(),
+  usePausarCadastroTiny: vi.fn(),
+  useRetomarCadastroTiny: vi.fn(),
 }));
 
 function mutacaoParada() {
@@ -61,6 +65,20 @@ function instanciaDetalhe(): InstanciaDetalhe {
       produtos_descontinuados: 0,
       credencial_configurada: false,
       credencial_ativa: false,
+      cadastro_tiny: {
+        execucao_id: null,
+        estado: "pronto" as const,
+        total_lidos: 0,
+        total_cadastrados: 0,
+        total_erros: 0,
+        total_ignorados: 0,
+        progresso: 0,
+        atualizada_em: null,
+        mensagem_erro: "",
+        pode_iniciar: true,
+        pode_pausar: false,
+        pode_retomar: false,
+      },
     })),
     cadencias: [
       { fornecedor: "xbz", intervalo_minutos: 60, ativo: false, proxima_execucao_em: null },
@@ -105,6 +123,14 @@ describe("InstanciaDetalheView", () => {
     vi.mocked(hooks.useDesconectar).mockReturnValue(mutacaoParada());
     vi.mocked(hooks.useAtualizarCredencial).mockReturnValue(mutacaoParada());
     vi.mocked(hooks.useAtualizarCadencia).mockReturnValue(mutacaoParada());
+    vi.mocked(hooks.useCadastrarProdutosTiny).mockReturnValue(mutacaoParada());
+    vi.mocked(hooks.usePausarCadastroTiny).mockReturnValue(mutacaoParada());
+    vi.mocked(hooks.useRetomarCadastroTiny).mockReturnValue(mutacaoParada());
+    vi.mocked(hooks.useCadastroTinyPreview).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: false,
+    } as never);
   });
 
   it("sem ?autorizado=1 abre na aba Visão geral e não mostra o banner de sucesso", () => {

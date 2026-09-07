@@ -1,8 +1,10 @@
 import secrets
+import uuid
 from datetime import timedelta
 
 from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import transaction
 from django.db.models import Count, Q
 from django.http import HttpResponseRedirect
 from django.shortcuts import get_object_or_404
@@ -22,8 +24,22 @@ from apps.fornecedores.services import (
     listar_cadencias_com_defaults,
     obter_credencial_ativa,
 )
+from apps.catalogo.tasks import cadastrar_produtos_tiny_task
+from apps.catalogo.tiny_sync import (
+    cadastro_tiny_bloqueia_espelho,
+    estado_cadastro_tiny,
+    estimar_cadastro,
+    execucao_cadastro_tiny_aberta,
+    heartbeat_expirado,
+)
 from apps.fornecedores.tasks import executar_sincronizacao_manual_task
-from apps.sincronizacao.models import Execucao, NivelLog, StatusExecucao, TipoExecucao
+from apps.sincronizacao.models import (
+    STATUS_EXECUCAO_ABERTOS,
+    Execucao,
+    NivelLog,
+    StatusExecucao,
+    TipoExecucao,
+)
 from apps.sincronizacao.serializers import ExecucaoSerializer, LogItemSerializer
 
 from .constants import CAMPOS_POR_FORNECEDOR, Fornecedor
@@ -42,6 +58,7 @@ from .pagination import (
 )
 from .serializers import (
     AutorizarRespostaSerializer,
+    CadastroTinyPreviewSerializer,
     CadenciaFornecedorSerializer,
     ConfiguracoesInstanciaSerializer,
     CredencialFornecedorEntradaSerializer,
@@ -348,6 +365,15 @@ class SincronizarFornecedorView(APIView):
                 {"detail": "Já existe uma sincronização em andamento para este fornecedor."},
                 status=status.HTTP_409_CONFLICT,
             )
+        # A importação/atualização do espelho não pode rodar enquanto o
+        # cadastro Tiny do MESMO fornecedor está ativo (mudaria a
+        # elegibilidade no meio do lote). Pausado NÃO bloqueia.
+        if cadastro_tiny_bloqueia_espelho(instancia, fornecedor):
+            return Response(
+                {"detail": "Sincronização de produtos com o Tiny em andamento para este fornecedor — "
+                 "pause-a antes de reimportar o espelho."},
+                status=status.HTTP_409_CONFLICT,
+            )
 
         # A 1ª rodada de um fornecedor nesta instância é a carga inicial; as
         # seguintes são incrementais. Só rótulo — o pipeline de importação
@@ -362,6 +388,252 @@ class SincronizarFornecedorView(APIView):
             instancia=instancia, fornecedor=fornecedor, tipo=tipo
         )
         executar_sincronizacao_manual_task.delay(execucao.id)
+        return Response(
+            {"execucao_id": execucao.id, "status": execucao.status}, status=status.HTTP_202_ACCEPTED
+        )
+
+
+def _pronta_para_cadastro_tiny(instancia):
+    """(pronta, motivo) — mesmas checagens do management command, sem tocar no Tiny."""
+    if not instancia.access_token:
+        return False, "A instância não está conectada ao Tiny."
+    faltando = []
+    if instancia.tiny_origem_padrao is None:
+        faltando.append("origem padrão")
+    if not instancia.tiny_unidade_medida_padrao:
+        faltando.append("unidade de medida padrão")
+    if faltando:
+        return False, f"Configure a {' e a '.join(faltando)} do Tiny antes de cadastrar."
+    return True, ""
+
+
+class CadastroTinyPreviewView(APIView):
+    """
+    GET .../fornecedores/<fornecedor>/cadastro-tiny/preview/ — estimativa
+    para a tela de confirmação do "Sincronizar com Tiny". SÓ consulta o
+    espelho local; NENHUMA chamada ao Tiny.
+    """
+
+    @extend_schema(responses=CadastroTinyPreviewSerializer)
+    def get(self, request, slug, fornecedor):
+        instancia = _obter_instancia_ou_404(slug)
+        if fornecedor not in CAMPOS_POR_FORNECEDOR:
+            return Response(
+                {"detail": f"Fornecedor '{fornecedor}' desconhecido."}, status=status.HTTP_404_NOT_FOUND
+            )
+
+        estimativa = estimar_cadastro(instancia, fornecedor)
+        pronta, motivo = _pronta_para_cadastro_tiny(instancia)
+        aberta = execucao_cadastro_tiny_aberta(instancia, fornecedor)
+        return Response(
+            CadastroTinyPreviewSerializer(
+                {
+                    **estimativa,
+                    "pronta_para_cadastro": pronta,
+                    "motivo_nao_pronta": motivo,
+                    "sincronizacao_em_andamento": aberta is not None,
+                }
+            ).data
+        )
+
+
+def _iniciar_execucao_cadastro_tiny(instancia, fornecedor):
+    """
+    Cria uma Execucao de cadastro Tiny e enfileira a task. Retorna
+    (execucao, token). Chamado dentro de uma transação com o par travado.
+    """
+    token = uuid.uuid4().hex
+    execucao = Execucao.objects.create(
+        instancia=instancia,
+        fornecedor=fornecedor,
+        tipo=TipoExecucao.CADASTRO_TINY,
+        lease_token=token,
+        heartbeat_em=timezone.now(),
+    )
+    return execucao, token
+
+
+class CadastrarProdutosTinyView(APIView):
+    """
+    POST .../fornecedores/<fornecedor>/cadastro-tiny/ — agenda a
+    sincronização em massa de produtos deste fornecedor com o Tiny.
+
+    Cria a `Execucao` (tipo `cadastro_tiny`, status `rodando`) com um
+    `lease_token` novo, enfileira a task e devolve o `execucao_id` na hora.
+    O processamento roda em background com pause/resume e heartbeat.
+
+    Concorrência: sob `select_for_update` do par (instância, fornecedor).
+    Se JÁ existe uma Execucao de cadastro Tiny "aberta" (rodando, pausando,
+    pausado ou interrompido) para o par, devolve 409 — a interface deve
+    oferecer Pausar/Retomar, não iniciar outra. Também 409 se há uma
+    importação de espelho do fornecedor rodando.
+    """
+
+    @extend_schema(request=None, responses=SincronizarRespostaSerializer)
+    def post(self, request, slug, fornecedor):
+        instancia = _obter_instancia_ou_404(slug)
+        if fornecedor not in CAMPOS_POR_FORNECEDOR:
+            return Response(
+                {"detail": f"Fornecedor '{fornecedor}' desconhecido."}, status=status.HTTP_404_NOT_FOUND
+            )
+
+        pronta, motivo = _pronta_para_cadastro_tiny(instancia)
+        if not pronta:
+            return Response({"detail": motivo}, status=status.HTTP_400_BAD_REQUEST)
+
+        conflito = None
+        execucao = None
+        with transaction.atomic():
+            _travar_instancia(instancia)
+            if execucao_cadastro_tiny_aberta(instancia, fornecedor) is not None:
+                conflito = (
+                    "Já existe uma sincronização com o Tiny aberta para este fornecedor "
+                    "(em andamento, pausada ou interrompida). Use Pausar/Retomar."
+                )
+            elif Execucao.objects.filter(
+                instancia=instancia, fornecedor=fornecedor, status=StatusExecucao.RODANDO
+            ).exists():
+                conflito = "Já existe uma importação de espelho em andamento para este fornecedor."
+            else:
+                execucao, _token = _iniciar_execucao_cadastro_tiny(instancia, fornecedor)
+
+        if conflito:
+            return Response({"detail": conflito}, status=status.HTTP_409_CONFLICT)
+
+        cadastrar_produtos_tiny_task.delay(execucao.id, execucao.lease_token)
+        return Response(
+            {"execucao_id": execucao.id, "status": execucao.status},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+def _travar_instancia(instancia):
+    """
+    `SELECT ... FOR UPDATE` na linha da Instancia — serializa TODAS as
+    operações de start/pausar/retomar de cadastro Tiny dessa instância
+    (são todas rápidas, só DB). Garante que "iniciar XBZ" e um segundo
+    "iniciar XBZ" concorrentes não criem duas Execucao, e que dois
+    "retomar" concorrentes só resultem em uma task.
+    """
+    Instancia.objects.select_for_update().get(pk=instancia.pk)
+
+
+class PausarCadastroTinyView(APIView):
+    """
+    POST .../fornecedores/<fornecedor>/cadastro-tiny/pausar/ — pede a pausa
+    COOPERATIVA da execução em andamento. Não mata a task: marca
+    `pausa_solicitada` e status `pausando`; a task detecta antes do próximo
+    produto, termina a unidade atual e encerra em `pausado`.
+    """
+
+    @extend_schema(request=None, responses=SincronizarRespostaSerializer)
+    def post(self, request, slug, fornecedor):
+        instancia = _obter_instancia_ou_404(slug)
+        if fornecedor not in CAMPOS_POR_FORNECEDOR:
+            return Response(
+                {"detail": f"Fornecedor '{fornecedor}' desconhecido."}, status=status.HTTP_404_NOT_FOUND
+            )
+        with transaction.atomic():
+            _travar_instancia(instancia)
+            execucao = (
+                Execucao.objects.filter(
+                    instancia=instancia,
+                    fornecedor=fornecedor,
+                    tipo=TipoExecucao.CADASTRO_TINY,
+                    status=StatusExecucao.RODANDO,
+                )
+                .order_by("-iniciada_em")
+                .first()
+            )
+            if execucao is None:
+                return Response(
+                    {"detail": "Não há sincronização em andamento para pausar."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            execucao.status = StatusExecucao.PAUSANDO
+            execucao.pausa_solicitada = True
+            execucao.save(update_fields=["status", "pausa_solicitada"])
+        return Response(
+            {"execucao_id": execucao.id, "status": execucao.status}, status=status.HTTP_202_ACCEPTED
+        )
+
+
+class RetomarCadastroTinyView(APIView):
+    """
+    POST .../fornecedores/<fornecedor>/cadastro-tiny/retomar/ — retoma a
+    MESMA Execucao pausada/interrompida (ou uma `rodando` com heartbeat
+    expirado). Gera um `lease_token` novo (um eventual zumbi da rodada
+    anterior perde o lease e para), volta a `rodando` e enfileira a task.
+    A fila é reconstruída do banco (idempotência): produtos já cadastrados
+    não voltam, imagens já sincronizadas não são reenviadas.
+
+    Corrida de dois "retomar" simultâneos: sob `select_for_update`, só o
+    primeiro encontra a Execucao num estado retomável; o segundo a vê já
+    `rodando` (heartbeat fresco) e devolve 409.
+    """
+
+    @extend_schema(request=None, responses=SincronizarRespostaSerializer)
+    def post(self, request, slug, fornecedor):
+        instancia = _obter_instancia_ou_404(slug)
+        if fornecedor not in CAMPOS_POR_FORNECEDOR:
+            return Response(
+                {"detail": f"Fornecedor '{fornecedor}' desconhecido."}, status=status.HTTP_404_NOT_FOUND
+            )
+        agora = timezone.now()
+        conflito = None
+        execucao = None
+        token = None
+        with transaction.atomic():
+            _travar_instancia(instancia)
+            execucao = (
+                Execucao.objects.filter(
+                    instancia=instancia,
+                    fornecedor=fornecedor,
+                    tipo=TipoExecucao.CADASTRO_TINY,
+                    status__in=STATUS_EXECUCAO_ABERTOS,
+                )
+                .order_by("-iniciada_em")
+                .first()
+            )
+            retomavel = execucao is not None and (
+                execucao.status in (StatusExecucao.PAUSADO, StatusExecucao.INTERROMPIDO)
+                or (
+                    execucao.status in (StatusExecucao.RODANDO, StatusExecucao.PAUSANDO)
+                    and heartbeat_expirado(execucao.heartbeat_em, agora)
+                )
+            )
+            if not retomavel:
+                if execucao is not None and execucao.status in (
+                    StatusExecucao.RODANDO,
+                    StatusExecucao.PAUSANDO,
+                ):
+                    conflito = "A sincronização já está em andamento."
+                else:
+                    conflito = "Não há sincronização pausada ou interrompida para retomar."
+                execucao = None
+            else:
+                token = uuid.uuid4().hex
+                execucao.status = StatusExecucao.RODANDO
+                execucao.pausa_solicitada = False
+                execucao.lease_token = token
+                execucao.heartbeat_em = agora
+                execucao.finalizada_em = None
+                execucao.mensagem_erro = ""
+                execucao.save(
+                    update_fields=[
+                        "status",
+                        "pausa_solicitada",
+                        "lease_token",
+                        "heartbeat_em",
+                        "finalizada_em",
+                        "mensagem_erro",
+                    ]
+                )
+
+        if conflito:
+            return Response({"detail": conflito}, status=status.HTTP_409_CONFLICT)
+
+        cadastrar_produtos_tiny_task.delay(execucao.id, token)
         return Response(
             {"execucao_id": execucao.id, "status": execucao.status}, status=status.HTTP_202_ACCEPTED
         )

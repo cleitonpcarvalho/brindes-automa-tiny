@@ -3,6 +3,10 @@ from rest_framework.routers import DefaultRouter
 
 from .auth_views import LoginView, LogoutView, MeView
 from .views import (
+    CadastrarProdutosTinyView,
+    CadastroTinyPreviewView,
+    PausarCadastroTinyView,
+    RetomarCadastroTinyView,
     CadenciaFornecedorDetailView,
     CadenciasFornecedorView,
     ConfiguracoesInstanciaView,
@@ -55,6 +59,26 @@ urlpatterns = router.urls + [
         "instancias/<slug:slug>/fornecedores/<str:fornecedor>/sincronizar/",
         SincronizarFornecedorView.as_view(),
         name="instancia-fornecedor-sincronizar",
+    ),
+    path(
+        "instancias/<slug:slug>/fornecedores/<str:fornecedor>/cadastro-tiny/preview/",
+        CadastroTinyPreviewView.as_view(),
+        name="instancia-fornecedor-cadastro-tiny-preview",
+    ),
+    path(
+        "instancias/<slug:slug>/fornecedores/<str:fornecedor>/cadastro-tiny/",
+        CadastrarProdutosTinyView.as_view(),
+        name="instancia-fornecedor-cadastro-tiny",
+    ),
+    path(
+        "instancias/<slug:slug>/fornecedores/<str:fornecedor>/cadastro-tiny/pausar/",
+        PausarCadastroTinyView.as_view(),
+        name="instancia-fornecedor-cadastro-tiny-pausar",
+    ),
+    path(
+        "instancias/<slug:slug>/fornecedores/<str:fornecedor>/cadastro-tiny/retomar/",
+        RetomarCadastroTinyView.as_view(),
+        name="instancia-fornecedor-cadastro-tiny-retomar",
     ),
     path(
         "instancias/<slug:slug>/produtos/",

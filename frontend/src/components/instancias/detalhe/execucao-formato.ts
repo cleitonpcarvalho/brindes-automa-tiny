@@ -21,6 +21,7 @@ export const BADGE_POR_STATUS_EXECUCAO: Record<
 export const ROTULO_TIPO: Record<string, string> = {
   carga_inicial: "Carga inicial",
   incremental: "Incremental",
+  cadastro_tiny: "Cadastro no Tiny",
 }
 
 export function badgeStatus(status: string) {

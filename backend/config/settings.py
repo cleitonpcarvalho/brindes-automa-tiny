@@ -145,6 +145,9 @@ SPECTACULAR_SETTINGS = {
         # mesmo motivo dos demais (nome estável entre regerações).
         "TipoExecucaoEnum": "apps.sincronizacao.models.TipoExecucao.choices",
         "NivelLogEnum": "apps.sincronizacao.models.NivelLog.choices",
+        # Campo `estado` do CadastroTinyEstadoSerializer (pause/resume) —
+        # nome fixo para o frontend não perder a referência a cada regeração.
+        "CadastroTinyEstadoEnum": "apps.instancias.serializers.CADASTRO_TINY_ESTADOS",
     },
 }
 

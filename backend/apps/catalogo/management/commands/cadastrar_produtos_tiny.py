@@ -17,6 +17,22 @@ class Command(BaseCommand):
     """
     Cadastra no Tiny as variações com status pendente desta instância.
 
+    Modelo operacional definitivo — determinístico por SKU:
+      SKU do fornecedor == SKU no espelho (Variacao.sku) == SKU no Tiny.
+    A correspondência com o catálogo do Tiny é feita EXCLUSIVAMENTE por SKU
+    exato (`TinyApiClient.buscar_produto_por_sku`). Este fluxo NUNCA
+    consulta o espelho `ProdutoTiny` e NUNCA casa por nome, NCM, descrição,
+    fuzzy ou qualquer heurística — essas técnicas existem só nas auditorias
+    (`auditar_correspondencia_somarcas_tiny`) e não participam de
+    criação/atualização.
+
+      - SKU exato existe no Tiny  -> vincula (grava o tiny_id) e marca cadastrado;
+      - SKU exato não existe      -> cria o produto e marca cadastrado.
+
+    A fila é só `status=PENDENTE`: variações `aguardando` (estoque <= 0),
+    `descontinuado` (regra P@ da xbz) e `cadastrado` já ficam de fora pela
+    própria consulta.
+
     Idempotente e retomável por construção: cada variação processada com
     sucesso sai de `pendente` (vira `cadastrado` ou `erro`) e não é mais
     selecionada pela consulta — então rodar de novo depois de uma
@@ -108,6 +124,8 @@ class Command(BaseCommand):
             raise CommandError(f"Instância '{instancia.slug}' não está conectada ao Tiny.")
 
     def _processar_variacao(self, cliente, instancia, variacao):
+        # Única checagem de existência: SKU EXATO. `variacao.sku` é o código
+        # entregue pelo fornecedor, preservado sem qualquer normalização.
         produto_existente = cliente.buscar_produto_por_sku(variacao.sku)
         if produto_existente:
             self._marcar_cadastrada(variacao, produto_existente["id"])

@@ -45,6 +45,14 @@ class TinyApiClient:
     BACKOFF_BASE_SEGUNDOS = 1.0
     BACKOFF_MAXIMO_SEGUNDOS = 60.0
 
+    # `buscar_produto_por_sku` traz uma página pequena (não `limit=1`) porque
+    # o filtro `codigo` da API do Tiny não é garantidamente igualdade exata
+    # (pode casar por prefixo/"contém"). A regra operacional do projeto é:
+    # SKU do fornecedor == SKU no espelho == SKU no Tiny, e a ÚNICA chave de
+    # correspondência com o Tiny é o SKU EXATO — então a igualdade é
+    # reconfirmada aqui, no nosso código, sobre o campo `sku` do item.
+    LIMITE_BUSCA_SKU = 20
+
     def __init__(self, instancia, base_url=None, sleep_fn=time.sleep, limiter=None):
         self.instancia = instancia
         self.base_url = base_url if base_url is not None else _base_url_padrao()
@@ -62,11 +70,17 @@ class TinyApiClient:
     # -- API de domínio (produtos/estoque) ----------------------------------
 
     def buscar_produto_por_sku(self, sku: str) -> dict | None:
-        """GET /produtos?codigo=<sku> — usado para nunca duplicar um SKU já cadastrado."""
-        resposta = self.get("/produtos", params={"codigo": sku, "limit": 1})
+        """
+        GET /produtos?codigo=<sku> — a ÚNICA busca de existência do fluxo
+        operacional: devolve o produto do Tiny cujo `sku` é EXATAMENTE igual
+        ao pedido, ou None. Nunca casa por nome, NCM, aproximação ou prefixo
+        — se o Tiny devolver itens cujo `sku` não bate letra a letra, eles
+        são ignorados (para o fluxo é "não existe" e o SKU pode ser criado).
+        """
+        resposta = self.get("/produtos", params={"codigo": sku, "limit": self.LIMITE_BUSCA_SKU})
         self._levantar_se_erro(resposta)
         itens = resposta.json().get("itens", [])
-        return itens[0] if itens else None
+        return next((item for item in itens if item.get("sku") == sku), None)
 
     def listar_produtos(self, *, limit: int = 100, offset: int = 0, situacao: str | None = None) -> dict:
         """

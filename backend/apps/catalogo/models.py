@@ -113,9 +113,16 @@ class Variacao(models.Model):
     uma unidade cadastrável independente, com seu próprio ciclo de vida
     (status, tiny_id, cadastrado_em) e seu próprio SKU único dentro do
     produto-pai.
+
+    Modelo operacional definitivo: `sku` é o identificador operacional.
+    SKU do fornecedor == este `sku` == SKU no Tiny. O vínculo com o
+    catálogo do Tiny é feito SÓ por SKU exato (ver
+    `cadastrar_produtos_tiny`); nunca por nome/NCM/fuzzy/`ProdutoTiny`.
     """
 
     produto = models.ForeignKey(Produto, on_delete=models.CASCADE, related_name="variacoes")
+    # `sku`: código EXATO entregue pelo fornecedor, preservado sem
+    # normalização. É a única chave de correspondência com o Tiny.
     sku = models.CharField(max_length=64)
     nome = models.CharField(max_length=500)
     ncm = models.CharField(

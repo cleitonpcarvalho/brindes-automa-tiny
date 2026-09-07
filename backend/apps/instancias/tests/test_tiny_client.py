@@ -154,7 +154,7 @@ class DominioProdutosTests(TestCase):
 
         self.assertEqual(resultado["id"], 555)
         _, kwargs = mock_request.call_args
-        self.assertEqual(kwargs["params"], {"codigo": "ABC-1", "limit": 1})
+        self.assertEqual(kwargs["params"]["codigo"], "ABC-1")
 
     @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
     @patch("apps.instancias.tiny_client.requests.request")
@@ -164,6 +164,34 @@ class DominioProdutosTests(TestCase):
 
         cliente = TinyApiClient(instancia, sleep_fn=lambda s: None, limiter=LimiterFalso())
         self.assertIsNone(cliente.buscar_produto_por_sku("NAO-EXISTE"))
+
+    @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.requests.request")
+    def test_buscar_produto_por_sku_exige_igualdade_exata(self, mock_request):
+        """
+        Modelo operacional definitivo: a busca é por SKU EXATO. Se o Tiny
+        devolver itens cujo `sku` não bate letra a letra (filtro por
+        prefixo/'contém'), o resultado é None — nunca vincula por
+        aproximação.
+        """
+        instancia = _instancia()
+        mock_request.return_value = _resposta(
+            200, {}, {"itens": [{"id": 1, "sku": "ABC-10"}, {"id": 2, "sku": "ABC-1X"}]}
+        )
+        cliente = TinyApiClient(instancia, sleep_fn=lambda s: None, limiter=LimiterFalso())
+        self.assertIsNone(cliente.buscar_produto_por_sku("ABC-1"))
+
+    @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.requests.request")
+    def test_buscar_produto_por_sku_acha_o_exato_mesmo_fora_da_primeira_posicao(self, mock_request):
+        instancia = _instancia()
+        mock_request.return_value = _resposta(
+            200,
+            {},
+            {"itens": [{"id": 1, "sku": "ABC-1-CX"}, {"id": 2, "sku": "ABC-1"}, {"id": 3, "sku": "ABC-1B"}]},
+        )
+        cliente = TinyApiClient(instancia, sleep_fn=lambda s: None, limiter=LimiterFalso())
+        self.assertEqual(cliente.buscar_produto_por_sku("ABC-1")["id"], 2)
 
     @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
     @patch("apps.instancias.tiny_client.requests.request")

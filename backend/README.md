@@ -157,10 +157,11 @@ rodar de novo só pega o que restou. Use `--limite N` para processar em
 lotes menores.
 
 O contrato oficial (passo 6) só exige `sku`, `descricao` e `tipo` — todo o
-resto, incluindo NCM, é opcional. Uma variação sem NCM (hoje, sempre o caso
-da Spot) é cadastrada normalmente; o comando só registra um aviso no log e
-soma no resumo final ("N variação(ões) sem NCM — pendência fiscal"), sem
-bloquear nem tratar como erro.
+resto, incluindo NCM, é opcional. Uma variação sem NCM é cadastrada
+normalmente; o comando só registra um aviso no log e soma no resumo final
+("N variação(ões) sem NCM — pendência fiscal"), sem bloquear nem tratar
+como erro. Na Spot isso hoje atinge ~4,5% dos SKUs (os que só têm código
+CN/TARIC da UE); os demais já saem com NCM (ver `_ncm_do_taric`).
 
 ### Dimensões, imagens e outros campos opcionais enviados
 
@@ -284,9 +285,13 @@ Detalhes e diagrama completo no retorno da conversa que gerou este passo
   (`apps/fornecedores/spot.py`). Existe `ConfiguracaoFornecedor.url_base_imagens`
   (registrada no admin), mas está vazia — enquanto isso, o normalizador da
   Spot não monta nenhuma URL de imagem.
-- **Spot / campo fiscal**: o único campo fiscal disponível é `Taric`, não o
-  NCM brasileiro. O normalizador da Spot grava `Variacao.ncm` sempre vazio e
-  guarda o Taric em `atributos["taric"]`, sem inventar conversão.
+- **Spot / campo fiscal**: o único campo fiscal da Spot é `Taric`. A
+  amostra real (3.709 SKUs) mostra que ~95,5% trazem nele um código de 8
+  dígitos (formato de NCM, só muda a pontuação) e ~4,5% trazem código
+  CN10/TARIC da UE de 9-10 dígitos. `_ncm_do_taric` (`apps/fornecedores/spot.py`)
+  aproveita só os de 8 dígitos para `Variacao.ncm` e **nunca trunca** os
+  demais; o `Taric` cru fica sempre em `atributos["taric"]`. Registros Spot
+  antigos: `python manage.py backfill_ncm_spot` (só toca `ncm`).
 - ~~**Só Marcas / preço**~~ **Resolvido no passo 5**: a API devolve 4
   combinações de preço (com/sem gravação × com/sem impostos). O cliente
   confirmou em 2026-09-04 que o correto é `preco_com_gravacao_com_impostos`

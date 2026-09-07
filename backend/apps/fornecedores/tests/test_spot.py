@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from django.test import TestCase
 
-from apps.fornecedores.spot import SpotFornecedor
+from apps.fornecedores.spot import SpotFornecedor, _ncm_do_taric
 
 from .fixtures import (
     SPOT_ESTOQUE_CANETA,
@@ -72,10 +72,11 @@ class NormalizarSpotTests(TestCase):
         for variacao in produtos[0].variacoes:
             self.assertEqual(variacao.preco, Decimal("69.9"))
 
-    def test_ncm_fica_vazio_e_taric_vai_para_atributos(self):
+    def test_ncm_vem_do_taric_de_8_digitos_e_taric_cru_fica_em_atributos(self):
         produtos = SpotFornecedor().normalizar(_payload())
         for variacao in produtos[0].variacoes:
-            self.assertEqual(variacao.ncm, "")
+            # fixture: Taric "4202.92.00" -> 8 dígitos -> NCM só-dígitos
+            self.assertEqual(variacao.ncm, "42029200")
             self.assertEqual(variacao.atributos["taric"], "4202.92.00")
 
     def test_imagem_fica_vazia_sem_url_base_configurada(self):
@@ -168,6 +169,83 @@ class ImagensSpotTests(TestCase):
     def test_ignora_imagens_tecnicas_de_area_e_componente(self):
         op = self._op(AllImageList="11110_1_1_1.png, 11110_105_C1.png, 11110_105.jpg")
         self.assertEqual(self._imagens(op), [f"{self.BASE}/11110_105.jpg"])
+
+
+class NcmDoTaricUnitTests(TestCase):
+    """`_ncm_do_taric`: só-dígitos, e só devolve se sobrarem exatamente 8."""
+
+    def test_oito_digitos_crus(self):
+        self.assertEqual(_ncm_do_taric("96081000"), "96081000")
+
+    def test_oito_digitos_pontuados(self):
+        self.assertEqual(_ncm_do_taric("9608.10.00"), "96081000")
+
+    def test_oito_digitos_com_ponto_final(self):
+        self.assertEqual(_ncm_do_taric("5603.13.40."), "56031340")
+
+    def test_nove_digitos_nao_e_truncado(self):
+        self.assertEqual(_ncm_do_taric("621600000"), "")
+
+    def test_dez_digitos_nao_e_truncado(self):
+        self.assertEqual(_ncm_do_taric("9608109900"), "")
+        self.assertEqual(_ncm_do_taric("4202.92.91.90"), "")
+
+    def test_vazio_e_none(self):
+        self.assertEqual(_ncm_do_taric(""), "")
+        self.assertEqual(_ncm_do_taric(None), "")
+
+
+class NcmSpotNormalizarTests(TestCase):
+    def _variacao(self, **opcional_extra):
+        opcional = {
+            "Sku": "11110-105",
+            "ProdReference": "11110",
+            "ColorCode": "105",
+            "Price1": 1.99,
+        }
+        opcional.update(opcional_extra)
+        produtos = SpotFornecedor().normalizar(_payload_uma_variacao(opcional))
+        return produtos[0].variacoes[0]
+
+    def test_taric_de_8_digitos_vira_ncm(self):
+        v = self._variacao(Taric="96081000")
+        self.assertEqual(v.ncm, "96081000")
+        self.assertEqual(v.atributos["taric"], "96081000")
+
+    def test_taric_pontuado_vira_ncm_so_digitos(self):
+        v = self._variacao(Taric="9608.10.00")
+        self.assertEqual(v.ncm, "96081000")
+        self.assertEqual(v.atributos["taric"], "9608.10.00")
+
+    def test_taric_com_ponto_final(self):
+        v = self._variacao(Taric="5603.13.40.")
+        self.assertEqual(v.ncm, "56031340")
+        self.assertEqual(v.atributos["taric"], "5603.13.40.")
+
+    def test_taric_de_9_digitos_fica_sem_ncm_mas_preserva_cru(self):
+        v = self._variacao(Taric="621600000")
+        self.assertEqual(v.ncm, "")
+        self.assertEqual(v.atributos["taric"], "621600000")
+
+    def test_taric_de_10_digitos_fica_sem_ncm_mas_preserva_cru(self):
+        v = self._variacao(Taric="9608109900")
+        self.assertEqual(v.ncm, "")
+        self.assertEqual(v.atributos["taric"], "9608109900")
+
+    def test_taric_ausente_fica_sem_ncm_e_sem_taric(self):
+        v = self._variacao()
+        self.assertEqual(v.ncm, "")
+        self.assertNotIn("taric", v.atributos)
+
+    def test_cai_para_taric_do_produto_quando_opcional_nao_tem(self):
+        produto = {"ProdReference": "11110", "Name": "11110. Caneta", "Taric": "9608.10.00"}
+        produtos = SpotFornecedor().normalizar(
+            _payload_uma_variacao(
+                {"Sku": "11110-105", "ProdReference": "11110", "ColorCode": "105", "Price1": 1},
+                produto,
+            )
+        )
+        self.assertEqual(produtos[0].variacoes[0].ncm, "96081000")
 
 
 class ConversaoDeUnidadesSpotTests(TestCase):

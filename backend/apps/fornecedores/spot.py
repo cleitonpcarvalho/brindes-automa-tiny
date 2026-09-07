@@ -25,6 +25,28 @@ _PADRAO_DIAMETRO_COMPRIMENTO = re.compile(
 # `imagens_utilizaveis` também corta em 5). Escolha nossa, não do cliente.
 MAX_IMAGENS_POR_VARIACAO = 5
 
+_SO_DIGITOS = re.compile(r"\D")
+
+
+def _ncm_do_taric(valor) -> str:
+    """
+    Converte o campo `Taric` da Spot num NCM brasileiro — SÓ quando é seguro.
+
+    A amostra real (3.709 SKUs) mostra que o `Taric` da Spot é uma mistura:
+    ~95,5% são códigos de 8 dígitos (formato de NCM: "9608.10.00" /
+    "96081000" / "9608.10.00." — só muda a pontuação), mas ~4,5% são
+    códigos CN10/TARIC da UE de 9-10 dígitos ("9608109900", "4202929190")
+    que NÃO são NCM e cujos 8 primeiros dígitos também não formam um NCM
+    válido.
+
+    Regra: remove tudo que não é dígito e devolve o resultado APENAS se
+    sobrarem exatamente 8 dígitos. Qualquer outra coisa (9, 10, 7 dígitos,
+    vazio, None) -> "" — nunca trunca, nunca adivinha. O valor cru continua
+    guardado em `Variacao.atributos["taric"]` para rastreabilidade.
+    """
+    digitos = _SO_DIGITOS.sub("", str(valor or ""))
+    return digitos if len(digitos) == 8 else ""
+
 # Nome de foto de catálogo da Spot: "<ref>_<cor>" com sufixos opcionais
 # ("-a", "-c", "-logo", "-box"...). NÃO casa de propósito com as imagens
 # técnicas, cujo stem tem mais de um "_": marcação ("11110_1_1_1.png"),
@@ -123,11 +145,13 @@ class SpotFornecedor(FornecedorBase):
     ("o join é por Sku e WebSku"), para o caso de algum SKU só bater por
     WebSku.
 
-    Pendência aberta com o fornecedor, deixada preparada e NÃO resolvida
-    por conta própria:
-      - NCM: o único campo fiscal disponível é o Taric, não confirmado
-        como equivalente ao NCM brasileiro. `ncm` fica sempre vazio para
-        este fornecedor (o Taric vai só em `atributos`, para não se perder).
+    NCM: o único campo fiscal da Spot é o `Taric`. A amostra real mostra
+    que ~95,5% dos SKUs trazem nele um código de 8 dígitos (formato de NCM,
+    só varia a pontuação) e ~4,5% trazem código CN10/TARIC da UE de 9-10
+    dígitos, que não é NCM. `_ncm_do_taric` aproveita só os de 8 dígitos
+    (nunca trunca os demais) -> `Variacao.ncm`. O `Taric` cru fica sempre
+    em `atributos["taric"]`, inclusive nos casos sem NCM, para
+    rastreabilidade e para cobrar o dado do fornecedor depois.
 
     Imagens: a API devolve só o nome do arquivo (ex.: "11112_115.jpg"), sem
     host. A URL é montada com `configuracao["url_base_imagens"]`
@@ -229,12 +253,14 @@ class SpotFornecedor(FornecedorBase):
 
             imagens = imagens_spot_da_variacao(opcional, produto_bruto, url_base_imagens)
 
-            taric = produto_bruto.get("Taric", "")
+            taric = opcional.get("Taric") or produto_bruto.get("Taric") or ""
             produto.variacoes.append(
                 VariacaoNormalizada(
                     sku=sku,
                     nome=produto_bruto.get("Name", ""),
-                    ncm="",  # pendente — ver docstring da classe
+                    # NCM só quando o Taric tem 8 dígitos (ver _ncm_do_taric);
+                    # o Taric cru fica em `atributos` para os demais casos.
+                    ncm=_ncm_do_taric(taric),
                     preco=to_decimal(opcional.get("Price1")),
                     estoque=int(estoque or 0),
                     cor=opcional.get("ColorDesc1", ""),

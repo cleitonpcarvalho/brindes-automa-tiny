@@ -128,10 +128,11 @@ class Variacao(models.Model):
     ncm = models.CharField(
         max_length=20,
         blank=True,
-        help_text="NCM brasileiro. Na Spot, o único campo fiscal disponível é o "
-        "'Taric', que NÃO é confirmado como equivalente ao NCM — o normalizador "
-        "da Spot (apps/fornecedores/spot.py) deixa este campo vazio e guarda o "
-        "Taric em atributos, sem inventar conversão (ver pendências no README).",
+        help_text="NCM brasileiro. Na Spot o campo de origem é o 'Taric': o "
+        "normalizador (apps/fornecedores/spot.py, _ncm_do_taric) aproveita só "
+        "quando ele tem 8 dígitos (~95,5% da amostra) e nunca trunca os códigos "
+        "CN10/TARIC da UE de 9-10 dígitos; o valor cru fica sempre em "
+        "atributos['taric']. Backfill dos registros antigos: backfill_ncm_spot.",
     )
     preco = models.DecimalField(max_digits=10, decimal_places=2)
     estoque = models.IntegerField(default=0)

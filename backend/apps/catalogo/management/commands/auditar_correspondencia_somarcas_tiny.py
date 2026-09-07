@@ -11,13 +11,19 @@ consultas de leitura no ORM e imprime números para diagnóstico.
 Correspondência "exata" aqui é definida por:
   - SKU: `Variacao.sku` == `ProdutoTiny.sku` (comparação exata, apenas
     `strip()` das pontas — espaço nas bordas não é significativo);
-  - descrição: NCM idêntico (mesmo critério de `strip()`) E descrição
-    normalizada idêntica. A normalização da descrição (ver
-    `normalizar_descricao`) só trata diferenças triviais de formatação:
-    caixa, acentos, pontuação e espaçamento. Nada de similaridade,
-    tokens parciais ou distância de edição.
+  - descrição: NCM idêntico E descrição normalizada idêntica. O NCM é
+    comparado só pelos dígitos (ver `normalizar_ncm`): a Só Marcas grava
+    `76151000` e o Tiny grava `7615.10.00` — é o mesmo NCM, só muda a
+    formatação. A normalização da descrição (ver `normalizar_descricao`)
+    só trata diferenças triviais de formatação: caixa, acentos,
+    pontuação e espaçamento. Nada de similaridade, tokens parciais ou
+    distância de edição.
+
+O valor original do NCM (com ou sem pontos) é preservado e usado tal
+qual nas amostras — a normalização vale só para comparação e índices.
 """
 
+import re
 import unicodedata
 from collections import Counter, defaultdict
 
@@ -34,6 +40,26 @@ TOP_NCM_PADRAO = 20
 
 # Categorias Unicode de pontuação/símbolo — viram espaço na normalização.
 _CATEGORIAS_PONTUACAO = {"P", "S"}
+
+_SO_DIGITOS = re.compile(r"\D+")
+
+
+def normalizar_ncm(valor: str) -> str:
+    """
+    Reduz um NCM à sua forma só-dígitos, para comparar valores que
+    diferem apenas na formatação:
+
+      - "7615.10.00" -> "76151000"
+      - "76151000"   -> "76151000"
+      - " 7615.10.00 " -> "76151000"
+      - "" / None     -> ""
+
+    Não valida quantidade de dígitos nem inventa conversão — só remove
+    tudo que não é dígito. NÃO é fuzzy matching.
+    """
+    if not valor:
+        return ""
+    return _SO_DIGITOS.sub("", str(valor))
 
 
 def normalizar_descricao(texto: str) -> str:
@@ -62,10 +88,6 @@ def normalizar_descricao(texto: str) -> str:
         else:
             saida.append(caractere)
     return " ".join("".join(saida).casefold().split())
-
-
-def _chave_ncm(valor: str) -> str:
-    return (valor or "").strip()
 
 
 class Command(BaseCommand):
@@ -116,7 +138,7 @@ class Command(BaseCommand):
             if not descricao_norm:
                 tiny_sem_descricao += 1
                 continue
-            indice_tiny[(_chave_ncm(p.ncm), descricao_norm)].append(p)
+            indice_tiny[(normalizar_ncm(p.ncm), descricao_norm)].append(p)
 
         # --- varredura do lado fornecedor ----------------------------------
         com_sku_igual = 0
@@ -131,7 +153,7 @@ class Command(BaseCommand):
         tiny_id_para_variacoes = defaultdict(list)
 
         for variacao in variacoes:
-            ncms_somarcas[_chave_ncm(variacao.ncm) or "(vazio)"] += 1
+            ncms_somarcas[normalizar_ncm(variacao.ncm) or "(vazio)"] += 1
 
             sku_forn = (variacao.sku or "").strip()
             if sku_forn and sku_forn in skus_tiny:
@@ -145,7 +167,7 @@ class Command(BaseCommand):
                 sem_match.append(variacao)
                 continue
 
-            candidatos = indice_tiny.get((_chave_ncm(variacao.ncm), descricao_norm), [])
+            candidatos = indice_tiny.get((normalizar_ncm(variacao.ncm), descricao_norm), [])
             if len(candidatos) == 1:
                 inequivocos.append((variacao, candidatos[0]))
                 tiny_id_para_variacoes[candidatos[0].tiny_id].append(variacao)
@@ -162,7 +184,7 @@ class Command(BaseCommand):
         # --- distribuição de NCM (fornecedor x Tiny) -----------------------
         ncms_tiny = Counter()
         for p in produtos_tiny:
-            ncms_tiny[_chave_ncm(p.ncm) or "(vazio)"] += 1
+            ncms_tiny[normalizar_ncm(p.ncm) or "(vazio)"] += 1
 
         # --- impressão ---------------------------------------------------
         w = self.stdout.write

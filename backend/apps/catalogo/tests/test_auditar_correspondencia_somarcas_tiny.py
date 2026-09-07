@@ -25,6 +25,17 @@ from ..management.commands import auditar_correspondencia_somarcas_tiny as cmd
 from ..models import Produto, ProdutoTiny, Variacao
 
 
+def _secao(saida: str, titulo: str) -> str:
+    """Recorta o trecho da saída entre o cabeçalho `titulo` e o próximo `==`."""
+    linhas = saida.splitlines()
+    inicio = next(i for i, l in enumerate(linhas) if titulo in l)
+    fim = next(
+        (i for i in range(inicio + 1, len(linhas)) if linhas[i].strip().startswith("==")),
+        len(linhas),
+    )
+    return "\n".join(linhas[inicio:fim])
+
+
 class NormalizarDescricaoTests(TestCase):
     def test_trata_caixa_acento_pontuacao_e_espaco(self):
         n = cmd.normalizar_descricao
@@ -44,6 +55,22 @@ class NormalizarDescricaoTests(TestCase):
     def test_vazio(self):
         self.assertEqual(cmd.normalizar_descricao(""), "")
         self.assertEqual(cmd.normalizar_descricao(None), "")
+
+
+class NormalizarNcmTests(TestCase):
+    def test_mantem_so_digitos(self):
+        n = cmd.normalizar_ncm
+        self.assertEqual(n("7615.10.00"), "76151000")
+        self.assertEqual(n("76151000"), "76151000")
+        self.assertEqual(n(" 7615.10.00 "), "76151000")
+        self.assertEqual(n("7615-10-00"), "76151000")
+
+    def test_pontuado_e_sem_pontuacao_normalizam_igual(self):
+        self.assertEqual(cmd.normalizar_ncm("7615.10.00"), cmd.normalizar_ncm("76151000"))
+
+    def test_vazio(self):
+        self.assertEqual(cmd.normalizar_ncm(""), "")
+        self.assertEqual(cmd.normalizar_ncm(None), "")
 
 
 class AuditoriaTests(TestCase):
@@ -153,6 +180,30 @@ class AuditoriaTests(TestCase):
 
         saida = self._rodar()
         self.assertIn("7. Variações sem match exato ............. 1", saida)
+
+    def test_ncm_pontuado_no_tiny_casa_com_ncm_sem_pontuacao_da_so_marcas(self):
+        # bug de produção: Só Marcas grava "76151000", Tiny grava "7615.10.00"
+        self._variacao("F-1", "Panela de Alumínio", "76151000")
+        self._tiny(50, "T-50", "Panela de Alumínio", "7615.10.00")
+
+        saida = self._rodar("--amostra", "5")
+        self.assertIn("5.   ...com exatamente 1 candidato Tiny ... 1", saida)
+        self.assertIn("7. Variações sem match exato ............. 0", saida)
+        # o valor ORIGINAL de cada lado aparece na amostra, sem reformatar
+        self.assertIn("NCM forn ...: '76151000'", saida)
+        self.assertIn("NCM Tiny ...: '7615.10.00'", saida)
+
+    def test_distribuicao_agrupa_ncm_pontuado_e_sem_pontuacao(self):
+        self._variacao("F-1", "A", "76151000")
+        self._variacao("F-2", "B", "7615.10.00")
+        self._tiny(1, "T-1", "X", "7615.10.00")
+        self._tiny(2, "T-2", "Y", "76151000")
+
+        saida = self._rodar("--top-ncm", "5")
+        distribuicao = _secao(saida, "8. NCMs mais frequentes")
+        linhas = [l for l in distribuicao.splitlines() if "76151000" in l]
+        self.assertEqual(len(linhas), 1)  # uma única linha, não duas
+        self.assertRegex(linhas[0], r"76151000\s+2\s+2")
 
     def test_distribuicao_de_ncm(self):
         self._variacao("F-1", "A", "39241000")

@@ -224,10 +224,14 @@ function Conteudo({ slug, dados }: { slug: string; dados: VariacaoDetalhe }) {
         </div>
 
         {(mostrarNomeVariacao || dados.produto_descricao) && (
-          // Bloco de texto normal (não um flex item direto): o <p> segue o
-          // fluxo de bloco e quebra linha na largura de leitura, sem ser
-          // espremido pelo flex do cabeçalho nem afetar os badges.
-          <div className="w-full max-w-2xl">
+          // Teto de largura de leitura via valor ARBITRÁRIO (`max-w-[42rem]`),
+          // não os utilitários `max-w-sm/lg/2xl/…`: neste projeto o
+          // `@theme` de globals.css define tokens `--spacing-sm/2xl/…`, e o
+          // Tailwind v4 resolve `max-w-<nome>` por esse namespace — então
+          // `max-w-2xl` compila para `max-width:24px` e o bloco colapsa,
+          // quebrando o texto letra por letra. O valor arbitrário é emitido
+          // literal e não passa por essa resolução.
+          <div className="max-w-[42rem]">
             {mostrarNomeVariacao && (
               <p className="text-body-default text-muted-foreground">{dados.nome}</p>
             )}

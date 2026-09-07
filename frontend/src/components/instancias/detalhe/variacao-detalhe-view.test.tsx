@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import { render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import * as hooks from "@/lib/api/hooks"
@@ -105,8 +107,36 @@ describe("VariacaoDetalheView", () => {
     const paragrafo = screen.getByText(longa)
     expect(paragrafo).toBeInTheDocument()
     expect(paragrafo.tagName).toBe("P")
-    // o texto vive num bloco com teto de largura, não espremido pelo cabeçalho
-    expect(paragrafo.closest("div")).toHaveClass("max-w-2xl")
+
+    // A causa raiz do bug: neste projeto `globals.css` define tokens
+    // `@theme` de espaçamento nomeados (--spacing-sm/2xl/…) e o Tailwind v4
+    // resolve `max-w-<nome>` por esse namespace — `max-w-2xl` compila para
+    // `max-width: 24px`, colapsando o bloco. O bloco da descrição precisa
+    // usar um valor ARBITRÁRIO (`max-w-[Nrem]`), que é emitido literal.
+    const container = paragrafo.parentElement!
+    expect(container.className).toMatch(/\bmax-w-\[\d+(?:\.\d+)?rem\]/)
+    expect(container.className).not.toMatch(
+      /\bmax-w-(?:xs|sm|md|lg|xl|2xl|3xl|4xl|5xl|6xl|7xl)\b/,
+    )
+  })
+
+  it("NENHUM className do componente usa max-w-<nome> (quebrado neste projeto: vira 8–32px)", () => {
+    // Proteção real contra a regressão: `max-w-sm/md/lg/xl/2xl/3xl/…` neste
+    // projeto compilam para os valores de `--spacing-*` (8px … 32px), não
+    // para larguras de container. Só valores arbitrários `max-w-[…]` são
+    // seguros. Vale para QUALQUER elemento deste arquivo, não só a descrição.
+    const fonte = readFileSync(
+      join(process.cwd(), "src/components/instancias/detalhe/variacao-detalhe-view.tsx"),
+      "utf8",
+    )
+    // tira comentários (que citam o bug de propósito) antes de varrer o código
+    const codigo = fonte
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/(^|[^:])\/\/.*$/gm, "$1")
+    const ocorrencias = codigo.match(
+      /\bmax-w-(?:xs|sm|md|lg|xl|2xl|3xl|4xl|5xl|6xl|7xl)\b/g,
+    )
+    expect(ocorrencias).toBeNull()
   })
 
   it("apresenta atributos estruturados da Asia (objeto com value) de forma legível, sem JSON", () => {

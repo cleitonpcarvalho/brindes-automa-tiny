@@ -30,11 +30,24 @@ compara SKUs por uma normalização SÓ PARA AUDITORIA (ver
 `normalizar_sku` / `variantes_sku_tiny_para_auditoria`) e cruza esses
 matches com NCM e descrição para estimar falsos positivos. Nada disso
 altera SKU nem implementa matching de produção.
+
+Seções 13–15: análise EXPLORATÓRIA de similaridade de descrição para as
+variações que ainda NÃO têm match inequívoco (nem por NCM+descrição
+exata, nem pela regra de prefixo de SKU, nem por `tiny_id` já gravado).
+Para cada uma dessas variações, os candidatos do lado Tiny são
+filtrados pelo NCM normalizado (mesmo NCM dos dois lados — NCM sozinho
+NUNCA é match) e a semelhança entre as descrições normalizadas é medida
+com `difflib.SequenceMatcher(None, a, b, autojunk=False).ratio()` (só
+biblioteca padrão, determinístico). NENHUM score vira "match" aqui: o
+objetivo é observar a distribuição real dos dados antes de decidir a
+regra. Não há threshold de produção — os cortes `--score-perigo` /
+`--gap-perigo` existem só para separar os casos de risco na saída.
 """
 
 import re
 import unicodedata
 from collections import Counter, defaultdict
+from difflib import SequenceMatcher
 
 from django.core.management.base import BaseCommand, CommandError
 
@@ -46,7 +59,23 @@ from ...models import ProdutoTiny, Variacao
 FORNECEDOR = Fornecedor.SOMARCAS
 TAMANHO_AMOSTRA_PADRAO = 30
 TAMANHO_AMOSTRA_SKU_PADRAO = 50
+TAMANHO_AMOSTRA_SIM_PADRAO = 50
 TOP_NCM_PADRAO = 20
+
+# Cortes usados SÓ para organizar a saída das seções 13–15 (distribuição e
+# "casos perigosos"). NÃO são threshold de produção — a decisão da regra de
+# matching vem depois, olhando a distribuição real.
+SCORE_PERIGO_PADRAO = 0.90  # score alto o bastante para "quase igual"
+GAP_PERIGO_PADRAO = 0.05  # distância pequena entre 1º e 2º = candidato não se destaca
+
+# Faixas de score para o histograma da seção 13 (limite inferior, rótulo).
+FAIXAS_SCORE = (
+    (0.95, ">= 0.95"),
+    (0.90, ">= 0.90 e < 0.95"),
+    (0.85, ">= 0.85 e < 0.90"),
+    (0.80, ">= 0.80 e < 0.85"),
+    (0.0, "< 0.80"),
+)
 
 # Prefixos que o Tiny parece colar na frente do SKU do fornecedor. Removidos
 # APENAS quando iniciais e APENAS para a auditoria da seção 11 — nunca do
@@ -144,6 +173,34 @@ def normalizar_descricao(texto: str) -> str:
     return " ".join("".join(saida).casefold().split())
 
 
+def similaridade_descricao(a: str, b: str) -> float:
+    """
+    Semelhança entre duas descrições JÁ normalizadas (`normalizar_descricao`),
+    no intervalo [0.0, 1.0], via `difflib.SequenceMatcher`:
+
+        SequenceMatcher(None, a, b, autojunk=False).ratio()
+
+    - stdlib, sem dependência nova;
+    - determinística (mesma entrada -> mesmo número);
+    - `autojunk=False` desliga a heurística de "caractere lixo" do difflib,
+      que só liga com sequências > 200 itens e tornaria o número sensível
+      ao tamanho da string — indesejável para comparar descrições curtas.
+
+    É medição exploratória: o resultado NÃO decide match. Arredondado a 4
+    casas para a saída ficar estável entre execuções.
+    """
+    if not a or not b:
+        return 0.0
+    return round(SequenceMatcher(None, a, b, autojunk=False).ratio(), 4)
+
+
+def _faixa_score(score: float) -> str:
+    for limite, rotulo in FAIXAS_SCORE:
+        if score >= limite:
+            return rotulo
+    return FAIXAS_SCORE[-1][1]
+
+
 class Command(BaseCommand):
     help = (
         "Auditoria SOMENTE LEITURA: mede a correspondência exata entre o espelho "
@@ -173,11 +230,43 @@ class Command(BaseCommand):
             default=TOP_NCM_PADRAO,
             help=f"Quantos NCMs mais frequentes listar (padrão: {TOP_NCM_PADRAO}).",
         )
+        parser.add_argument(
+            "--amostra-sim",
+            type=int,
+            default=TAMANHO_AMOSTRA_SIM_PADRAO,
+            help=f"Linhas nas amostras de similaridade de descrição, seções 14/15 "
+            f"(padrão: {TAMANHO_AMOSTRA_SIM_PADRAO}).",
+        )
+        parser.add_argument(
+            "--score-perigo",
+            type=float,
+            default=SCORE_PERIGO_PADRAO,
+            help=f"Só para a seção 15: score a partir do qual um par conta como "
+            f"'quase igual' (padrão: {SCORE_PERIGO_PADRAO}). NÃO é threshold de produção.",
+        )
+        parser.add_argument(
+            "--gap-perigo",
+            type=float,
+            default=GAP_PERIGO_PADRAO,
+            help=f"Só para a seção 15: diferença máxima entre 1º e 2º melhor score "
+            f"para o candidato ser considerado 'não destacado' (padrão: {GAP_PERIGO_PADRAO}).",
+        )
+        parser.add_argument(
+            "--limite-sim",
+            type=int,
+            default=0,
+            help="Processa no máximo N variações não identificadas na análise de "
+            "similaridade (0 = todas). Útil para uma passada rápida.",
+        )
 
     def handle(self, *args, **options):
         instancia = self._obter_instancia(options["instancia_slug"])
         tamanho_amostra = max(0, options["amostra"])
         tamanho_amostra_sku = max(0, options["amostra_sku"])
+        tamanho_amostra_sim = max(0, options["amostra_sim"])
+        score_perigo = options["score_perigo"]
+        gap_perigo = options["gap_perigo"]
+        limite_sim = max(0, options["limite_sim"])
         top_ncm = max(0, options["top_ncm"])
 
         variacoes = list(
@@ -251,6 +340,21 @@ class Command(BaseCommand):
         # --- seção 11: auditoria da regra de prefixo EK/EKK no SKU --------
         sku = self._auditar_sku_prefixo(variacoes, produtos_tiny)
 
+        # --- seções 13–15: similaridade de descrição p/ o que sobrou -----
+        identificadas_pks = (
+            {v.pk for v, _ in inequivocos}
+            | {v.pk for v, _ in sku["inequivocos"]}
+            | {v.pk for v in variacoes if v.tiny_id}
+        )
+        similaridade = self._auditar_similaridade(
+            variacoes,
+            produtos_tiny,
+            identificadas_pks,
+            score_perigo=score_perigo,
+            gap_perigo=gap_perigo,
+            limite=limite_sim,
+        )
+
         # --- impressão ---------------------------------------------------
         w = self.stdout.write
         w("")
@@ -293,6 +397,8 @@ class Command(BaseCommand):
         self._imprimir_amostra_sem_match(sem_match[:tamanho_amostra])
         w("")
         self._imprimir_secao_sku(sku, tamanho_amostra_sku)
+        w("")
+        self._imprimir_secao_similaridade(similaridade, tamanho_amostra_sim)
 
     # -- seção 11: regra de prefixo EK/EKK no SKU ---------------------
 
@@ -425,6 +531,218 @@ class Command(BaseCommand):
                 f"    desc Tiny ..: {tiny.descricao}\n"
                 f"    NCM ........: {variacao.ncm!r}  {ncm_bate}  {tiny.ncm!r}"
             )
+
+    # -- seções 13–15: similaridade de descrição (exploratória) ------
+
+    def _auditar_similaridade(
+        self, variacoes, produtos_tiny, identificadas_pks, *, score_perigo, gap_perigo, limite
+    ):
+        """
+        Para cada variação AINDA sem match inequívoco, mede a semelhança da
+        descrição normalizada contra os produtos Tiny de MESMO NCM
+        normalizado. Só leitura, só memória, sem transformar score em match.
+
+        `identificadas_pks`: pks já resolvidos pelos sinais fortes (seção 5,
+        seção 11d, ou `tiny_id` já gravado) — ficam de fora.
+        """
+        # Índice Tiny por NCM normalizado. Tiny sem NCM ou sem descrição
+        # utilizável não entra: não dá para afirmar "mesmo NCM" nem comparar.
+        tiny_por_ncm = defaultdict(list)  # ncm -> [(ProdutoTiny, descricao_norm)]
+        for p in produtos_tiny:
+            ncm = normalizar_ncm(p.ncm)
+            desc = normalizar_descricao(p.descricao)
+            if ncm and desc:
+                tiny_por_ncm[ncm].append((p, desc))
+        for ncm in tiny_por_ncm:
+            tiny_por_ncm[ncm].sort(key=lambda par: par[0].tiny_id)
+
+        pendentes = [
+            v
+            for v in variacoes
+            if v.pk not in identificadas_pks and normalizar_descricao(v.nome or v.produto.nome)
+        ]
+        pendentes_sem_descricao = sum(
+            1
+            for v in variacoes
+            if v.pk not in identificadas_pks and not normalizar_descricao(v.nome or v.produto.nome)
+        )
+        if limite:
+            pendentes = pendentes[:limite]
+
+        faixas = Counter()
+        sem_ncm_forn = 0
+        sem_candidato_mesmo_ncm = 0
+        resultados = []  # dict por variação analisada
+
+        for variacao in pendentes:
+            alvo = normalizar_descricao(variacao.nome or variacao.produto.nome)
+            ncm_forn = normalizar_ncm(variacao.ncm)
+            if not ncm_forn:
+                sem_ncm_forn += 1
+                faixas["sem NCM no fornecedor"] += 1
+                continue
+
+            candidatos = tiny_por_ncm.get(ncm_forn, [])
+            if not candidatos:
+                sem_candidato_mesmo_ncm += 1
+                faixas["sem candidato com mesmo NCM"] += 1
+                continue
+
+            melhor, s1, segundo, s2 = self._top2_por_similaridade(alvo, candidatos)
+            gap = round(s1 - s2, 4) if segundo is not None else None
+            # quantos candidatos de mesmo NCM chegam ao patamar "quase igual".
+            # Só recontado (sem poda) quando o melhor já passou do corte —
+            # subconjunto pequeno.
+            if s1 >= score_perigo:
+                n_quase_iguais = sum(
+                    1
+                    for _tiny, desc in candidatos
+                    if similaridade_descricao(alvo, desc) >= score_perigo
+                )
+            else:
+                n_quase_iguais = 0
+            faixas[_faixa_score(s1)] += 1
+            resultados.append(
+                {
+                    "variacao": variacao,
+                    "melhor": melhor,
+                    "s1": s1,
+                    "segundo": segundo,
+                    "s2": s2 if segundo is not None else None,
+                    "gap": gap,
+                    "n_candidatos": len(candidatos),
+                    "n_quase_iguais": n_quase_iguais,
+                }
+            )
+
+        resultados.sort(key=lambda r: (-r["s1"], r["variacao"].sku, r["variacao"].pk))
+
+        perigosos = [
+            r
+            for r in resultados
+            if r["s1"] >= score_perigo
+            and (
+                (r["gap"] is not None and r["gap"] < gap_perigo)
+                or r["n_quase_iguais"] > 1
+            )
+        ]
+
+        return {
+            "analisadas": len(resultados),
+            "pendentes_total": len(pendentes),
+            "pendentes_sem_descricao": pendentes_sem_descricao,
+            "identificadas": len(identificadas_pks),
+            "sem_ncm_forn": sem_ncm_forn,
+            "sem_candidato_mesmo_ncm": sem_candidato_mesmo_ncm,
+            "faixas": faixas,
+            "resultados": resultados,
+            "perigosos": perigosos,
+            "score_perigo": score_perigo,
+            "gap_perigo": gap_perigo,
+        }
+
+    @staticmethod
+    def _top2_por_similaridade(alvo, candidatos):
+        """
+        Devolve (melhor_tiny, s1, segundo_tiny, s2) para `alvo` contra
+        `candidatos` = lista de (ProdutoTiny, descricao_norm), já ordenada
+        de forma determinística. Usa quick_ratio/real_quick_ratio (limites
+        superiores baratos do difflib) para pular o ratio() completo quando
+        ele não pode superar o 2º melhor corrente.
+        """
+        sm = SequenceMatcher(None, autojunk=False)
+        sm.set_seq2(alvo)
+        melhor_tiny, s1 = None, 0.0
+        segundo_tiny, s2 = None, 0.0
+        for tiny, desc in candidatos:
+            sm.set_seq1(desc)
+            if sm.real_quick_ratio() <= s2 or sm.quick_ratio() <= s2:
+                continue
+            r = round(sm.ratio(), 4)
+            if r > s1:
+                melhor_tiny, s1, segundo_tiny, s2 = tiny, r, melhor_tiny, s1
+            elif r > s2:
+                segundo_tiny, s2 = tiny, r
+        if melhor_tiny is None:
+            # nenhum candidato teve sobreposição — devolve o 1º como melhor 0.0
+            melhor_tiny = candidatos[0][0]
+        return melhor_tiny, s1, segundo_tiny, s2
+
+    def _imprimir_secao_similaridade(self, sim, tamanho_amostra):
+        w = self.stdout.write
+        w("== 13. Similaridade de descrição (EXPLORATÓRIA — nada vira match) ==")
+        w("  Algoritmo: difflib.SequenceMatcher(None, a, b, autojunk=False).ratio()")
+        w("  Candidatos: só produtos Tiny com o MESMO NCM normalizado (NCM sozinho não casa).")
+        w(f"  Variações já identificadas por sinal forte ...... {sim['identificadas']}")
+        w(f"  Variações pendentes analisadas .................. {sim['analisadas']}")
+        w(f"  Pendentes sem descrição utilizável .............. {sim['pendentes_sem_descricao']}")
+        w(f"  Pendentes sem NCM no fornecedor (fora do filtro)  {sim['sem_ncm_forn']}")
+        w(f"  Pendentes sem nenhum Tiny de mesmo NCM .......... {sim['sem_candidato_mesmo_ncm']}")
+        w("")
+        w("  Distribuição do MELHOR score por variação pendente:")
+        rotulos = [r for _l, r in FAIXAS_SCORE] + [
+            "sem candidato com mesmo NCM",
+            "sem NCM no fornecedor",
+        ]
+        for rotulo in rotulos:
+            w(f"    {rotulo:<28} {sim['faixas'].get(rotulo, 0):>8}")
+        w("")
+        w(f"== 14. Amostra dos {tamanho_amostra} maiores scores ==")
+        if not sim["resultados"]:
+            w("  (nenhum)")
+        else:
+            for r in sim["resultados"][:tamanho_amostra]:
+                self._linha_similaridade(r)
+        w("")
+        w(
+            f"== 15. Casos de risco de falso positivo "
+            f"(score >= {sim['score_perigo']} e gap < {sim['gap_perigo']}, "
+            f"ou >1 Tiny quase igual) =="
+        )
+        w(f"  Total de casos de risco ........................ {len(sim['perigosos'])}")
+        if not sim["perigosos"]:
+            w("  (nenhum)")
+        else:
+            for r in sim["perigosos"][:tamanho_amostra]:
+                self._linha_similaridade(r)
+
+    def _linha_similaridade(self, r):
+        w = self.stdout.write
+        v = r["variacao"]
+        melhor = r["melhor"]
+        s2 = "-" if r["s2"] is None else f"{r['s2']:.4f}"
+        gap = "-" if r["gap"] is None else f"{r['gap']:.4f}"
+        w(
+            f"  - {v.sku}  ->  {melhor.sku}  (tiny_id {melhor.tiny_id})\n"
+            f"    score ......: {r['s1']:.4f}   2º: {s2}   gap: {gap}   "
+            f"candidatos mesmo NCM: {r['n_candidatos']}   quase iguais: {r['n_quase_iguais']}\n"
+            f"    desc forn ..: {v.nome or v.produto.nome}\n"
+            f"    desc Tiny ..: {melhor.descricao}\n"
+            f"    NCM ........: {v.ncm!r}  vs  {melhor.ncm!r}\n"
+            f"    dim forn ...: {self._dimensoes(v)}\n"
+            f"    dim Tiny ...: {self._dimensoes(melhor)}"
+        )
+
+    @staticmethod
+    def _dimensoes(obj):
+        """
+        Dimensões/peso JÁ presentes no modelo local (Variacao e ProdutoTiny
+        têm os mesmos campos, nas mesmas unidades — cm/kg). Só exibição:
+        ajuda a explicar um score alto sem servir de critério. `cor`,
+        `capacidade` e `tamanho` existem na Variacao mas NÃO no ProdutoTiny,
+        então não dá para cruzar — ficam de fora.
+        """
+        partes = []
+        lxaxc = [getattr(obj, campo, None) for campo in ("largura", "altura", "comprimento")]
+        if any(v is not None for v in lxaxc):
+            partes.append("x".join("?" if v is None else f"{v:g}" for v in lxaxc) + "cm")
+        if getattr(obj, "diametro", None) is not None:
+            partes.append(f"Ø{obj.diametro:g}cm")
+        if getattr(obj, "peso_bruto", None) is not None:
+            partes.append(f"{obj.peso_bruto:g}kg br")
+        if getattr(obj, "peso_liquido", None) is not None:
+            partes.append(f"{obj.peso_liquido:g}kg líq")
+        return " ".join(partes) or "(sem dimensões)"
 
     # -- helpers -------------------------------------------------------
 

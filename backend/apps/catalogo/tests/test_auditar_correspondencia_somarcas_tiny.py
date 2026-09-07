@@ -103,6 +103,34 @@ class NormalizarSkuTests(TestCase):
         self.assertNotIn("", v("EKK"))
 
 
+class SimilaridadeDescricaoUnitTests(TestCase):
+    def test_score_identico_e_um(self):
+        self.assertEqual(cmd.similaridade_descricao("garrafa termica 500ml", "garrafa termica 500ml"), 1.0)
+
+    def test_descricoes_semelhantes_score_alto_mas_menor_que_um(self):
+        s = cmd.similaridade_descricao("garrafa termica inox 500ml", "garrafa termica inox 500 ml")
+        self.assertGreater(s, 0.9)
+        self.assertLess(s, 1.0)
+
+    def test_descricoes_diferentes_score_baixo(self):
+        self.assertLess(
+            cmd.similaridade_descricao("guarda chuva automatico preto", "caneca de ceramica 300ml"),
+            0.5,
+        )
+
+    def test_vazio_e_zero(self):
+        self.assertEqual(cmd.similaridade_descricao("", "abc"), 0.0)
+        self.assertEqual(cmd.similaridade_descricao("abc", ""), 0.0)
+
+    def test_faixa_score(self):
+        self.assertEqual(cmd._faixa_score(0.97), ">= 0.95")
+        self.assertEqual(cmd._faixa_score(0.95), ">= 0.95")
+        self.assertEqual(cmd._faixa_score(0.93), ">= 0.90 e < 0.95")
+        self.assertEqual(cmd._faixa_score(0.86), ">= 0.85 e < 0.90")
+        self.assertEqual(cmd._faixa_score(0.80), ">= 0.80 e < 0.85")
+        self.assertEqual(cmd._faixa_score(0.5), "< 0.80")
+
+
 class AuditoriaTests(TestCase):
     def setUp(self):
         self.instancia = Instancia.objects.create(nome="EKK Brindes")
@@ -330,6 +358,87 @@ class AuditoriaTests(TestCase):
 
         secao = _secao(self._rodar(), "11. Regra histórica de SKU")
         self.assertIn("b. Variações que casam pela normalização de SKU .. 0", secao)
+
+    # -- seções 13–15: similaridade de descrição -----------------------
+
+    def _contagem(self, secao, rotulo):
+        import re as _re
+
+        m = _re.search(rf"{_re.escape(rotulo)}[.\s]*(\d+)", secao)
+        self.assertIsNotNone(m, f"rótulo {rotulo!r} não encontrado em:\n{secao}")
+        return int(m.group(1))
+
+    def test_similaridade_so_analisa_pendentes_e_distribui_scores(self):
+        # v1 tem match exato inequívoco -> NÃO entra na similaridade
+        self._variacao("F-1", "Caneca Branca", "691110")
+        self._tiny(1, "T-1", "Caneca Branca", "691110")
+        # v2 sem match exato, mas com Tiny de mesmo NCM e descrição quase igual
+        self._variacao("F-2", "Garrafa Térmica Inox 500ml", "96170010")
+        self._tiny(2, "T-2", "Garrafa Termica Inox 500 ml", "96170010")
+        self._tiny(3, "T-3", "Garrafa Térmica Inox 1 Litro", "96170010")
+
+        saida = self._rodar()
+        s13 = _secao(saida, "13. Similaridade de descrição")
+        self.assertEqual(self._contagem(s13, "Variações já identificadas por sinal forte"), 1)
+        self.assertEqual(self._contagem(s13, "Variações pendentes analisadas"), 1)
+        self.assertEqual(self._contagem(s13, ">= 0.95"), 1)
+
+        s14 = _secao(saida, "14. Amostra dos")
+        self.assertIn("F-2  ->  T-2  (tiny_id 2)", s14)
+        self.assertRegex(s14, r"score \.+: 0\.\d{4}   2º: 0\.\d{4}   gap: 0\.\d{4}")
+
+    def test_ncm_diferente_com_ambos_preenchidos_nao_entra_nos_candidatos(self):
+        self._variacao("F-1", "Caneca Cerâmica Vermelha", "69120000")
+        # descrição idêntica, mas NCM diferente -> fora do conjunto de candidatos
+        self._tiny(1, "T-1", "Caneca Cerâmica Vermelha", "39241000")
+
+        saida = self._rodar()
+        s13 = _secao(saida, "13. Similaridade de descrição")
+        self.assertEqual(self._contagem(s13, "Pendentes sem nenhum Tiny de mesmo NCM"), 1)
+        self.assertEqual(self._contagem(s13, "sem candidato com mesmo NCM"), 1)
+        self.assertNotIn("tiny_id 1", _secao(saida, "14. Amostra dos"))
+
+    def test_fornecedor_sem_ncm_fica_fora_do_filtro(self):
+        self._variacao("F-1", "Mochila Executiva", "")
+        self._tiny(1, "T-1", "Mochila Executiva", "42021200")
+
+        s13 = _secao(self._rodar(), "13. Similaridade de descrição")
+        self.assertEqual(self._contagem(s13, "Pendentes sem NCM no fornecedor (fora do filtro)"), 1)
+        self.assertEqual(self._contagem(s13, "Variações pendentes analisadas"), 0)
+
+    def test_gap_e_segundo_candidato(self):
+        self._variacao("F-1", "Copo Térmico 300ml", "96170010")
+        self._tiny(1, "T-1", "Copo Termico 300 ml", "96170010")          # bem parecido
+        self._tiny(2, "T-2", "Guarda-chuva Automático Grande", "96170010")  # nada a ver
+
+        s14 = _secao(self._rodar(), "14. Amostra dos")
+        self.assertIn("F-1  ->  T-1  (tiny_id 1)", s14)
+        # 1º bem acima do 2º -> gap grande (candidato se destaca)
+        m = __import__("re").search(r"gap: (0\.\d{4})", s14)
+        self.assertIsNotNone(m)
+        self.assertGreater(float(m.group(1)), 0.2)
+
+    def test_empate_entre_dois_tiny_e_caso_de_risco(self):
+        self._variacao("F-1", "Squeeze Aluminio 750ml Azul", "39241000")
+        # dois Tiny com a MESMA descrição normalizada -> score idêntico, gap 0
+        self._tiny(1, "T-1", "Squeeze Alumínio 750 ml Azul", "39241000")
+        self._tiny(2, "T-2", "Squeeze Alumínio 750 ml Azul", "39241000")
+
+        saida = self._rodar()
+        s15 = _secao(saida, "15. Casos de risco")
+        self.assertEqual(self._contagem(s15, "Total de casos de risco"), 1)
+        self.assertIn("F-1  ->  T-1  (tiny_id 1)", s15)
+        self.assertRegex(s15, r"gap: 0\.0000")
+        self.assertRegex(s15, r"quase iguais: 2")
+
+    def test_similaridade_e_read_only(self):
+        self._variacao("F-1", "Garrafa Térmica Inox 500ml", "96170010")
+        self._tiny(1, "T-1", "Garrafa Termica Inox 500 ml", "96170010")
+        self._tiny(2, "T-2", "Garrafa Térmica Inox 500 ml Preta", "96170010")
+
+        antes = self._snapshot()
+        self._rodar()
+        self.assertEqual(self._snapshot(), antes)
 
     def _snapshot(self):
         return {

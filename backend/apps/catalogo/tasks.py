@@ -296,10 +296,17 @@ def cadastrar_produtos_tiny_task(execucao_id, lease_token=None):
     if resultado.interrompida_por == PARADA_PAUSA:
         _finalizar(execucao_id, token, pausar=True)
         return
-    _finalizar(execucao_id, token)
+    _finalizar(execucao_id, token, imagens_com_erro=resultado.imagens_erros)
 
 
-def _finalizar(execucao_id, token, *, pausar: bool = False, motivo_falha: str | None = None) -> None:
+def _finalizar(
+    execucao_id,
+    token,
+    *,
+    pausar: bool = False,
+    motivo_falha: str | None = None,
+    imagens_com_erro: int = 0,
+) -> None:
     """
     Fecha a Execucao respeitando o lease: se outra retomada já assumiu
     (token diferente), NÃO sobrescreve nada.
@@ -325,7 +332,13 @@ def _finalizar(execucao_id, token, *, pausar: bool = False, motivo_falha: str | 
             mensagem, nivel = "Sincronização pausada — pode ser retomada", NivelLog.INFO
         else:
             execucao.finalizada_em = timezone.now()
-            concluiu_tudo = execucao.total_erros == 0 and execucao.total_ignorados == 0
+            # Imagens que falharam não mudam o status da Variacao (o produto
+            # está cadastrado), mas a rodada não ficou 100% — então é parcial.
+            concluiu_tudo = (
+                execucao.total_erros == 0
+                and execucao.total_ignorados == 0
+                and imagens_com_erro == 0
+            )
             execucao.status = StatusExecucao.SUCESSO if concluiu_tudo else StatusExecucao.PARCIAL
             mensagem, nivel = "Sincronização com o Tiny concluída", NivelLog.INFO
 

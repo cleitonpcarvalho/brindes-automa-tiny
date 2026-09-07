@@ -33,7 +33,7 @@ Proteções (idênticas às validadas no piloto — ver README):
 from dataclasses import dataclass
 from decimal import Decimal
 
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.utils import timezone
 
 from apps.instancias.tiny_client import TinyApiClient
@@ -213,19 +213,37 @@ def fila_cadastro(instancia, *, fornecedor=None, skus=None, limite=None):
     return list(qs)
 
 
-def fila_cadastro_massa(instancia, fornecedor, *, limite=None):
+def fila_cadastro_massa(instancia, fornecedor, *, limite=None, incluir_imagens_pendentes=True):
     """
-    Fila da sincronização em massa (task/UI): de UM fornecedor, as variações
-    `pendente` E `erro` (reexecução retenta o que falhou). Nunca inclui
-    `cadastrado` (já sincronizado) nem `aguardando`/`descontinuado` (a
-    própria avaliação as bloquearia de qualquer forma).
+    Fila da sincronização em massa (task/UI): de UM fornecedor.
+
+      - `pendente` E `erro`: reexecução retenta o que falhou;
+      - `cadastrado` com `tiny_id` cujo envio de imagens ainda NÃO teve
+        sucesso (`imagens_tiny_sincronizadas` vazio e há imagem no espelho):
+        a retomada precisa vê-las para concluir a ETAPA DE IMAGENS do SKU —
+        `avaliar_variacao` devolve `ja_cadastrado` e o produto NÃO é
+        recriado; só as imagens são (re)enviadas. Assim uma falha de imagem
+        não fica perdida até um `sincronizar_imagens_tiny` avulso.
+
+    Nunca inclui `aguardando`/`descontinuado` (a avaliação as bloquearia).
+    `incluir_imagens_pendentes=False` volta ao recorte "só o que seria
+    criado/vinculado" — usado pela estimativa (preview).
     """
-    qs = (
-        Variacao.objects.filter(
-            produto__instancia=instancia,
-            produto__fornecedor=fornecedor,
-            status__in=[StatusVariacao.PENDENTE, StatusVariacao.ERRO],
+    pendente_ou_erro = Q(status__in=[StatusVariacao.PENDENTE, StatusVariacao.ERRO])
+    if incluir_imagens_pendentes:
+        imagens_pendentes = (
+            Q(status=StatusVariacao.CADASTRADO)
+            & ~Q(tiny_id__isnull=True)
+            & ~Q(tiny_id="")
+            & ~Q(imagens=[])
+            & Q(imagens_tiny_sincronizadas=[])
         )
+        filtro = pendente_ou_erro | imagens_pendentes
+    else:
+        filtro = pendente_ou_erro
+    qs = (
+        Variacao.objects.filter(produto__instancia=instancia, produto__fornecedor=fornecedor)
+        .filter(filtro)
         .select_related("produto")
         .order_by("produto__codigo_pai", "sku", "id")
     )
@@ -448,7 +466,7 @@ def estimar_cadastro(instancia, fornecedor) -> dict:
       - `sem_estoque` / `descontinuadas`: recorte informativo.
     """
     colisoes_por_sku = colisoes_cross_fornecedor(instancia)
-    fila = fila_cadastro_massa(instancia, fornecedor)
+    fila = fila_cadastro_massa(instancia, fornecedor, incluir_imagens_pendentes=False)
     elegiveis = bloqueadas = 0
     for variacao in fila:
         if bloqueio_local(variacao, colisoes_por_sku):
@@ -550,20 +568,29 @@ def executar_sincronizacao_tiny(
     controlador: ControladorSincronizacao | None = None,
 ) -> ResultadoSincronizacao:
     """
-    Sincroniza UM fornecedor de UMA instância com o Tiny:
-      Fase 1 — para cada variação `pendente`/`erro`: avalia (proteções +
-               GET por SKU exato) e cria/vincula quando elegível.
-      Fase 2 — para cada variação `cadastrado` com tiny_id e imagem:
-               sincroniza os anexos (idempotente pelo marcador local).
+    Sincroniza UM fornecedor de UMA instância com o Tiny, SEQUENCIALMENTE
+    por SKU. Para cada variação da fila, na ordem:
+      1. avalia (proteções locais + GET por SKU exato);
+      2. cria / vincula no Tiny quando elegível (ou reconhece já cadastrada);
+      3. se ficou com `tiny_id`, sincroniza IMEDIATAMENTE as imagens desse
+         mesmo SKU (idempotente pelo marcador local);
+      4. só então avança para o próximo SKU.
 
-    Um erro individual gera evento e NÃO interrompe o lote. Reexecução é
-    idempotente: variações cadastradas na 1ª rodada saem da fila 1; a fase 2
-    não reenvia imagem já marcada.
+    Assim um produto criado nunca fica no Tiny sem imagem por causa de uma
+    pausa: a etapa de imagens faz parte da mesma unidade de trabalho.
 
-    `controlador.checar()` é consultado ANTES de cada produto (nunca no
-    meio): devolvendo um motivo, o orquestrador para imediatamente e
-    `resultado.interrompida_por` fica preenchido — a fila é reconstruída do
-    banco na retomada, sem depender de posição em memória.
+    Um erro individual (criação OU imagem) gera evento e NÃO interrompe o
+    lote. Falha de imagem NÃO altera `status`/`tiny_id` e NÃO marca as
+    imagens como sincronizadas — na retomada o SKU volta à fila só para a
+    etapa de imagens (a avaliação devolve `ja_cadastrado`, sem recriar).
+    Reexecução é idempotente: variações já cadastradas com imagem OK saem
+    da fila.
+
+    `controlador.checar()` é consultado ANTES de cada SKU (nunca no meio de
+    um — nem entre o cadastro e as imagens dele): devolvendo um motivo, o
+    orquestrador para imediatamente e `resultado.interrompida_por` fica
+    preenchido — a fila é reconstruída do banco na retomada, sem depender de
+    posição em memória.
     """
     eventos = eventos or EventosSincronizacao()
     controlador = controlador or ControladorSincronizacao()
@@ -603,6 +630,9 @@ def executar_sincronizacao_tiny(
         if decisao.acao == ACAO_JA_CADASTRADO:
             resultado.ja_cadastradas += 1
             eventos.variacao_ja_cadastrada(variacao)
+            # SKU já vinculado que voltou à fila só para concluir a etapa de
+            # imagens (envio anterior falhou / nunca rodou). Nada é recriado.
+            _sincronizar_imagens_do_sku(cliente, variacao, resultado, eventos, dry_run=dry_run)
             continue
 
         if dry_run:
@@ -626,27 +656,42 @@ def executar_sincronizacao_tiny(
             resultado.erros += 1
             marcar_erro(variacao, str(exc))
             eventos.variacao_erro(variacao, exc)
+            continue
 
-    # -- Fase 2: imagens ------------------------------------------------
-    if not dry_run:
-        for variacao in fila_imagens(instancia, fornecedor=fornecedor):
-            parada = controlador.checar()
-            if parada:
-                resultado.interrompida_por = parada
-                eventos.fim(resultado)
-                return resultado
-            try:
-                r = sincronizar_imagens_variacao(cliente, variacao)
-            except Exception as exc:
-                resultado.imagens_erros += 1
-                registrar_erro_imagem(variacao, str(exc))
-                eventos.imagens(variacao, {"resultado": "erro", "erro": str(exc)})
-                continue
-            resultado._contabilizar_imagem(r)
-            eventos.imagens(variacao, r)
+        # Etapa de imagens do MESMO SKU, imediatamente após o cadastro/vínculo
+        # bem-sucedido. Faz parte da unidade de trabalho: uma pausa só é
+        # atendida DEPOIS disto, no `controlador.checar()` do próximo SKU.
+        _sincronizar_imagens_do_sku(cliente, variacao, resultado, eventos, dry_run=dry_run)
 
     eventos.fim(resultado)
     return resultado
+
+
+def _sincronizar_imagens_do_sku(cliente, variacao, resultado, eventos, *, dry_run: bool) -> None:
+    """
+    Sincroniza as imagens de UM SKU logo após ele ter sido cadastrado/
+    vinculado. Reaproveita `sincronizar_imagens_variacao` (mesma idempotência
+    do command `sincronizar_imagens_tiny`). Uma falha aqui:
+      - é contabilizada (`resultado.imagens_erros`) e vira evento estruturado
+        (`IMAGENS_ERRO`) na auditoria do SKU;
+      - grava só `ultimo_erro` — NÃO mexe em `status`/`tiny_id`, então o
+        produto não é recriado numa retomada;
+      - NÃO marca as imagens como sincronizadas (o marcador continua vazio),
+        então a retomada tenta de novo.
+    """
+    if dry_run:
+        return
+    if not (variacao.tiny_id or "").strip():
+        return
+    try:
+        r = sincronizar_imagens_variacao(cliente, variacao)
+    except Exception as exc:
+        resultado.imagens_erros += 1
+        registrar_erro_imagem(variacao, str(exc))
+        eventos.imagens(variacao, {"resultado": "erro", "erro": str(exc)})
+        return
+    resultado._contabilizar_imagem(r)
+    eventos.imagens(variacao, r)
 
 
 def _preco_publicado(variacao) -> Decimal:

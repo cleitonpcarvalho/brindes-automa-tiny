@@ -7,7 +7,14 @@ from django.test import TestCase
 from django.utils import timezone
 
 from apps.instancias.models import Instancia
-from apps.sincronizacao.models import Execucao, LogItem, NivelLog, StatusExecucao, TipoExecucao
+from apps.sincronizacao.models import (
+    EventoLog,
+    Execucao,
+    LogItem,
+    NivelLog,
+    StatusExecucao,
+    TipoExecucao,
+)
 
 from ..models import Produto, StatusVariacao, Variacao
 from ..tasks import (
@@ -134,6 +141,48 @@ class CadastrarProdutosTinyTaskTests(TestCase):
         self.assertTrue(
             LogItem.objects.filter(execucao=execucao, mensagem__icontains="Imagens do SKU").exists()
         )
+
+    @patch(
+        "apps.instancias.tiny_client.TinyApiClient.sincronizar_anexos_produto",
+        side_effect=RuntimeError("anexo recusado pelo Tiny"),
+    )
+    @patch("apps.instancias.tiny_client.TinyApiClient.anexos_do_produto", return_value=[])
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku", return_value=None)
+    def test_erro_de_imagem_deixa_execucao_parcial_e_loga_estruturado(
+        self, _mb, mock_criar, _mg, _mput
+    ):
+        inst = _instancia()
+        v = _variacao(inst, "IE-1", fornecedor="asia", imagens=["https://cdn/x.jpg"])
+        mock_criar.return_value = {"id": 7, "sku": "IE-1"}
+        execucao = _execucao(inst, fornecedor="asia")
+
+        cadastrar_produtos_tiny_task(execucao.id)
+
+        execucao.refresh_from_db()
+        v.refresh_from_db()
+        self.assertEqual(v.status, StatusVariacao.CADASTRADO)      # produto criado
+        self.assertEqual(v.tiny_id, "7")
+        self.assertEqual(v.imagens_tiny_sincronizadas, [])         # imagem NÃO marcada
+        self.assertEqual(execucao.status, StatusExecucao.PARCIAL)  # rodada não ficou 100%
+        self.assertTrue(
+            LogItem.objects.filter(
+                execucao=execucao, evento=EventoLog.IMAGENS_ERRO, variacao=v
+            ).exists()
+        )
+
+        # retomada: sem recriar o produto, só a imagem volta à fila
+        Execucao.objects.filter(pk=execucao.id).update(
+            status=StatusExecucao.RODANDO, heartbeat_em=timezone.now()
+        )
+        with patch(
+            "apps.instancias.tiny_client.TinyApiClient.sincronizar_anexos_produto", return_value={}
+        ):
+            cadastrar_produtos_tiny_task(execucao.id, execucao.lease_token)
+
+        v.refresh_from_db()
+        self.assertEqual(mock_criar.call_count, 1)                 # produto não recriado
+        self.assertEqual(v.imagens_tiny_sincronizadas, ["https://cdn/x.jpg"])
 
 
 class HeartbeatELeaseTests(TestCase):

@@ -51,10 +51,11 @@ def _variacao(instancia, sku, *, fornecedor="xbz", codigo_pai=None, estoque=5, s
 class _MockTiny:
     """Substitui os métodos de rede do TinyApiClient. Nada sai para o Tiny."""
 
-    def __init__(self, *, skus_existentes=None, criar_efeito=None, anexos=None):
+    def __init__(self, *, skus_existentes=None, criar_efeito=None, anexos=None, anexos_efeito=None):
         self.skus_existentes = skus_existentes or {}
         self.criar_efeito = criar_efeito
         self.anexos = anexos if anexos is not None else []
+        self.anexos_efeito = anexos_efeito
         self.criados = []
         self.anexos_enviados = []
 
@@ -71,6 +72,8 @@ class _MockTiny:
         return list(self.anexos)
 
     def sincronizar_anexos_produto(self, id_produto, urls):
+        if self.anexos_efeito:
+            self.anexos_efeito(id_produto, list(urls))
         self.anexos_enviados.append((id_produto, list(urls)))
         return {}
 
@@ -196,6 +199,56 @@ class OrquestradorTests(TestCase):
         self.assertEqual(r2.fila, 0)  # nada mais pendente
         self.assertEqual(r2.criadas, 0)
 
+    def test_erro_de_imagem_nao_recria_produto_e_fica_registrado(self):
+        inst = _instancia()
+        v = _variacao(inst, "SKU-IMGERR", fornecedor="asia", imagens=["https://cdn/e.jpg"])
+
+        def falha(_id, _urls):
+            raise RuntimeError("Tiny recusou o anexo")
+
+        mock = _MockTiny(anexos=[], anexos_efeito=falha)
+        r = _rodar(inst, "asia", mock)
+
+        v.refresh_from_db()
+        self.assertEqual(v.status, StatusVariacao.CADASTRADO)  # produto criado mesmo assim
+        self.assertEqual(v.tiny_id, "90001")
+        self.assertEqual(v.imagens_tiny_sincronizadas, [])     # NÃO marcou como sincronizada
+        self.assertIn("anexo", v.ultimo_erro)
+        self.assertEqual(r.criadas, 1)
+        self.assertEqual(r.imagens_erros, 1)
+
+        # retomada: NÃO recria o produto; só retenta a imagem
+        mock.anexos_efeito = None
+        r2 = _rodar(inst, "asia", mock)
+
+        v.refresh_from_db()
+        self.assertEqual(len(mock.criados), 1)                 # sem recriação
+        self.assertEqual(r2.criadas, 0)
+        self.assertEqual(r2.imagens_enviadas, 1)
+        self.assertEqual(v.imagens_tiny_sincronizadas, ["https://cdn/e.jpg"])
+
+        r3 = _rodar(inst, "asia", mock)
+        self.assertEqual(r3.fila, 0)                           # nada mais pendente
+
+    def test_pausa_ocorre_depois_da_etapa_de_imagens_do_sku(self):
+        inst = _instancia()
+        a = _variacao(inst, "PA-A", fornecedor="asia", imagens=["https://cdn/a.jpg"])
+        b = _variacao(inst, "PA-B", fornecedor="asia", imagens=["https://cdn/b.jpg"])
+        mock = _MockTiny(anexos=[])
+        # segue no A; pede pausa antes do B
+        ctrl = _ControladorSequencia([None, PARADA_PAUSA])
+
+        r = _rodar(inst, "asia", mock, controlador=ctrl)
+
+        a.refresh_from_db(); b.refresh_from_db()
+        self.assertEqual(r.interrompida_por, PARADA_PAUSA)
+        self.assertEqual(a.status, StatusVariacao.CADASTRADO)
+        # a imagem do A foi enviada ANTES de a pausa ser atendida
+        self.assertEqual(a.imagens_tiny_sincronizadas, ["https://cdn/a.jpg"])
+        self.assertEqual([urls for _id, urls in mock.anexos_enviados], [["https://cdn/a.jpg"]])
+        self.assertEqual(r.imagens_enviadas, 1)
+        self.assertEqual(b.status, StatusVariacao.PENDENTE)  # B nem começou
+
     def test_isolamento_por_fornecedor(self):
         inst = _instancia()
         xbz = _variacao(inst, "X-1", fornecedor="xbz")
@@ -314,11 +367,12 @@ class PauseResumeOrquestradorTests(TestCase):
         b = _variacao(inst, "B", fornecedor="asia", imagens=["https://cdn/b.jpg"])
         mock = _MockTiny(anexos=[])
 
-        # rodada 1: pausa depois de A (mas ANTES da fase 2, que checa também)
+        # rodada 1: processa A por inteiro (cadastro + imagens) e pausa antes de B
         r1 = _rodar(inst, "asia", mock, controlador=_ControladorSequencia([None, PARADA_PAUSA]))
         self.assertEqual(r1.criadas, 1)
         a.refresh_from_db()
         self.assertEqual(a.status, StatusVariacao.CADASTRADO)
+        self.assertEqual(a.imagens_tiny_sincronizadas, ["https://cdn/a.jpg"])
 
         # rodada 2 (retomada): sem controlador -> processa tudo
         r2 = _rodar(inst, "asia", mock)

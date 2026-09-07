@@ -54,10 +54,11 @@ class _EventosStdout(EventosSincronizacao):
 
 class Command(BaseCommand):
     """
-    Orquestra a sincronização de UM fornecedor com o Tiny: cria/vincula as
-    variações elegíveis e, em seguida, sincroniza as imagens dos produtos
-    cadastrados — a MESMA implementação (`apps.catalogo.tiny_sync`) usada
-    pela task Celery disparada pela interface.
+    Orquestra a sincronização de UM fornecedor com o Tiny, SEQUENCIALMENTE
+    por SKU: cria/vincula cada variação elegível e, na mesma volta, já
+    sincroniza as imagens daquele SKU antes de passar ao próximo — a MESMA
+    implementação (`apps.catalogo.tiny_sync`) usada pela task Celery
+    disparada pela interface.
 
     `--dry-run`: nenhuma escrita (Tiny ou banco) — só as decisões.
     `--limite`: teto de variações na fase de criação.

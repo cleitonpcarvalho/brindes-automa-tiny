@@ -9,6 +9,7 @@ from django.utils import timezone
 from apps.instancias.models import Instancia
 from apps.instancias.tiny_client import TinyApiClient
 from apps.sincronizacao.models import (
+    EventoLog,
     Execucao,
     LogItem,
     NivelLog,
@@ -140,10 +141,11 @@ class _EventosExecucao(EventosSincronizacao):
     def __init__(self, execucao: Execucao):
         self.execucao = execucao
 
-    def _log(self, nivel, mensagem, *, variacao=None, **detalhe):
+    def _log(self, nivel, mensagem, *, evento=EventoLog.GERAL, variacao=None, **detalhe):
         LogItem.objects.create(
             execucao=self.execucao,
             nivel=nivel,
+            evento=evento,
             mensagem=mensagem[:500],
             variacao=variacao,
             detalhe=detalhe,
@@ -159,23 +161,38 @@ class _EventosExecucao(EventosSincronizacao):
 
     def variacao_criada(self, variacao, tiny_id):
         self._log(
-            NivelLog.INFO, f"SKU {variacao.sku} criado no Tiny", variacao=variacao, tiny_id=str(tiny_id)
+            NivelLog.INFO,
+            f"SKU {variacao.sku} criado no Tiny",
+            evento=EventoLog.CRIADO,
+            variacao=variacao,
+            tiny_id=str(tiny_id),
         )
 
     def variacao_vinculada(self, variacao, tiny_id):
         self._log(
             NivelLog.INFO,
             f"SKU {variacao.sku} vinculado a produto existente no Tiny",
+            evento=EventoLog.VINCULADO,
             variacao=variacao,
             tiny_id=str(tiny_id),
         )
 
     def variacao_bloqueada(self, variacao, motivo):
-        self._log(NivelLog.AVISO, f"SKU {variacao.sku} bloqueado", variacao=variacao, motivo=motivo)
+        self._log(
+            NivelLog.AVISO,
+            f"SKU {variacao.sku} bloqueado",
+            evento=EventoLog.BLOQUEADO,
+            variacao=variacao,
+            motivo=motivo,
+        )
 
     def variacao_erro(self, variacao, exc):
         self._log(
-            NivelLog.ERRO, f"Falha ao sincronizar SKU {variacao.sku}", variacao=variacao, erro=str(exc)
+            NivelLog.ERRO,
+            f"Falha ao sincronizar SKU {variacao.sku}",
+            evento=EventoLog.ERRO,
+            variacao=variacao,
+            erro=str(exc),
         )
 
     def imagens(self, variacao, resultado):
@@ -184,6 +201,7 @@ class _EventosExecucao(EventosSincronizacao):
             self._log(
                 NivelLog.INFO,
                 f"Imagens do SKU {variacao.sku} enviadas ao Tiny",
+                evento=EventoLog.IMAGENS,
                 variacao=variacao,
                 quantidade=len(resultado.get("desejadas") or []),
             )
@@ -191,12 +209,14 @@ class _EventosExecucao(EventosSincronizacao):
             self._log(
                 NivelLog.INFO,
                 f"Imagens do SKU {variacao.sku} já estavam no Tiny — marcador reconciliado",
+                evento=EventoLog.IMAGENS,
                 variacao=variacao,
             )
         elif r == "erro":
             self._log(
                 NivelLog.ERRO,
                 f"Falha ao sincronizar imagens do SKU {variacao.sku}",
+                evento=EventoLog.IMAGENS_ERRO,
                 variacao=variacao,
                 erro=resultado.get("erro", ""),
             )

@@ -1,0 +1,126 @@
+import type { ComponentProps } from "react"
+import { fireEvent, render, screen } from "@testing-library/react"
+import { beforeEach, describe, expect, it, vi } from "vitest"
+import * as hooks from "@/lib/api/hooks"
+import { ExecucaoProdutosTabela } from "./execucao-produtos-tabela"
+import type { ExecucaoProduto } from "@/lib/api/types"
+
+const push = vi.fn()
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }))
+vi.mock("@/lib/api/hooks", () => ({ useExecucaoProdutoLogs: vi.fn() }))
+
+function linha(over: Partial<ExecucaoProduto> = {}): ExecucaoProduto {
+  return {
+    log_id: 1,
+    variacao_id: 42,
+    sku: "MC511",
+    produto_nome: "Mochila para notebook",
+    resultado: "criado",
+    tiny_id: "924252038",
+    mensagem: "SKU MC511 criado no Tiny",
+    detalhe_curto: "",
+    imagens: null,
+    criado_em: "2026-01-01T00:00:00Z",
+    ...over,
+  }
+}
+
+function renderTabela(props: Partial<ComponentProps<typeof ExecucaoProdutosTabela>> = {}) {
+  return render(
+    <ExecucaoProdutosTabela
+      slug="loja-x"
+      execucaoId="7"
+      itens={[]}
+      isLoading={false}
+      isError={false}
+      onRetry={vi.fn()}
+      temFiltros={false}
+      {...props}
+    />,
+  )
+}
+
+describe("ExecucaoProdutosTabela", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(hooks.useExecucaoProdutoLogs).mockReturnValue({
+      data: { results: [] },
+      isLoading: false,
+      isError: false,
+    } as never)
+  })
+
+  it("cadastrado: badge 'Cadastrado' + Tiny ID visível", () => {
+    renderTabela({ itens: [linha({ resultado: "criado", tiny_id: "924252038" })] })
+    expect(screen.getByText("Cadastrado")).toBeInTheDocument()
+    expect(screen.getByText("924252038")).toBeInTheDocument()
+  })
+
+  it("erro: badge 'Erro' + mensagem humana curta na coluna Detalhe/erro (sem JSON)", () => {
+    renderTabela({
+      itens: [
+        linha({
+          resultado: "erro",
+          tiny_id: "",
+          detalhe_curto: "Tiny retornou 400: descricao obrigatória",
+          mensagem: "Falha ao sincronizar SKU MC511",
+        }),
+      ],
+    })
+    expect(screen.getByText("Erro")).toBeInTheDocument()
+    expect(screen.getByText("Tiny retornou 400: descricao obrigatória")).toBeInTheDocument()
+    expect(screen.queryByText(/[{}]/)).not.toBeInTheDocument()
+  })
+
+  it("bloqueado e já cadastrado têm rótulos distintos", () => {
+    renderTabela({
+      itens: [
+        linha({ log_id: 1, sku: "A", resultado: "bloqueado", detalhe_curto: "SKU já existe no Tiny" }),
+        linha({ log_id: 2, sku: "B", resultado: "vinculado", tiny_id: "555" }),
+      ],
+    })
+    expect(screen.getByText("Ignorado / bloqueado")).toBeInTheDocument()
+    expect(screen.getByText("Já cadastrado")).toBeInTheDocument()
+  })
+
+  it("'Ver produto' e o clique no SKU levam para a Variacao correta", () => {
+    renderTabela({ itens: [linha({ variacao_id: 99, sku: "SKU-99" })] })
+    fireEvent.click(screen.getByRole("button", { name: "Ver produto" }))
+    expect(push).toHaveBeenCalledWith("/instancias/loja-x/produtos/99")
+
+    push.mockClear()
+    fireEvent.click(screen.getByText("SKU-99"))
+    expect(push).toHaveBeenCalledWith("/instancias/loja-x/produtos/99")
+  })
+
+  it("expandir a linha busca e mostra os logs técnicos daquele SKU", () => {
+    vi.mocked(hooks.useExecucaoProdutoLogs).mockReturnValue({
+      data: {
+        results: [
+          {
+            id: 1,
+            nivel: "erro",
+            evento: "erro",
+            mensagem: "Falha ao sincronizar SKU MC511",
+            detalhe: { erro: "Tiny retornou 400" },
+            criado_em: "2026-01-01T00:00:00Z",
+            variacao_sku: "MC511",
+            variacao: 42,
+          },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+    } as never)
+    renderTabela({ itens: [linha({ resultado: "erro" })] })
+
+    fireEvent.click(screen.getByRole("button", { name: "Ver mensagem técnica completa" }))
+    expect(hooks.useExecucaoProdutoLogs).toHaveBeenCalledWith("loja-x", "7", 42)
+    expect(screen.getByText(/Tiny retornou 400/)).toBeInTheDocument()
+  })
+
+  it("estado vazio com filtro", () => {
+    renderTabela({ itens: [], temFiltros: true })
+    expect(screen.getByText("Nenhum SKU com esse filtro.")).toBeInTheDocument()
+  })
+})

@@ -33,6 +33,7 @@ from apps.catalogo.tiny_sync import (
     heartbeat_expirado,
 )
 from apps.fornecedores.tasks import executar_sincronizacao_manual_task
+from apps.sincronizacao import auditoria
 from apps.sincronizacao.models import (
     STATUS_EXECUCAO_ABERTOS,
     Execucao,
@@ -40,7 +41,12 @@ from apps.sincronizacao.models import (
     StatusExecucao,
     TipoExecucao,
 )
-from apps.sincronizacao.serializers import ExecucaoSerializer, LogItemSerializer
+from apps.sincronizacao.serializers import (
+    ExecucaoDetalheSerializer,
+    ExecucaoProdutoSerializer,
+    ExecucaoSerializer,
+    LogItemSerializer,
+)
 
 from .constants import CAMPOS_POR_FORNECEDOR, Fornecedor
 from .listagem import (
@@ -52,6 +58,7 @@ from .listagem import (
 from .models import CredencialFornecedor, Instancia
 from .pagination import (
     ExecucaoPagination,
+    ExecucaoProdutoPagination,
     InstanciaPagination,
     LogItemPagination,
     ProdutoEspelhoPagination,
@@ -825,13 +832,130 @@ class ExecucaoLogsView(generics.ListAPIView):
             id=self.kwargs["execucao_id"],
             instancia__slug=self.kwargs["slug"],
         )
-        queryset = execucao.logs.select_related("variacao").order_by("criado_em", "id")
+        # `escopo=gerais` -> só os logs técnicos da execução (início, pausa,
+        # conclusão, ingestão de espelho); é a seção secundária da tela de
+        # auditoria, separada da tabela de produtos.
+        if self.request.query_params.get("escopo") == "gerais":
+            queryset = auditoria.logs_gerais(execucao)
+        else:
+            queryset = execucao.logs.select_related("variacao").order_by("criado_em", "id")
 
         nivel = self.request.query_params.get("nivel")
         if nivel in NivelLog.values:
             queryset = queryset.filter(nivel=nivel)
 
         return queryset
+
+
+def _obter_execucao_ou_404(slug, execucao_id):
+    return get_object_or_404(
+        Execucao.objects.select_related("instancia"),
+        id=execucao_id,
+        instancia__slug=slug,
+    )
+
+
+def _progresso_execucao(execucao) -> float:
+    lidos = execucao.total_lidos or 0
+    processados = (execucao.total_cadastrados or 0) + (execucao.total_erros or 0)
+    if lidos <= 0:
+        return 1.0 if execucao.finalizada_em else 0.0
+    return round(min(processados / lidos, 1.0), 4)
+
+
+class ExecucaoDetalheView(APIView):
+    """
+    GET /api/instancias/<slug>/execucoes/<execucao_id>/ — resumo da execução
+    para o topo da tela de auditoria (fornecedor, status/estado, início,
+    duração, contadores, progresso, contagem por resultado).
+
+    Só leitura. Isolamento por (id E instancia__slug). Se estiver rodando,
+    a UI acompanha via o mesmo polling do detalhe da instância (sem polling
+    novo dedicado a esta tela).
+    """
+
+    @extend_schema(responses=ExecucaoDetalheSerializer)
+    def get(self, request, slug, execucao_id):
+        execucao = _obter_execucao_ou_404(slug, execucao_id)
+        estado = (
+            estado_cadastro_tiny(execucao)
+            if execucao.tipo == TipoExecucao.CADASTRO_TINY
+            else execucao.status
+        )
+        dados = {
+            "id": execucao.id,
+            "fornecedor": execucao.fornecedor,
+            "tipo": execucao.tipo,
+            "status": execucao.status,
+            "estado": estado,
+            "iniciada_em": execucao.iniciada_em,
+            "finalizada_em": execucao.finalizada_em,
+            "duracao_segundos": execucao.duracao_segundos,
+            "total_lidos": execucao.total_lidos,
+            "total_cadastrados": execucao.total_cadastrados,
+            "total_erros": execucao.total_erros,
+            "total_ignorados": execucao.total_ignorados,
+            "progresso": _progresso_execucao(execucao),
+            "mensagem_erro": execucao.mensagem_erro,
+            "auditoria": auditoria.resumo_auditoria(execucao),
+            "logs_gerais_total": auditoria.logs_gerais(execucao).count(),
+        }
+        return Response(ExecucaoDetalheSerializer(dados).data)
+
+
+@extend_schema_view(
+    get=extend_schema(
+        parameters=[
+            OpenApiParameter("busca", str, required=False, description="Busca em SKU / nome do produto."),
+            OpenApiParameter(
+                "resultado", str, required=False,
+                enum=["todos", "cadastrados", "erros", "bloqueados"],
+                description="Filtra pelo desfecho do SKU nesta execução.",
+            ),
+        ]
+    )
+)
+class ExecucaoProdutosView(generics.ListAPIView):
+    """
+    GET /api/instancias/<slug>/execucoes/<execucao_id>/produtos/ — a tabela
+    de auditoria: UMA linha por SKU (o desfecho mais recente dele nesta
+    execução), paginada no servidor. Cada linha traz `variacao_id` para
+    abrir a tela de produto que já existe.
+    """
+
+    serializer_class = ExecucaoProdutoSerializer
+    pagination_class = ExecucaoProdutoPagination
+
+    def get_queryset(self):
+        execucao = _obter_execucao_ou_404(self.kwargs["slug"], self.kwargs["execucao_id"])
+        self._execucao = execucao
+        return auditoria.linhas_de_auditoria(
+            execucao,
+            busca=self.request.query_params.get("busca", ""),
+            resultado=self.request.query_params.get("resultado", ""),
+        )
+
+    def paginate_queryset(self, queryset):
+        pagina = super().paginate_queryset(queryset)
+        # serializa a página (LogItem -> dict) com os enriquecimentos (Tiny
+        # id / imagens / detalhe curto)
+        return auditoria.montar_linhas(self._execucao, list(pagina)) if pagina is not None else None
+
+
+class ExecucaoProdutoLogsView(generics.ListAPIView):
+    """
+    GET /api/instancias/<slug>/execucoes/<execucao_id>/produtos/<variacao_id>/
+    — todos os logs (técnicos, com detalhe/JSON) de UM SKU nesta execução.
+    Usado pelo "ver mensagem técnica completa" da linha. Ponto natural para
+    um POST "tentar novamente" no futuro, sem redesenhar a tela.
+    """
+
+    serializer_class = LogItemSerializer
+    pagination_class = LogItemPagination
+
+    def get_queryset(self):
+        execucao = _obter_execucao_ou_404(self.kwargs["slug"], self.kwargs["execucao_id"])
+        return auditoria.logs_da_variacao(execucao, self.kwargs["variacao_id"])
 
 
 class ConfiguracoesInstanciaView(generics.RetrieveUpdateAPIView):

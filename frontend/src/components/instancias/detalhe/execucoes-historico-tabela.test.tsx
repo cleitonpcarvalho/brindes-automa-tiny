@@ -34,7 +34,7 @@ describe("ExecucoesHistoricoTabela", () => {
         isLoading
         isError={false}
         onRetry={noop}
-        onSelecionar={noop}
+        slug="loja-x"
         temFiltros={false}
       />,
     )
@@ -48,7 +48,7 @@ describe("ExecucoesHistoricoTabela", () => {
         isLoading={false}
         isError={false}
         onRetry={noop}
-        onSelecionar={noop}
+        slug="loja-x"
         temFiltros={false}
       />,
     )
@@ -63,7 +63,7 @@ describe("ExecucoesHistoricoTabela", () => {
         isLoading={false}
         isError={false}
         onRetry={noop}
-        onSelecionar={noop}
+        slug="loja-x"
         temFiltros
       />,
     )
@@ -78,7 +78,7 @@ describe("ExecucoesHistoricoTabela", () => {
         isLoading={false}
         isError
         onRetry={onRetry}
-        onSelecionar={noop}
+        slug="loja-x"
         temFiltros={false}
       />,
     )
@@ -93,7 +93,7 @@ describe("ExecucoesHistoricoTabela", () => {
         isLoading={false}
         isError={false}
         onRetry={noop}
-        onSelecionar={noop}
+        slug="loja-x"
         temFiltros={false}
       />,
     )
@@ -110,7 +110,7 @@ describe("ExecucoesHistoricoTabela", () => {
         isLoading={false}
         isError={false}
         onRetry={noop}
-        onSelecionar={noop}
+        slug="loja-x"
         temFiltros={false}
       />,
     )
@@ -118,25 +118,24 @@ describe("ExecucoesHistoricoTabela", () => {
     expect(screen.getByText("HTTP 401 Unauthorized")).toBeInTheDocument()
   })
 
-  it("chama onSelecionar ao clicar em Ver logs e desabilita quando não há logs", () => {
-    const onSelecionar = vi.fn()
-    const itens = [
-      execucao({ id: 1, total_logs: 5 }),
-      execucao({ id: 2, total_logs: 0 }),
-    ]
+  it("'Ver' leva para a página de detalhe da execução", () => {
+    const itens = [execucao({ id: 7, total_logs: 5 }), execucao({ id: 9, total_logs: 0 })]
     render(
       <ExecucoesHistoricoTabela
         itens={itens}
         isLoading={false}
         isError={false}
         onRetry={noop}
-        onSelecionar={onSelecionar}
+        slug="loja-x"
         temFiltros={false}
       />,
     )
-    const botaoComLogs = screen.getByRole("button", { name: "Ver (5)" })
-    botaoComLogs.click()
-    expect(onSelecionar).toHaveBeenCalledWith(itens[0])
-    expect(screen.getByRole("button", { name: "—" })).toBeDisabled()
+    const link = screen.getByRole("link", { name: "Ver (5)" })
+    expect(link).toHaveAttribute("href", "/instancias/loja-x/execucoes/7")
+    // sempre navegável, mesmo sem logs — a tela mostra o resumo
+    expect(screen.getByRole("link", { name: "Ver" })).toHaveAttribute(
+      "href",
+      "/instancias/loja-x/execucoes/9",
+    )
   })
 })

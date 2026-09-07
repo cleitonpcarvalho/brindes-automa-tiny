@@ -33,6 +33,10 @@ export type TipoExecucao = components["schemas"]["TipoExecucaoEnum"];
 export type LogItem = components["schemas"]["LogItem"];
 export type PaginatedLogItemList = components["schemas"]["PaginatedLogItemList"];
 export type NivelLog = components["schemas"]["NivelLogEnum"];
+export type ExecucaoDetalhe = components["schemas"]["ExecucaoDetalhe"];
+export type ExecucaoProduto = components["schemas"]["ExecucaoProduto"];
+export type PaginatedExecucaoProdutoList = components["schemas"]["PaginatedExecucaoProdutoList"];
+export type EventoLog = components["schemas"]["EventoLogEnum"];
 
 export type CredencialFornecedorResposta = components["schemas"]["CredencialFornecedorResposta"];
 export type CredencialFornecedorEntrada = components["schemas"]["CredencialFornecedorEntrada"];

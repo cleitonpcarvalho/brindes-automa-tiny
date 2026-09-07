@@ -1,0 +1,317 @@
+"use client"
+
+import { useEffect, useState } from "react"
+import Link from "next/link"
+import { ArrowLeft, ChevronDown, Search } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
+import { ErrorState } from "@/components/ui/empty-error-state"
+import { ApiError } from "@/lib/api/client"
+import {
+  useExecucaoDetalhe,
+  useExecucaoLogsGerais,
+  useExecucaoProdutos,
+} from "@/lib/api/hooks"
+import { formatarDuracao, formatarNumero, formatarTempoRelativo } from "@/lib/format"
+import { PaginationFooter } from "@/components/instancias/pagination-footer"
+import { ROTULO_FORNECEDOR } from "../cor-fornecedor"
+import { badgeStatus } from "./execucao-formato"
+import {
+  ROTULO_ESTADO_CADASTRO_TINY,
+  VARIANTE_ESTADO_CADASTRO_TINY,
+  rotuloRestantes,
+} from "./cadastro-tiny-estado"
+import { ExecucaoProdutosTabela } from "./execucao-produtos-tabela"
+import type { CadastroTinyEstadoEnum, ExecucaoDetalhe } from "@/lib/api/types"
+
+const TAMANHO_PAGINA = 25
+
+const FILTROS = [
+  { chave: "" as const, rotulo: "Todos" },
+  { chave: "cadastrados" as const, rotulo: "Cadastrados" },
+  { chave: "erros" as const, rotulo: "Erros" },
+  { chave: "bloqueados" as const, rotulo: "Ignorados / bloqueados" },
+]
+
+function EstadoBadge({ estado }: { estado: string }) {
+  if (estado in ROTULO_ESTADO_CADASTRO_TINY) {
+    const e = estado as CadastroTinyEstadoEnum
+    return <Badge variant={VARIANTE_ESTADO_CADASTRO_TINY[e]}>{ROTULO_ESTADO_CADASTRO_TINY[e]}</Badge>
+  }
+  const b = badgeStatus(estado)
+  return <Badge variant={b.variant}>{b.rotulo}</Badge>
+}
+
+function Resumo({ resumo }: { resumo: ExecucaoDetalhe }) {
+  const pct = Math.round((resumo.progresso ?? 0) * 100)
+  const rotulo3 = resumo.estado in ROTULO_ESTADO_CADASTRO_TINY
+    ? rotuloRestantes(resumo.estado as CadastroTinyEstadoEnum)
+    : "não cadastrados"
+
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-code-inline text-foreground">
+            {ROTULO_FORNECEDOR[resumo.fornecedor as keyof typeof ROTULO_FORNECEDOR] ?? resumo.fornecedor}
+          </span>
+          <EstadoBadge estado={resumo.estado} />
+          <span className="text-caption-label text-muted-foreground">
+            início {formatarTempoRelativo(resumo.iniciada_em)}
+          </span>
+          <span className="text-caption-label text-muted-foreground">·</span>
+          <span className="text-caption-label text-muted-foreground">
+            duração {formatarDuracao(resumo.duracao_segundos)}
+          </span>
+        </div>
+
+        {resumo.mensagem_erro && (
+          <p className="rounded-md bg-error-subtle/40 px-3 py-2 text-body-default text-error">
+            {resumo.mensagem_erro}
+          </p>
+        )}
+
+        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Metrica rotulo="Total da fila" valor={resumo.total_lidos} />
+          <Metrica rotulo="Cadastrados" valor={resumo.total_cadastrados} destaque="success" />
+          <Metrica rotulo="Erros" valor={resumo.total_erros} destaque={resumo.total_erros ? "error" : undefined} />
+          <Metrica rotulo={rotulo3} valor={resumo.total_ignorados} />
+        </dl>
+
+        <div className="flex flex-col gap-1">
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full bg-primary transition-[width]"
+              style={{ width: `${pct}%` }}
+              role="progressbar"
+              aria-valuenow={pct}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            />
+          </div>
+          <span className="text-caption-label text-muted-foreground">{pct}% processado</span>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function Metrica({
+  rotulo,
+  valor,
+  destaque,
+}: {
+  rotulo: string
+  valor: number
+  destaque?: "success" | "error"
+}) {
+  const cor = destaque === "success" ? "text-success" : destaque === "error" ? "text-error" : "text-foreground"
+  return (
+    <div className="flex flex-col rounded-lg bg-muted px-3 py-2">
+      <span className={`font-mono text-mono-metric ${cor}`}>{formatarNumero(valor)}</span>
+      <span className="text-caption-label text-muted-foreground">{rotulo}</span>
+    </div>
+  )
+}
+
+function LogsTecnicos({ slug, execucaoId, total }: { slug: string; execucaoId: string; total: number }) {
+  const [aberto, setAberto] = useState(false)
+  const { data, isLoading, isError } = useExecucaoLogsGerais(slug, execucaoId, { enabled: aberto })
+  const logs = data?.results ?? []
+
+  return (
+    <details
+      className="group rounded-xl border border-border bg-card"
+      onToggle={(e) => setAberto((e.target as HTMLDetailsElement).open)}
+    >
+      <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-header-section text-foreground">
+        Logs técnicos ({total})
+        <ChevronDown size={16} className="text-muted-foreground transition-transform group-open:rotate-180" />
+      </summary>
+      <div className="border-t border-border px-4 py-3">
+        {isLoading && <Skeleton className="h-16 w-full" />}
+        {isError && <p className="text-caption-label text-error">Não foi possível carregar os logs técnicos.</p>}
+        {!isLoading && !isError && (
+          <ul className="flex flex-col gap-2">
+            {logs.map((log) => {
+              const detalhe =
+                log.detalhe && typeof log.detalhe === "object" && Object.keys(log.detalhe).length > 0
+                  ? JSON.stringify(log.detalhe, null, 2)
+                  : null
+              return (
+                <li key={log.id} className="flex flex-col gap-1 border-b border-border-subtle py-1.5 last:border-b-0">
+                  <div className="flex flex-wrap items-baseline gap-x-2 text-caption-label">
+                    <span
+                      className={`uppercase ${
+                        log.nivel === "erro"
+                          ? "text-error"
+                          : log.nivel === "aviso"
+                            ? "text-warning"
+                            : "text-muted-foreground"
+                      }`}
+                    >
+                      {log.nivel}
+                    </span>
+                    <span className="text-body-default text-foreground">{log.mensagem}</span>
+                    <span className="ml-auto font-mono text-muted-foreground">
+                      {formatarTempoRelativo(log.criado_em)}
+                    </span>
+                  </div>
+                  {detalhe && (
+                    <pre className="overflow-x-auto rounded bg-muted p-2 font-mono text-[12px] text-muted-foreground">
+                      {detalhe}
+                    </pre>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+    </details>
+  )
+}
+
+export function ExecucaoDetalheView({ slug, execucaoId }: { slug: string; execucaoId: string }) {
+  const [buscaInput, setBuscaInput] = useState("")
+  const [busca, setBusca] = useState("")
+  const [resultado, setResultado] = useState<"" | "cadastrados" | "erros" | "bloqueados">("")
+  const [pagina, setPagina] = useState(1)
+
+  useEffect(() => {
+    const t = setTimeout(() => setBusca(buscaInput), 300)
+    return () => clearTimeout(t)
+  }, [buscaInput])
+  useEffect(() => {
+    setPagina(1)
+  }, [busca, resultado])
+
+  const resumo = useExecucaoDetalhe(slug, execucaoId)
+  const produtos = useExecucaoProdutos(slug, execucaoId, {
+    busca,
+    resultado,
+    page: pagina,
+    pageSize: TAMANHO_PAGINA,
+  })
+
+  const voltar = (
+    <Link
+      href={`/instancias/${slug}?tab=execucoes`}
+      className="flex w-fit items-center gap-1.5 text-caption-label text-muted-foreground transition-colors hover:text-foreground"
+    >
+      <ArrowLeft size={14} />
+      Voltar para Execuções
+    </Link>
+  )
+
+  if (resumo.isLoading) {
+    return (
+      <div className="flex flex-col gap-6">
+        {voltar}
+        <Skeleton className="h-9 w-72" />
+        <Skeleton className="h-48 w-full rounded-xl" />
+      </div>
+    )
+  }
+
+  if (resumo.isError || !resumo.data) {
+    const naoEncontrada = resumo.error instanceof ApiError && resumo.error.status === 404
+    return (
+      <div className="flex flex-col gap-6">
+        {voltar}
+        {naoEncontrada ? (
+          <div className="flex flex-col items-center gap-1 rounded-xl border border-border bg-card px-4 py-12 text-center">
+            <p className="text-body-default text-foreground">Execução não encontrada</p>
+            <p className="text-caption-label text-muted-foreground">
+              Ela pode ter sido removida ou pertence a outra instância.
+            </p>
+          </div>
+        ) : (
+          <ErrorState onRetry={() => resumo.refetch()} />
+        )}
+      </div>
+    )
+  }
+
+  const total = produtos.data?.count ?? 0
+  const totalPaginas = produtos.data ? Math.max(1, Math.ceil(produtos.data.count / TAMANHO_PAGINA)) : 1
+  const temFiltros = Boolean(busca || resultado)
+  const aud = resumo.data.auditoria
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-3 border-b border-border pb-4">
+        {voltar}
+        <h1 className="text-title-page text-foreground">
+          Execução #{resumo.data.id} · {ROTULO_FORNECEDOR[resumo.data.fornecedor as keyof typeof ROTULO_FORNECEDOR] ?? resumo.data.fornecedor}
+        </h1>
+      </div>
+
+      <Resumo resumo={resumo.data} />
+
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[220px] max-w-sm flex-1">
+            <Search
+              size={14}
+              className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-muted-foreground"
+            />
+            <Input
+              value={buscaInput}
+              onChange={(e) => setBuscaInput(e.target.value)}
+              placeholder="Buscar por SKU ou nome do produto"
+              className="pl-8"
+            />
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {FILTROS.map((f) => (
+              <Button
+                key={f.chave || "todos"}
+                variant={resultado === f.chave ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => setResultado(f.chave)}
+              >
+                {f.rotulo}
+                {f.chave === "erros" && aud.erros > 0 && (
+                  <span className="ml-1 rounded bg-error-subtle px-1 text-error">{aud.erros}</span>
+                )}
+                {f.chave === "cadastrados" && (
+                  <span className="ml-1 text-muted-foreground">{aud.cadastrados_e_vinculados}</span>
+                )}
+                {f.chave === "bloqueados" && aud.bloqueados > 0 && (
+                  <span className="ml-1 text-muted-foreground">{aud.bloqueados}</span>
+                )}
+              </Button>
+            ))}
+          </div>
+        </div>
+
+        <ExecucaoProdutosTabela
+          slug={slug}
+          execucaoId={execucaoId}
+          itens={produtos.data?.results ?? []}
+          isLoading={produtos.isLoading}
+          isError={produtos.isError}
+          onRetry={() => produtos.refetch()}
+          temFiltros={temFiltros}
+        />
+
+        {!produtos.isLoading && !produtos.isError && produtos.data && (
+          <PaginationFooter
+            pagina={pagina}
+            totalPaginas={totalPaginas}
+            totalItens={total}
+            itensNaPagina={produtos.data.results.length}
+            onPageChange={setPagina}
+            rotuloItens="SKUs"
+          />
+        )}
+      </div>
+
+      <LogsTecnicos slug={slug} execucaoId={execucaoId} total={resumo.data.logs_gerais_total} />
+    </div>
+  )
+}

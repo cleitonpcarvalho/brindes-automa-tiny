@@ -8,8 +8,7 @@ import { formatarNumero } from "@/lib/format"
 import { ROTULO_FORNECEDOR } from "../cor-fornecedor"
 import { BADGE_POR_STATUS_EXECUCAO } from "./execucao-formato"
 import { ExecucoesHistoricoTabela } from "./execucoes-historico-tabela"
-import { ExecucaoLogsDialog } from "./execucao-logs-dialog"
-import type { Execucao, FornecedorEnum, StatusExecucao } from "@/lib/api/types"
+import type { FornecedorEnum, StatusExecucao } from "@/lib/api/types"
 
 const TAMANHO_PAGINA = 20
 
@@ -21,7 +20,6 @@ export function ExecucoesTab({ slug }: { slug: string }) {
   const [fornecedor, setFornecedor] = useState<FornecedorEnum | "">("")
   const [status, setStatus] = useState<StatusExecucao | "">("")
   const [pagina, setPagina] = useState(1)
-  const [selecionada, setSelecionada] = useState<Execucao | null>(null)
 
   useEffect(() => {
     setPagina(1)
@@ -89,11 +87,11 @@ export function ExecucoesTab({ slug }: { slug: string }) {
       </div>
 
       <ExecucoesHistoricoTabela
+        slug={slug}
         itens={data?.results ?? []}
         isLoading={isLoading}
         isError={isError}
         onRetry={() => refetch()}
-        onSelecionar={setSelecionada}
         temFiltros={temFiltros}
       />
 
@@ -111,14 +109,6 @@ export function ExecucoesTab({ slug }: { slug: string }) {
       {isFetching && !isLoading && (
         <p className="text-center text-caption-label text-muted-foreground">Atualizando…</p>
       )}
-
-      <ExecucaoLogsDialog
-        slug={slug}
-        execucao={selecionada}
-        onOpenChange={(aberto) => {
-          if (!aberto) setSelecionada(null)
-        }}
-      />
     </div>
   )
 }

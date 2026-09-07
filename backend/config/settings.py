@@ -148,6 +148,9 @@ SPECTACULAR_SETTINGS = {
         # Campo `estado` do CadastroTinyEstadoSerializer (pause/resume) —
         # nome fixo para o frontend não perder a referência a cada regeração.
         "CadastroTinyEstadoEnum": "apps.instancias.serializers.CADASTRO_TINY_ESTADOS",
+        # `LogItem.evento` (model) e `ExecucaoProduto.resultado` (auditoria)
+        # são o mesmo conjunto de choices com nomes diferentes.
+        "EventoLogEnum": "apps.sincronizacao.models.EventoLog.choices",
     },
 }
 

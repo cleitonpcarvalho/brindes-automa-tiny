@@ -345,6 +345,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/instancias/{slug}/execucoes/{execucao_id}/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description GET /api/instancias/<slug>/execucoes/<execucao_id>/ — resumo da execução
+         *     para o topo da tela de auditoria (fornecedor, status/estado, início,
+         *     duração, contadores, progresso, contagem por resultado).
+         *
+         *     Só leitura. Isolamento por (id E instancia__slug). Se estiver rodando,
+         *     a UI acompanha via o mesmo polling do detalhe da instância (sem polling
+         *     novo dedicado a esta tela).
+         */
+        get: operations["instancias_execucoes_retrieve"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/instancias/{slug}/execucoes/{execucao_id}/logs/": {
         parameters: {
             query?: never;
@@ -360,6 +385,50 @@ export interface paths {
          *     id de uma execução de outra instância devolve 404, não os logs dela.
          */
         get: operations["instancias_execucoes_logs_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/instancias/{slug}/execucoes/{execucao_id}/produtos/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description GET /api/instancias/<slug>/execucoes/<execucao_id>/produtos/ — a tabela
+         *     de auditoria: UMA linha por SKU (o desfecho mais recente dele nesta
+         *     execução), paginada no servidor. Cada linha traz `variacao_id` para
+         *     abrir a tela de produto que já existe.
+         */
+        get: operations["instancias_execucoes_produtos_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/instancias/{slug}/execucoes/{execucao_id}/produtos/{variacao_id}/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description GET /api/instancias/<slug>/execucoes/<execucao_id>/produtos/<variacao_id>/
+         *     — todos os logs (técnicos, com detalhe/JSON) de UM SKU nesta execução.
+         *     Usado pelo "ver mensagem técnica completa" da linha. Ponto natural para
+         *     um POST "tentar novamente" no futuro, sem redesenhar a tela.
+         */
+        get: operations["instancias_execucoes_produtos_list_2"];
         put?: never;
         post?: never;
         delete?: never;
@@ -629,6 +698,14 @@ export interface components {
             abertos: number;
             requerem_acao: number;
         };
+        AuditoriaResumo: {
+            total: number;
+            cadastrados: number;
+            vinculados: number;
+            cadastrados_e_vinculados: number;
+            bloqueados: number;
+            erros: number;
+        };
         /**
          * @description Corpo real da action `autorizar` — documentado à parte porque, sem
          *     `@extend_schema_field`/`@extend_schema`, o drf-spectacular inferia o
@@ -749,6 +826,17 @@ export interface components {
             detail: string;
         };
         /**
+         * @description * `geral` - Log geral da execução
+         *     * `criado` - Cadastrado no Tiny
+         *     * `vinculado` - Já existente no Tiny (vinculado)
+         *     * `bloqueado` - Ignorado / bloqueado
+         *     * `erro` - Erro ao cadastrar
+         *     * `imagens` - Imagens sincronizadas
+         *     * `imagens_erro` - Falha ao sincronizar imagens
+         * @enum {string}
+         */
+        EventoLogEnum: "geral" | "criado" | "vinculado" | "bloqueado" | "erro" | "imagens" | "imagens_erro";
+        /**
          * @description Uma linha do histórico da aba "Execuções" do detalhe da instância.
          *
          *     Só leitura. `fornecedor`, `tipo` e `status` são CharField com choices no
@@ -795,6 +883,47 @@ export interface components {
             total_cadastrados: number;
             total_ignorados: number;
             total_erros: number;
+        };
+        /**
+         * @description Resumo da execução no topo da tela de detalhe/auditoria. `progresso` e
+         *     `estado` só fazem sentido pleno para `tipo=cadastro_tiny` (pause/resume);
+         *     para importações de espelho vêm derivados do status.
+         */
+        ExecucaoDetalhe: {
+            id: number;
+            fornecedor: string;
+            tipo: string;
+            status: string;
+            estado: string;
+            /** Format: date-time */
+            iniciada_em: string;
+            /** Format: date-time */
+            finalizada_em: string | null;
+            /** Format: double */
+            duracao_segundos: number | null;
+            total_lidos: number;
+            total_cadastrados: number;
+            total_erros: number;
+            total_ignorados: number;
+            /** Format: double */
+            progresso: number;
+            mensagem_erro: string;
+            auditoria: components["schemas"]["AuditoriaResumo"];
+            logs_gerais_total: number;
+        };
+        /** @description Uma linha da tabela de auditoria — o desfecho de UM SKU nesta execução. */
+        ExecucaoProduto: {
+            log_id: number;
+            variacao_id: number | null;
+            sku: string;
+            produto_nome: string;
+            resultado: components["schemas"]["EventoLogEnum"];
+            tiny_id: string;
+            mensagem: string;
+            detalhe_curto: string;
+            imagens: (components["schemas"]["ImagensEnum"] | components["schemas"]["NullEnum"]) | null;
+            /** Format: date-time */
+            criado_em: string;
         };
         ExecucaoResumida: {
             id: number;
@@ -846,6 +975,12 @@ export interface components {
             somarcas: components["schemas"]["CorFornecedorEnum"];
             spot: components["schemas"]["CorFornecedorEnum"];
         };
+        /**
+         * @description * `ok` - ok
+         *     * `erro` - erro
+         * @enum {string}
+         */
+        ImagensEnum: "ok" | "erro";
         /**
          * @description Nunca inclui client_secret, access_token ou refresh_token — só
          *     indicadores (se está preenchido, quando expira, qual o status).
@@ -981,15 +1116,17 @@ export interface components {
             ativas: number;
             total: number;
         };
-        /** @description Uma linha de log de UMA execução — leitura, para o modal de detalhes. */
+        /** @description Uma linha de log de UMA execução — leitura, para os logs técnicos. */
         LogItem: {
             readonly id: number;
             nivel?: components["schemas"]["NivelLogEnum"];
+            evento?: components["schemas"]["EventoLogEnum"];
             mensagem: string;
             detalhe?: unknown;
             /** Format: date-time */
             readonly criado_em: string;
             readonly variacao_sku: string | null;
+            variacao?: number | null;
         };
         LoginRequest: {
             /** Format: email */
@@ -1030,6 +1167,21 @@ export interface components {
              */
             previous?: string | null;
             results: components["schemas"]["Execucao"][];
+        };
+        PaginatedExecucaoProdutoList: {
+            /** @example 123 */
+            count: number;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=4
+             */
+            next?: string | null;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=2
+             */
+            previous?: string | null;
+            results: components["schemas"]["ExecucaoProduto"][];
         };
         PaginatedInstanciaListagemList: {
             /** @example 123 */
@@ -1871,6 +2023,28 @@ export interface operations {
             };
         };
     };
+    instancias_execucoes_retrieve: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                execucao_id: number;
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecucaoDetalhe"];
+                };
+            };
+        };
+    };
     instancias_execucoes_logs_list: {
         parameters: {
             query?: {
@@ -1885,6 +2059,65 @@ export interface operations {
             path: {
                 execucao_id: number;
                 slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedLogItemList"];
+                };
+            };
+        };
+    };
+    instancias_execucoes_produtos_list: {
+        parameters: {
+            query?: {
+                /** @description Busca em SKU / nome do produto. */
+                busca?: string;
+                /** @description Um número de página dentro do conjunto de resultados paginado. */
+                page?: number;
+                /** @description Número de resultados a serem retornados por página. */
+                page_size?: number;
+                /** @description Filtra pelo desfecho do SKU nesta execução. */
+                resultado?: "bloqueados" | "cadastrados" | "erros" | "todos";
+            };
+            header?: never;
+            path: {
+                execucao_id: number;
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedExecucaoProdutoList"];
+                };
+            };
+        };
+    };
+    instancias_execucoes_produtos_list_2: {
+        parameters: {
+            query?: {
+                /** @description Um número de página dentro do conjunto de resultados paginado. */
+                page?: number;
+                /** @description Número de resultados a serem retornados por página. */
+                page_size?: number;
+            };
+            header?: never;
+            path: {
+                execucao_id: number;
+                slug: string;
+                variacao_id: number;
             };
             cookie?: never;
         };

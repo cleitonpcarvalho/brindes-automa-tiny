@@ -31,3 +31,12 @@ class LogItemPagination(PageNumberPagination):
     page_size = 200
     page_size_query_param = "page_size"
     max_page_size = 500
+
+
+class ExecucaoProdutoPagination(PageNumberPagination):
+    """Tabela de auditoria por SKU da tela de detalhe da execução —
+    paginada no servidor (podem ser milhares de linhas)."""
+
+    page_size = 25
+    page_size_query_param = "page_size"
+    max_page_size = 100

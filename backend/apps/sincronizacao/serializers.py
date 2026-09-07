@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Execucao, LogItem
+from .models import EventoLog, Execucao, LogItem
 
 
 class ExecucaoSerializer(serializers.ModelSerializer):
@@ -39,14 +39,63 @@ class ExecucaoSerializer(serializers.ModelSerializer):
 
 
 class LogItemSerializer(serializers.ModelSerializer):
-    """Uma linha de log de UMA execução — leitura, para o modal de detalhes."""
+    """Uma linha de log de UMA execução — leitura, para os logs técnicos."""
 
     variacao_sku = serializers.SerializerMethodField()
 
     class Meta:
         model = LogItem
-        fields = ["id", "nivel", "mensagem", "detalhe", "criado_em", "variacao_sku"]
+        fields = ["id", "nivel", "evento", "mensagem", "detalhe", "criado_em", "variacao_sku", "variacao"]
 
     def get_variacao_sku(self, obj) -> str | None:
         # variacao é SET_NULL: pode ter sido apagada depois de o log ser gravado.
         return obj.variacao.sku if obj.variacao_id else None
+
+
+class AuditoriaResumoSerializer(serializers.Serializer):
+    total = serializers.IntegerField()
+    cadastrados = serializers.IntegerField()
+    vinculados = serializers.IntegerField()
+    cadastrados_e_vinculados = serializers.IntegerField()
+    bloqueados = serializers.IntegerField()
+    erros = serializers.IntegerField()
+
+
+class ExecucaoDetalheSerializer(serializers.Serializer):
+    """
+    Resumo da execução no topo da tela de detalhe/auditoria. `progresso` e
+    `estado` só fazem sentido pleno para `tipo=cadastro_tiny` (pause/resume);
+    para importações de espelho vêm derivados do status.
+    """
+
+    id = serializers.IntegerField()
+    fornecedor = serializers.CharField()
+    tipo = serializers.CharField()
+    status = serializers.CharField()
+    estado = serializers.CharField()
+    iniciada_em = serializers.DateTimeField()
+    finalizada_em = serializers.DateTimeField(allow_null=True)
+    duracao_segundos = serializers.FloatField(allow_null=True)
+    total_lidos = serializers.IntegerField()
+    total_cadastrados = serializers.IntegerField()
+    total_erros = serializers.IntegerField()
+    total_ignorados = serializers.IntegerField()
+    progresso = serializers.FloatField()
+    mensagem_erro = serializers.CharField(allow_blank=True)
+    auditoria = AuditoriaResumoSerializer()
+    logs_gerais_total = serializers.IntegerField()
+
+
+class ExecucaoProdutoSerializer(serializers.Serializer):
+    """Uma linha da tabela de auditoria — o desfecho de UM SKU nesta execução."""
+
+    log_id = serializers.IntegerField()
+    variacao_id = serializers.IntegerField(allow_null=True)
+    sku = serializers.CharField()
+    produto_nome = serializers.CharField()
+    resultado = serializers.ChoiceField(choices=EventoLog.choices)
+    tiny_id = serializers.CharField(allow_blank=True)
+    mensagem = serializers.CharField()
+    detalhe_curto = serializers.CharField(allow_blank=True)
+    imagens = serializers.ChoiceField(choices=["ok", "erro"], allow_null=True)
+    criado_em = serializers.DateTimeField()

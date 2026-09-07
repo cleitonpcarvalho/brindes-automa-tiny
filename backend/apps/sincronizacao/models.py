@@ -99,6 +99,33 @@ class NivelLog(models.TextChoices):
     ERRO = "erro", "Erro"
 
 
+class EventoLog(models.TextChoices):
+    """
+    Tipo estruturado do log — o que a auditoria por SKU usa em vez de
+    interpretar o texto de `mensagem`. `geral` = log da execução como um
+    todo (início, pausa, conclusão, ingestão de espelho); os demais são
+    resultados de UM produto/SKU (sempre com `variacao` preenchida).
+    """
+
+    GERAL = "geral", "Log geral da execução"
+    CRIADO = "criado", "Cadastrado no Tiny"
+    VINCULADO = "vinculado", "Já existente no Tiny (vinculado)"
+    BLOQUEADO = "bloqueado", "Ignorado / bloqueado"
+    ERRO = "erro", "Erro ao cadastrar"
+    IMAGENS = "imagens", "Imagens sincronizadas"
+    IMAGENS_ERRO = "imagens_erro", "Falha ao sincronizar imagens"
+
+
+# Eventos que representam o desfecho de um SKU numa execução (uma linha da
+# tabela de auditoria). `imagens*` é informação acessória do mesmo SKU.
+EVENTOS_DESFECHO = (
+    EventoLog.CRIADO,
+    EventoLog.VINCULADO,
+    EventoLog.BLOQUEADO,
+    EventoLog.ERRO,
+)
+
+
 class LogItem(models.Model):
     """Uma linha de log de uma execução, opcionalmente ligada a uma variação."""
 
@@ -107,6 +134,9 @@ class LogItem(models.Model):
         Variacao, on_delete=models.SET_NULL, null=True, blank=True, related_name="logs"
     )
     nivel = models.CharField(max_length=10, choices=NivelLog.choices, default=NivelLog.INFO)
+    evento = models.CharField(
+        max_length=20, choices=EventoLog.choices, default=EventoLog.GERAL, db_index=True
+    )
     mensagem = models.CharField(max_length=500)
     detalhe = models.JSONField(default=dict, blank=True)
     criado_em = models.DateTimeField(auto_now_add=True)
@@ -117,6 +147,8 @@ class LogItem(models.Model):
         ordering = ["criado_em"]
         indexes = [
             models.Index(fields=["execucao", "nivel"]),
+            models.Index(fields=["execucao", "evento"]),
+            models.Index(fields=["execucao", "variacao"]),
         ]
 
     def __str__(self):

@@ -1,3 +1,4 @@
+import Link from "next/link"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -10,15 +11,15 @@ import type { Execucao } from "@/lib/api/types"
 const COLUNAS = 7
 
 interface Props {
+  slug: string
   itens: Execucao[]
   isLoading: boolean
   isError: boolean
   onRetry: () => void
-  onSelecionar: (execucao: Execucao) => void
   temFiltros: boolean
 }
 
-export function ExecucoesHistoricoTabela({ itens, isLoading, isError, onRetry, onSelecionar, temFiltros }: Props) {
+export function ExecucoesHistoricoTabela({ slug, itens, isLoading, isError, onRetry, temFiltros }: Props) {
   return (
     <div className="overflow-hidden rounded-xl border border-border">
       <Table>
@@ -107,13 +108,10 @@ export function ExecucoesHistoricoTabela({ itens, isLoading, isError, onRetry, o
                     {resultadoTexto(execucao)}
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => onSelecionar(execucao)}
-                      disabled={execucao.total_logs === 0}
-                    >
-                      {execucao.total_logs === 0 ? "—" : `Ver (${execucao.total_logs})`}
+                    <Button variant="ghost" size="sm" asChild>
+                      <Link href={`/instancias/${slug}/execucoes/${execucao.id}`}>
+                        {execucao.total_logs === 0 ? "Ver" : `Ver (${execucao.total_logs})`}
+                      </Link>
                     </Button>
                   </TableCell>
                 </TableRow>

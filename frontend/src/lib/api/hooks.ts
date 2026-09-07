@@ -14,7 +14,9 @@ import type {
   InstanciaDetalhe,
   LoginRequest,
   MeResponse,
+  ExecucaoDetalhe,
   PaginatedExecucaoList,
+  PaginatedExecucaoProdutoList,
   PaginatedInstanciaListagem,
   PaginatedLogItemList,
   PaginatedVariacaoEspelhoList,
@@ -248,6 +250,86 @@ export function useExecucaoLogs(slug: string, execucaoId: number | null) {
         `/instancias/${slug}/execucoes/${execucaoId}/logs?page_size=200`,
       ),
     enabled: Boolean(slug && execucaoId),
+  });
+}
+
+/**
+ * Resumo da execução para o topo da tela de auditoria. Enquanto estiver
+ * rodando/pausando, faz polling de 4s — o MESMO mecanismo do detalhe da
+ * instância, sem nada novo.
+ */
+export function useExecucaoDetalhe(slug: string, execucaoId: string | number) {
+  return useQuery({
+    queryKey: ["instancias", "execucoes", "detalhe", slug, String(execucaoId)],
+    queryFn: () =>
+      apiClient.get<ExecucaoDetalhe>(`/instancias/${slug}/execucoes/${execucaoId}`),
+    enabled: Boolean(slug && execucaoId),
+    retry: false,
+    refetchInterval: (query) => {
+      const estado = query.state.data?.estado;
+      return estado === "sincronizando" || estado === "pausando" || estado === "rodando"
+        ? 4000
+        : false;
+    },
+  });
+}
+
+export interface FiltrosExecucaoProdutos {
+  busca?: string;
+  resultado?: "cadastrados" | "erros" | "bloqueados" | "";
+  page?: number;
+  pageSize?: number;
+}
+
+/** Tabela de auditoria por SKU de uma execução — paginada no servidor. */
+export function useExecucaoProdutos(
+  slug: string,
+  execucaoId: string | number,
+  filtros: FiltrosExecucaoProdutos = {},
+) {
+  const params = new URLSearchParams();
+  if (filtros.busca) params.set("busca", filtros.busca);
+  if (filtros.resultado) params.set("resultado", filtros.resultado);
+  if (filtros.page) params.set("page", String(filtros.page));
+  if (filtros.pageSize) params.set("page_size", String(filtros.pageSize));
+  const query = params.toString();
+
+  return useQuery({
+    queryKey: ["instancias", "execucoes", "produtos", slug, String(execucaoId), filtros],
+    queryFn: () =>
+      apiClient.get<PaginatedExecucaoProdutoList>(
+        `/instancias/${slug}/execucoes/${execucaoId}/produtos${query ? `?${query}` : ""}`,
+      ),
+    enabled: Boolean(slug && execucaoId),
+    placeholderData: (anterior) => anterior,
+  });
+}
+
+/** Logs técnicos (com detalhe/JSON) de UM SKU nesta execução — para o expand da linha. */
+export function useExecucaoProdutoLogs(
+  slug: string,
+  execucaoId: string | number,
+  variacaoId: number | null,
+) {
+  return useQuery({
+    queryKey: ["instancias", "execucoes", "produto-logs", slug, String(execucaoId), variacaoId],
+    queryFn: () =>
+      apiClient.get<PaginatedLogItemList>(
+        `/instancias/${slug}/execucoes/${execucaoId}/produtos/${variacaoId}`,
+      ),
+    enabled: Boolean(slug && execucaoId && variacaoId),
+  });
+}
+
+/** Logs técnicos gerais (início/pausa/conclusão) — a seção secundária da tela. */
+export function useExecucaoLogsGerais(slug: string, execucaoId: string | number, { enabled = true } = {}) {
+  return useQuery({
+    queryKey: ["instancias", "execucoes", "logs-gerais", slug, String(execucaoId)],
+    queryFn: () =>
+      apiClient.get<PaginatedLogItemList>(
+        `/instancias/${slug}/execucoes/${execucaoId}/logs?escopo=gerais&page_size=200`,
+      ),
+    enabled: Boolean(slug && execucaoId) && enabled,
   });
 }
 

@@ -21,6 +21,15 @@ Correspondência "exata" aqui é definida por:
 
 O valor original do NCM (com ou sem pontos) é preservado e usado tal
 qual nas amostras — a normalização vale só para comparação e índices.
+
+Além disso, este comando MEDE (não aplica) uma possível regra histórica
+de SKU vista nos dados reais: o SKU do Tiny parece ser o SKU do
+fornecedor com um prefixo `EK`/`EKK` colado na frente
+(`KT-90395` -> `EKKT-90395`, `KT-90507` -> `EKKT90507`). A seção 11
+compara SKUs por uma normalização SÓ PARA AUDITORIA (ver
+`normalizar_sku` / `variantes_sku_tiny_para_auditoria`) e cruza esses
+matches com NCM e descrição para estimar falsos positivos. Nada disso
+altera SKU nem implementa matching de produção.
 """
 
 import re
@@ -36,12 +45,57 @@ from ...models import ProdutoTiny, Variacao
 
 FORNECEDOR = Fornecedor.SOMARCAS
 TAMANHO_AMOSTRA_PADRAO = 30
+TAMANHO_AMOSTRA_SKU_PADRAO = 50
 TOP_NCM_PADRAO = 20
+
+# Prefixos que o Tiny parece colar na frente do SKU do fornecedor. Removidos
+# APENAS quando iniciais e APENAS para a auditoria da seção 11 — nunca do
+# meio do SKU, nunca gravados. Ordem: mais longo primeiro só para
+# documentar a intenção; a normalização testa os dois independentemente.
+PREFIXOS_TINY_AUDITORIA = ("EKK", "EK")
 
 # Categorias Unicode de pontuação/símbolo — viram espaço na normalização.
 _CATEGORIAS_PONTUACAO = {"P", "S"}
 
 _SO_DIGITOS = re.compile(r"\D+")
+_NAO_ALFANUM = re.compile(r"[^0-9A-Za-z]+")
+
+
+def normalizar_sku(valor: str) -> str:
+    """
+    Normalização de SKU SÓ PARA AUDITORIA (seção 11): caixa alta e remoção
+    de tudo que não é `[0-9A-Za-z]` — espaço, hífen, ponto, barra, etc.
+
+      - "KT-90395"  -> "KT90395"
+      - "EKKT 90507" -> "EKKT90507"
+      - "" / None    -> ""
+
+    NÃO remove prefixo aqui (isso é `variantes_sku_tiny_para_auditoria`) e
+    NÃO é fuzzy matching. Não é usada para gravar nem para o matching real.
+    """
+    if not valor:
+        return ""
+    return _NAO_ALFANUM.sub("", str(valor)).upper()
+
+
+def variantes_sku_tiny_para_auditoria(sku_tiny_normalizado: str) -> set[str]:
+    """
+    A partir de um SKU do Tiny já normalizado (`normalizar_sku`), devolve
+    o próprio valor MAIS as versões sem SOMENTE o prefixo inicial `EK` ou
+    `EKK`:
+
+      - "EKKT90507" -> {"EKKT90507", "KT90507", "T90507"}
+      - "EK12345"   -> {"EK12345", "12345"}
+      - "KT90395"   -> {"KT90395"}   (nenhum prefixo no início)
+
+    O prefixo só é removido quando está no COMEÇO e sobra algo depois —
+    "EK" no meio do SKU nunca é tocado.
+    """
+    variantes = {sku_tiny_normalizado}
+    for prefixo in PREFIXOS_TINY_AUDITORIA:
+        if sku_tiny_normalizado.startswith(prefixo) and len(sku_tiny_normalizado) > len(prefixo):
+            variantes.add(sku_tiny_normalizado[len(prefixo):])
+    return variantes
 
 
 def normalizar_ncm(valor: str) -> str:
@@ -107,6 +161,13 @@ class Command(BaseCommand):
             help=f"Quantas linhas imprimir em cada amostra (padrão: {TAMANHO_AMOSTRA_PADRAO}).",
         )
         parser.add_argument(
+            "--amostra-sku",
+            type=int,
+            default=TAMANHO_AMOSTRA_SKU_PADRAO,
+            help=f"Linhas na amostra de matches por SKU normalizado, seção 11 "
+            f"(padrão: {TAMANHO_AMOSTRA_SKU_PADRAO}).",
+        )
+        parser.add_argument(
             "--top-ncm",
             type=int,
             default=TOP_NCM_PADRAO,
@@ -116,6 +177,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         instancia = self._obter_instancia(options["instancia_slug"])
         tamanho_amostra = max(0, options["amostra"])
+        tamanho_amostra_sku = max(0, options["amostra_sku"])
         top_ncm = max(0, options["top_ncm"])
 
         variacoes = list(
@@ -186,6 +248,9 @@ class Command(BaseCommand):
         for p in produtos_tiny:
             ncms_tiny[normalizar_ncm(p.ncm) or "(vazio)"] += 1
 
+        # --- seção 11: auditoria da regra de prefixo EK/EKK no SKU --------
+        sku = self._auditar_sku_prefixo(variacoes, produtos_tiny)
+
         # --- impressão ---------------------------------------------------
         w = self.stdout.write
         w("")
@@ -226,6 +291,140 @@ class Command(BaseCommand):
         w("")
         w(f"== 10. Amostra de {tamanho_amostra} casos sem match exato ==")
         self._imprimir_amostra_sem_match(sem_match[:tamanho_amostra])
+        w("")
+        self._imprimir_secao_sku(sku, tamanho_amostra_sku)
+
+    # -- seção 11: regra de prefixo EK/EKK no SKU ---------------------
+
+    def _auditar_sku_prefixo(self, variacoes, produtos_tiny):
+        """
+        Mede (não aplica) a hipótese "SKU Tiny = prefixo EK/EKK + SKU
+        fornecedor". Só leitura: monta índices em memória a partir das
+        listas já carregadas e cruza cada match candidato com NCM e
+        descrição normalizados para estimar falsos positivos.
+        """
+        # Índices do lado Tiny. `plain`: SKU normalizado como está.
+        # `com_prefixo_removido`: só as variantes geradas ao tirar EK/EKK
+        # do início — o que permite separar "casaria de qualquer jeito" de
+        # "só casa removendo o prefixo".
+        idx_plain = defaultdict(list)
+        idx_prefixo = defaultdict(list)
+        tiny_sku_vazio = 0
+        for p in produtos_tiny:
+            base = normalizar_sku(p.sku)
+            if not base:
+                tiny_sku_vazio += 1
+                continue
+            idx_plain[base].append(p)
+            for variante in variantes_sku_tiny_para_auditoria(base) - {base}:
+                idx_prefixo[variante].append(p)
+
+        exato_como_hoje = 0  # SKU cru idêntico (mesmo critério da seção 3)
+        casam_norm = []  # (variacao, [ProdutoTiny]) — união plain + prefixo
+        so_via_prefixo = 0
+        pares = []  # (variacao, ProdutoTiny) achatado, p/ métricas e amostra
+        variacao_sku_vazio = 0
+
+        skus_tiny_crus = {p.sku.strip() for p in produtos_tiny if p.sku and p.sku.strip()}
+
+        for variacao in variacoes:
+            if (variacao.sku or "").strip() and (variacao.sku or "").strip() in skus_tiny_crus:
+                exato_como_hoje += 1
+
+            s = normalizar_sku(variacao.sku)
+            if not s:
+                variacao_sku_vazio += 1
+                continue
+
+            plain = idx_plain.get(s, [])
+            via_prefixo = idx_prefixo.get(s, [])
+            if not plain and not via_prefixo:
+                continue
+
+            por_id = {}
+            for p in plain:
+                por_id[p.tiny_id] = p
+            for p in via_prefixo:
+                por_id.setdefault(p.tiny_id, p)
+            candidatos = sorted(por_id.values(), key=lambda p: (p.sku, p.tiny_id))
+
+            casam_norm.append((variacao, candidatos))
+            if not plain:
+                so_via_prefixo += 1
+            for p in candidatos:
+                pares.append((variacao, p))
+
+        inequivocos = [(v, c[0]) for v, c in casam_norm if len(c) == 1]
+        ambiguos = [(v, c) for v, c in casam_norm if len(c) > 1]
+        tiny_ids_apontados = {p.tiny_id for _v, p in pares}
+
+        ncm_igual = sum(
+            1 for v, p in pares if normalizar_ncm(v.ncm) and normalizar_ncm(v.ncm) == normalizar_ncm(p.ncm)
+        )
+        desc_igual = sum(
+            1
+            for v, p in pares
+            if normalizar_descricao(v.nome or v.produto.nome)
+            and normalizar_descricao(v.nome or v.produto.nome) == normalizar_descricao(p.descricao)
+        )
+        ncm_diferente = sum(
+            1 for v, p in pares if normalizar_ncm(v.ncm) != normalizar_ncm(p.ncm)
+        )
+        ncm_diferente_ambos_preenchidos = sum(
+            1
+            for v, p in pares
+            if normalizar_ncm(v.ncm) and normalizar_ncm(p.ncm)
+            and normalizar_ncm(v.ncm) != normalizar_ncm(p.ncm)
+        )
+
+        return {
+            "exato_como_hoje": exato_como_hoje,
+            "variacoes_que_casam": len(casam_norm),
+            "so_via_prefixo": so_via_prefixo,
+            "inequivocos": inequivocos,
+            "ambiguos": ambiguos,
+            "tiny_ids_apontados": len(tiny_ids_apontados),
+            "pares": pares,
+            "ncm_igual": ncm_igual,
+            "desc_igual": desc_igual,
+            "ncm_diferente": ncm_diferente,
+            "ncm_diferente_ambos_preenchidos": ncm_diferente_ambos_preenchidos,
+            "variacao_sku_vazio": variacao_sku_vazio,
+            "tiny_sku_vazio": tiny_sku_vazio,
+        }
+
+    def _imprimir_secao_sku(self, sku, tamanho_amostra):
+        w = self.stdout.write
+        pares = sku["pares"]
+        w("== 11. Regra histórica de SKU (prefixo EK/EKK no Tiny) — AUDITORIA ==")
+        w(f"  a. Variações com SKU cru idêntico (= item 3) ..... {sku['exato_como_hoje']}")
+        w(f"  b. Variações que casam pela normalização de SKU .. {sku['variacoes_que_casam']}")
+        w(f"       (SKU normalizado, com/sem prefixo EK ou EKK)")
+        w(f"  c.   ...que só casam removendo o prefixo EK/EKK .. {sku['so_via_prefixo']}")
+        w(f"  d.   ...inequívocas (1 fornecedor -> 1 Tiny) ..... {len(sku['inequivocos'])}")
+        w(f"  e.   ...ambíguas (>1 Tiny candidato) ............. {len(sku['ambiguos'])}")
+        w(f"  f. Produtos Tiny distintos apontados ............. {sku['tiny_ids_apontados']}")
+        w(f"  g. Pares (variação, Tiny) analisados ............. {len(pares)}")
+        w(f"  h.   ...com NCM normalizado igual ................ {sku['ncm_igual']}")
+        w(f"  i.   ...com descrição normalizada igual .......... {sku['desc_igual']}")
+        w(f"  j.   ...com NCM normalizado DIFERENTE (falso +?) . {sku['ncm_diferente']}")
+        w(f"         desses, NCM preenchido nos dois lados ..... {sku['ncm_diferente_ambos_preenchidos']}")
+        w(f"  Variações sem SKU utilizável .................... {sku['variacao_sku_vazio']}")
+        w(f"  Produtos Tiny sem SKU utilizável ............... {sku['tiny_sku_vazio']}")
+        w("")
+        w(f"== 12. Amostra de {tamanho_amostra} matches por SKU normalizado ==")
+        if not pares:
+            w("  (nenhum)")
+            return
+        for variacao, tiny in pares[:tamanho_amostra]:
+            ncm_bate = "=" if normalizar_ncm(variacao.ncm) == normalizar_ncm(tiny.ncm) else "≠"
+            w(
+                f"  - {variacao.sku}  ->  {tiny.sku}  (tiny_id {tiny.tiny_id})\n"
+                f"    SKU norm ...: {normalizar_sku(variacao.sku)}  ->  {normalizar_sku(tiny.sku)}\n"
+                f"    desc forn ..: {variacao.nome or variacao.produto.nome}\n"
+                f"    desc Tiny ..: {tiny.descricao}\n"
+                f"    NCM ........: {variacao.ncm!r}  {ncm_bate}  {tiny.ncm!r}"
+            )
 
     # -- helpers -------------------------------------------------------
 

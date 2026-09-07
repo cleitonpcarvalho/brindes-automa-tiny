@@ -73,6 +73,36 @@ class NormalizarNcmTests(TestCase):
         self.assertEqual(cmd.normalizar_ncm(None), "")
 
 
+class NormalizarSkuTests(TestCase):
+    def test_uppercase_e_remove_nao_alfanumerico(self):
+        n = cmd.normalizar_sku
+        self.assertEqual(n("KT-90395"), "KT90395")
+        self.assertEqual(n("kt.90395"), "KT90395")
+        self.assertEqual(n("KT 90395"), "KT90395")
+        self.assertEqual(n("KT/90395"), "KT90395")
+        self.assertEqual(n(" ekkt-90507 "), "EKKT90507")
+
+    def test_vazio(self):
+        self.assertEqual(cmd.normalizar_sku(""), "")
+        self.assertEqual(cmd.normalizar_sku(None), "")
+
+    def test_variantes_removem_so_prefixo_inicial_ek_ekk(self):
+        v = cmd.variantes_sku_tiny_para_auditoria
+        self.assertEqual(v("EKKT90507"), {"EKKT90507", "KT90507", "T90507"})
+        self.assertEqual(v("EK12345"), {"EK12345", "12345"})
+        self.assertEqual(v("KT90395"), {"KT90395"})  # sem prefixo no início
+
+    def test_variantes_nao_tocam_ek_no_meio(self):
+        v = cmd.variantes_sku_tiny_para_auditoria
+        self.assertEqual(v("TEKK123"), {"TEKK123"})  # EKK no meio, não no início
+        self.assertEqual(v("XEK9"), {"XEK9"})
+
+    def test_variantes_nunca_produzem_string_vazia(self):
+        v = cmd.variantes_sku_tiny_para_auditoria
+        self.assertEqual(v("EK"), {"EK"})  # remover "EK" esvaziaria -> não gera
+        self.assertNotIn("", v("EKK"))
+
+
 class AuditoriaTests(TestCase):
     def setUp(self):
         self.instancia = Instancia.objects.create(nome="EKK Brindes")
@@ -227,10 +257,79 @@ class AuditoriaTests(TestCase):
     def test_e_estritamente_read_only(self):
         self._variacao("F-1", "Garrafa Térmica 500ml", "96170010")
         self._tiny(10, "T-10", "garrafa termica 500ml", "96170010")
+        # também exercita a seção 11 (SKU) no snapshot read-only
+        self._variacao("KT-90395", "Caneca", "39241000")
+        self._tiny(11, "EKKT-90395", "Caneca", "39241000")
 
         antes = self._snapshot()
         self._rodar()
         self.assertEqual(self._snapshot(), antes)
+
+    # -- seção 11/12: regra de prefixo EK/EKK no SKU --------------------
+
+    def test_regra_de_prefixo_ek_ekk_em_escala(self):
+        # os 3 casos reais informados
+        self._variacao("KT-90395", "Caneca Térmica", "96170010")
+        self._variacao("KT-90410", "Garrafa Inox", "96170010")
+        self._variacao("KT-90507", "Squeeze Alumínio", "76151000")
+        self._tiny(1, "EKKT-90395", "Caneca Térmica", "96170010")
+        self._tiny(2, "EKKT-90410", "Garrafa Inox", "96170010")
+        self._tiny(3, "EKKT90507", "Squeeze Alumínio", "76151000")
+
+        saida = self._rodar()
+        secao = _secao(saida, "11. Regra histórica de SKU")
+        self.assertIn("a. Variações com SKU cru idêntico (= item 3) ..... 0", secao)
+        self.assertIn("b. Variações que casam pela normalização de SKU .. 3", secao)
+        self.assertIn("c.   ...que só casam removendo o prefixo EK/EKK .. 3", secao)
+        self.assertIn("d.   ...inequívocas (1 fornecedor -> 1 Tiny) ..... 3", secao)
+        self.assertIn("e.   ...ambíguas (>1 Tiny candidato) ............. 0", secao)
+        self.assertIn("f. Produtos Tiny distintos apontados ............. 3", secao)
+        self.assertIn("g. Pares (variação, Tiny) analisados ............. 3", secao)
+        self.assertIn("h.   ...com NCM normalizado igual ................ 3", secao)
+        self.assertIn("i.   ...com descrição normalizada igual .......... 3", secao)
+        self.assertIn("j.   ...com NCM normalizado DIFERENTE (falso +?) . 0", secao)
+
+        amostra = _secao(saida, "12. Amostra de")
+        self.assertIn("KT-90395  ->  EKKT-90395  (tiny_id 1)", amostra)
+        self.assertIn("SKU norm ...: KT90507  ->  EKKT90507", amostra)
+
+    def test_sku_cru_identico_conta_em_11a_e_nao_em_11c(self):
+        self._variacao("EKKT-90395", "Caneca", "96170010")  # já igual ao Tiny
+        self._tiny(1, "EKKT-90395", "Caneca", "96170010")
+
+        secao = _secao(self._rodar(), "11. Regra histórica de SKU")
+        self.assertIn("a. Variações com SKU cru idêntico (= item 3) ..... 1", secao)
+        self.assertIn("b. Variações que casam pela normalização de SKU .. 1", secao)
+        self.assertIn("c.   ...que só casam removendo o prefixo EK/EKK .. 0", secao)
+
+    def test_ambiguidade_quando_normalizacao_bate_em_dois_tiny(self):
+        self._variacao("KT-90395", "Caneca", "96170010")
+        self._tiny(1, "KT-90395", "Caneca", "96170010")     # bate direto
+        self._tiny(2, "EKKT-90395", "Caneca", "96170010")   # bate removendo EK
+
+        secao = _secao(self._rodar(), "11. Regra histórica de SKU")
+        self.assertIn("d.   ...inequívocas (1 fornecedor -> 1 Tiny) ..... 0", secao)
+        self.assertIn("e.   ...ambíguas (>1 Tiny candidato) ............. 1", secao)
+        self.assertIn("f. Produtos Tiny distintos apontados ............. 2", secao)
+        self.assertIn("g. Pares (variação, Tiny) analisados ............. 2", secao)
+
+    def test_sku_compativel_mas_ncm_diferente_e_marcado_como_falso_positivo(self):
+        self._variacao("KT-90395", "Caneca", "96170010")
+        self._tiny(1, "EKKT-90395", "Caneca", "39241000")  # SKU compatível, NCM diferente
+
+        saida = self._rodar()
+        secao = _secao(saida, "11. Regra histórica de SKU")
+        self.assertIn("h.   ...com NCM normalizado igual ................ 0", secao)
+        self.assertIn("j.   ...com NCM normalizado DIFERENTE (falso +?) . 1", secao)
+        self.assertIn("desses, NCM preenchido nos dois lados ..... 1", secao)
+        self.assertIn("NCM ........: '96170010'  ≠  '39241000'", _secao(saida, "12. Amostra de"))
+
+    def test_prefixo_no_meio_do_sku_nao_gera_match(self):
+        self._variacao("90395", "Caneca", "96170010")
+        self._tiny(1, "EKKT-90395", "Caneca", "96170010")  # "90395" não é prefixo-removível
+
+        secao = _secao(self._rodar(), "11. Regra histórica de SKU")
+        self.assertIn("b. Variações que casam pela normalização de SKU .. 0", secao)
 
     def _snapshot(self):
         return {

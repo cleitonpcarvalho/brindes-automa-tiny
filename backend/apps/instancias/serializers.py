@@ -115,6 +115,24 @@ def _cor_fornecedor(status_execucao, credencial_ativa):
     }.get(status_execucao, "nao_configurado")
 
 
+def _resumo_execucao_fornecedor(execucao):
+    if execucao is None:
+        return None
+    return {
+        "id": execucao.id,
+        "tipo": execucao.tipo,
+        "status": execucao.status,
+        "iniciada_em": execucao.iniciada_em,
+        "finalizada_em": execucao.finalizada_em,
+        "total_lidos": execucao.total_lidos,
+        "total_novos": execucao.total_novos,
+        "total_atualizados": execucao.total_atualizados,
+        "total_ignorados": execucao.total_ignorados,
+        "total_erros": execucao.total_erros,
+        "mensagem_erro": execucao.mensagem_erro,
+    }
+
+
 class InstanciaListagemSerializer(InstanciaSerializer):
     """
     Serializer da listagem (passo 8): acrescenta métricas agregadas por
@@ -156,12 +174,32 @@ class ProdutosDetalheContagemSerializer(serializers.Serializer):
     com_erro = serializers.IntegerField()
 
 
+class UltimaExecucaoFornecedorSerializer(serializers.Serializer):
+    """Resumo da rodada mais recente de UM fornecedor (para a área do fornecedor no detalhe)."""
+
+    id = serializers.IntegerField()
+    tipo = serializers.CharField()
+    status = serializers.CharField()
+    iniciada_em = serializers.DateTimeField()
+    finalizada_em = serializers.DateTimeField(allow_null=True)
+    total_lidos = serializers.IntegerField()
+    total_novos = serializers.IntegerField()
+    total_atualizados = serializers.IntegerField()
+    total_ignorados = serializers.IntegerField()
+    total_erros = serializers.IntegerField()
+    mensagem_erro = serializers.CharField()
+
+
 class FornecedorDetalheSerializer(serializers.Serializer):
     fornecedor = serializers.ChoiceField(choices=Fornecedor.choices)
     cor = serializers.ChoiceField(choices=CORES_FORNECEDOR)
     ultima_execucao_em = serializers.DateTimeField(allow_null=True)
     ultima_execucao_status = serializers.ChoiceField(choices=StatusExecucao.choices, allow_null=True)
+    ultima_execucao = UltimaExecucaoFornecedorSerializer(allow_null=True)
     produtos_total = serializers.IntegerField()
+    # estado REAL do espelho para este fornecedor (não da última rodada):
+    produtos_aguardando = serializers.IntegerField()  # estoque <= 0, aguardando reposição
+    produtos_descontinuados = serializers.IntegerField()  # regra P@ da xbz — nunca vai ao Tiny
     credencial_configurada = serializers.BooleanField()
     credencial_ativa = serializers.BooleanField()
 
@@ -226,14 +264,17 @@ class InstanciaDetalheSerializer(InstanciaSerializer):
     @extend_schema_field(FornecedorDetalheSerializer(many=True))
     def get_fornecedores(self, obj):
         credenciais = {c.fornecedor: c for c in obj.credenciais_fornecedor.all()}
-        produtos_por_fornecedor = {
-            linha["produto__fornecedor"]: linha["total"]
-            for linha in (
-                Variacao.objects.filter(produto__instancia=obj)
-                .values("produto__fornecedor")
-                .annotate(total=Count("id"))
-            )
-        }
+
+        # uma passada: (fornecedor, status) -> quantidade de variações no espelho
+        contagem_por_status = {}
+        for linha in (
+            Variacao.objects.filter(produto__instancia=obj)
+            .values("produto__fornecedor", "status")
+            .annotate(total=Count("id"))
+        ):
+            contagem_por_status.setdefault(linha["produto__fornecedor"], {})[
+                linha["status"]
+            ] = linha["total"]
 
         resultado = []
         for valor, _rotulo in Fornecedor.choices:
@@ -241,6 +282,7 @@ class InstanciaDetalheSerializer(InstanciaSerializer):
             ultima_execucao = (
                 Execucao.objects.filter(instancia=obj, fornecedor=valor).order_by("-iniciada_em").first()
             )
+            por_status = contagem_por_status.get(valor, {})
             resultado.append(
                 {
                     "fornecedor": valor,
@@ -250,7 +292,10 @@ class InstanciaDetalheSerializer(InstanciaSerializer):
                     ),
                     "ultima_execucao_em": ultima_execucao.iniciada_em if ultima_execucao else None,
                     "ultima_execucao_status": ultima_execucao.status if ultima_execucao else None,
-                    "produtos_total": produtos_por_fornecedor.get(valor, 0),
+                    "ultima_execucao": _resumo_execucao_fornecedor(ultima_execucao),
+                    "produtos_total": sum(por_status.values()),
+                    "produtos_aguardando": por_status.get(StatusVariacao.AGUARDANDO, 0),
+                    "produtos_descontinuados": por_status.get(StatusVariacao.DESCONTINUADO, 0),
                     "credencial_configurada": bool(credencial and credencial.credenciais),
                     "credencial_ativa": bool(credencial and credencial.ativo),
                 }

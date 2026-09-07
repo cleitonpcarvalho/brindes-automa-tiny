@@ -123,12 +123,24 @@ export function useInstanciasListagem(filtros: FiltrosInstancias = {}) {
   });
 }
 
-/** Detalhe de uma instância por slug — traz os agregados da tela de detalhe (passo 10). */
+/**
+ * Detalhe de uma instância por slug — traz os agregados da tela de detalhe
+ * (passo 10). Enquanto houver alguma sincronização "rodando" (ex.: a carga
+ * inicial de um fornecedor), refaz a consulta a cada 4s para a tela mostrar
+ * o andamento/resultado sem depender de refresh manual — não é uma barra de
+ * progresso, é o estado real vindo da Execucao.
+ */
 export function useInstancia(slug: string) {
   return useQuery({
     queryKey: ["instancias", "detalhe", slug],
     queryFn: () => apiClient.get<InstanciaDetalhe>(`/instancias/${slug}`),
     enabled: Boolean(slug),
+    refetchInterval: (query) => {
+      const alguemRodando = (query.state.data?.fornecedores ?? []).some(
+        (f) => f.ultima_execucao_status === "rodando",
+      );
+      return alguemRodando ? 4000 : false;
+    },
   });
 }
 
@@ -355,6 +367,8 @@ export function useSincronizarFornecedor(slug: string, fornecedor: FornecedorEnu
       apiClient.post<SincronizarResposta>(`/instancias/${slug}/fornecedores/${fornecedor}/sincronizar/`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["instancias", "detalhe", slug] });
+      queryClient.invalidateQueries({ queryKey: ["instancias", "execucoes", slug] });
+      queryClient.invalidateQueries({ queryKey: ["instancias", "listagem"] });
     },
   });
 }

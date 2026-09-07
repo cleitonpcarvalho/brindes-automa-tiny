@@ -649,7 +649,10 @@ export interface components {
             /** Format: date-time */
             ultima_execucao_em: string | null;
             ultima_execucao_status: (components["schemas"]["StatusExecucaoEnum"] | components["schemas"]["NullEnum"]) | null;
+            ultima_execucao: components["schemas"]["UltimaExecucaoFornecedor"] | null;
             produtos_total: number;
+            produtos_aguardando: number;
+            produtos_descontinuados: number;
             credencial_configurada: boolean;
             credencial_ativa: boolean;
         };
@@ -1030,6 +1033,22 @@ export interface components {
          * @enum {string}
          */
         TipoExecucaoEnum: "carga_inicial" | "incremental";
+        /** @description Resumo da rodada mais recente de UM fornecedor (para a área do fornecedor no detalhe). */
+        UltimaExecucaoFornecedor: {
+            id: number;
+            tipo: string;
+            status: string;
+            /** Format: date-time */
+            iniciada_em: string;
+            /** Format: date-time */
+            finalizada_em: string | null;
+            total_lidos: number;
+            total_novos: number;
+            total_atualizados: number;
+            total_ignorados: number;
+            total_erros: number;
+            mensagem_erro: string;
+        };
         UltimaSincronizacao: {
             /** Format: date-time */
             em: string | null;

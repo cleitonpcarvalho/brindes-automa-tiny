@@ -51,7 +51,10 @@ class CadenciaFornecedor(models.Model):
     fornecedor = models.CharField(max_length=20, choices=Fornecedor.choices)
     intervalo_minutos = models.PositiveIntegerField(default=60)
     proxima_execucao_em = models.DateTimeField(null=True, blank=True)
-    ativo = models.BooleanField(default=True)
+    # Nasce DESLIGADA: nenhuma sincronização automática começa sem o usuário
+    # ativar explicitamente a cadência pela interface. Cadências já
+    # existentes no banco não são afetadas por esta mudança de default.
+    ativo = models.BooleanField(default=False)
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 

@@ -70,3 +70,46 @@ class SincronizarFornecedorViewTests(TestCase):
     def test_fornecedor_desconhecido_retorna_404(self):
         resposta = self.client.post(self._url("inexistente"))
         self.assertEqual(resposta.status_code, status.HTTP_404_NOT_FOUND)
+
+    @patch("apps.instancias.views.executar_sincronizacao_manual_task")
+    def test_primeira_rodada_do_fornecedor_e_marcada_como_carga_inicial(self, mock_task):
+        CredencialFornecedor.objects.create(
+            instancia=self.instancia, fornecedor="asia",
+            credenciais={"api_key": "a", "secret_key": "b"}, ativo=True,
+        )
+        resposta = self.client.post(self._url("asia"))
+        self.assertEqual(resposta.status_code, status.HTTP_202_ACCEPTED)
+        execucao = Execucao.objects.get(pk=resposta.data["execucao_id"])
+        self.assertEqual(execucao.tipo, TipoExecucao.CARGA_INICIAL)
+
+    @patch("apps.instancias.views.executar_sincronizacao_manual_task")
+    def test_rodadas_seguintes_sao_incrementais(self, mock_task):
+        CredencialFornecedor.objects.create(
+            instancia=self.instancia, fornecedor="asia",
+            credenciais={"api_key": "a", "secret_key": "b"}, ativo=True,
+        )
+        Execucao.objects.create(
+            instancia=self.instancia, fornecedor="asia",
+            tipo=TipoExecucao.CARGA_INICIAL, status=StatusExecucao.SUCESSO,
+        )
+        resposta = self.client.post(self._url("asia"))
+        self.assertEqual(resposta.status_code, status.HTTP_202_ACCEPTED)
+        execucao = Execucao.objects.get(pk=resposta.data["execucao_id"])
+        self.assertEqual(execucao.tipo, TipoExecucao.INCREMENTAL)
+
+    @patch("apps.instancias.views.executar_sincronizacao_manual_task")
+    def test_carga_inicial_nao_dispara_e_nao_cria_execucao_se_ja_ha_uma_rodando(self, mock_task):
+        """Trava de duplicidade: a mesma instância + fornecedor não pode ter 2 cargas simultâneas."""
+        CredencialFornecedor.objects.create(
+            instancia=self.instancia, fornecedor="xbz",
+            credenciais={"cnpj": "1", "token": "2"}, ativo=True,
+        )
+        Execucao.objects.create(
+            instancia=self.instancia, fornecedor="xbz",
+            tipo=TipoExecucao.CARGA_INICIAL, status=StatusExecucao.RODANDO,
+        )
+        antes = Execucao.objects.count()
+        resposta = self.client.post(self._url("xbz"))
+        self.assertEqual(resposta.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(Execucao.objects.count(), antes)
+        mock_task.delay.assert_not_called()

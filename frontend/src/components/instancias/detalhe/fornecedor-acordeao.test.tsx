@@ -11,8 +11,16 @@ vi.mock("@/lib/api/hooks", () => ({
   useAtualizarCadencia: vi.fn(),
 }));
 
-function mutacaoParada() {
-  return { mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false, error: null, reset: vi.fn() } as never;
+function mutacaoParada(overrides: Record<string, unknown> = {}) {
+  return {
+    mutate: vi.fn(),
+    mutateAsync: vi.fn(),
+    isPending: false,
+    isError: false,
+    error: null,
+    reset: vi.fn(),
+    ...overrides,
+  } as never;
 }
 
 beforeEach(() => {
@@ -37,7 +45,22 @@ function fornecedorDetalhe(overrides: Partial<FornecedorDetalhe>): FornecedorDet
     cor: "ok",
     ultima_execucao_em: "2026-01-01T00:00:00Z",
     ultima_execucao_status: "sucesso",
+    ultima_execucao: {
+      id: 9,
+      tipo: "carga_inicial",
+      status: "sucesso",
+      iniciada_em: "2026-01-01T00:00:00Z",
+      finalizada_em: "2026-01-01T00:05:00Z",
+      total_lidos: 1156,
+      total_novos: 1156,
+      total_atualizados: 0,
+      total_ignorados: 0,
+      total_erros: 0,
+      mensagem_erro: "",
+    },
     produtos_total: 1156,
+    produtos_aguardando: 12,
+    produtos_descontinuados: 3,
     credencial_configurada: true,
     credencial_ativa: true,
     ...overrides,
@@ -251,6 +274,76 @@ describe("FornecedorAcordeao", () => {
     );
 
     expect(screen.getByRole("button", { name: /Sincronizar/ })).toBeDisabled();
+  });
+
+  it("mostra 'Iniciar carga inicial' quando o fornecedor ainda não tem espelho", () => {
+    render(
+      <FornecedorAcordeao
+        statusDetalhe={fornecedorDetalhe({ produtos_total: 0, ultima_execucao_em: null, ultima_execucao_status: null, ultima_execucao: null })}
+        credencial={CREDENCIAL_XBZ}
+        cadencia={CADENCIA_XBZ}
+        slug="loja-x"
+      />
+    );
+
+    const botao = screen.getByRole("button", { name: /Iniciar carga inicial/ });
+    fireEvent.click(botao);
+    const mutacao = vi.mocked(hooks.useSincronizarFornecedor).mock.results.at(-1)!.value;
+    expect(mutacao.mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("mostra 'Processando…' e desabilita o botão enquanto a carga está rodando", () => {
+    render(
+      <FornecedorAcordeao
+        statusDetalhe={fornecedorDetalhe({ cor: "atencao", ultima_execucao_status: "rodando", ultima_execucao: { id: 1, tipo: "carga_inicial", status: "rodando", iniciada_em: "2026-01-01T00:00:00Z", finalizada_em: null, total_lidos: 0, total_novos: 0, total_atualizados: 0, total_ignorados: 0, total_erros: 0, mensagem_erro: "" } })}
+        credencial={CREDENCIAL_XBZ}
+        cadencia={CADENCIA_XBZ}
+        slug="loja-x"
+        defaultExpanded
+      />
+    );
+
+    expect(screen.getByRole("button", { name: /Processando/ })).toBeDisabled();
+    expect(screen.getByText(/atualiza sozinha quando terminar/)).toBeInTheDocument();
+  });
+
+  it("mostra o erro do backend quando o disparo da sincronização falha (ex.: 409)", () => {
+    vi.mocked(hooks.useSincronizarFornecedor).mockReturnValue(
+      mutacaoParada({ isError: true, error: new Error("Já existe uma sincronização em andamento para este fornecedor.") })
+    );
+    render(
+      <FornecedorAcordeao
+        statusDetalhe={fornecedorDetalhe({})}
+        credencial={CREDENCIAL_XBZ}
+        cadencia={CADENCIA_XBZ}
+        slug="loja-x"
+      />
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Já existe uma sincronização em andamento");
+  });
+
+  it("exibe os contadores da última carga e o estado real do espelho no painel expandido", () => {
+    render(
+      <FornecedorAcordeao
+        statusDetalhe={fornecedorDetalhe({
+          produtos_total: 1156,
+          produtos_aguardando: 40,
+          produtos_descontinuados: 7,
+          ultima_execucao: { id: 9, tipo: "carga_inicial", status: "sucesso", iniciada_em: "2026-01-01T00:00:00Z", finalizada_em: "2026-01-01T00:05:00Z", total_lidos: 1156, total_novos: 1100, total_atualizados: 56, total_ignorados: 0, total_erros: 0, mensagem_erro: "" },
+        })}
+        credencial={CREDENCIAL_XBZ}
+        cadencia={CADENCIA_XBZ}
+        slug="loja-x"
+        defaultExpanded
+      />
+    );
+
+    expect(screen.getByText("Última carga")).toBeInTheDocument();
+    expect(screen.getByText("Novos").nextElementSibling).toHaveTextContent("1.100");
+    expect(screen.getByText("Atualizados").nextElementSibling).toHaveTextContent("56");
+    expect(screen.getByText("Sem estoque (aguardando)").nextElementSibling).toHaveTextContent("40");
+    expect(screen.getByText("Descontinuados (P@)").nextElementSibling).toHaveTextContent("7");
   });
 });
 

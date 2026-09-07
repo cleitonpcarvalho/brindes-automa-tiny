@@ -30,10 +30,24 @@ class CadenciaMinimaXbzTests(TestCase):
 
 
 class CadenciaPadraoAoCriarCredencialTests(TestCase):
-    def test_criar_credencial_gera_cadencia_padrao_de_60_minutos(self):
+    def test_criar_credencial_gera_cadencia_padrao_de_60_minutos_DESLIGADA(self):
         instancia = Instancia.objects.create(nome="Loja com Credencial")
         CredencialFornecedor.objects.create(instancia=instancia, fornecedor="spot", credenciais={})
 
         cadencia = CadenciaFornecedor.objects.get(instancia=instancia, fornecedor="spot")
         self.assertEqual(cadencia.intervalo_minutos, 60)
+        # nasce desligada: nenhuma sincronização automática sem o usuário ativar
+        self.assertFalse(cadencia.ativo)
+
+    def test_cadencia_criada_diretamente_tambem_nasce_desligada(self):
+        instancia = Instancia.objects.create(nome="Loja Cadencia Direta")
+        cadencia = CadenciaFornecedor.objects.create(instancia=instancia, fornecedor="asia")
+        self.assertFalse(cadencia.ativo)
+
+    def test_mudanca_de_default_nao_altera_cadencia_ja_ativa_no_banco(self):
+        instancia = Instancia.objects.create(nome="Loja Cadencia Ativa")
+        cadencia = CadenciaFornecedor.objects.create(
+            instancia=instancia, fornecedor="somarcas", ativo=True
+        )
+        cadencia.refresh_from_db()
         self.assertTrue(cadencia.ativo)

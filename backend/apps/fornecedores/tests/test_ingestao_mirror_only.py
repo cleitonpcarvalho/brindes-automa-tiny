@@ -349,3 +349,97 @@ class DryRunTests(TestCase):
         self.assertEqual(Produto.objects.count(), 1)
         self.assertEqual(Variacao.objects.count(), 1)
         self.assertEqual(Execucao.objects.count(), 1)
+
+
+class CargaInicialXbzPelaTaskManualTests(TestCase):
+    """
+    Carga inicial da XBZ pela interface: a view cria uma Execucao (rodando) e
+    enfileira `executar_sincronizacao_manual_task`. Estes testes rodam a task
+    de verdade e provam a lista de segurança do passo:
+      - nenhuma chamada de criação/atualização no Tiny;
+      - SKU original preservado;
+      - P@ vira descontinuado e fica fora da fila de cadastro;
+      - estoque zero fica no espelho como 'aguardando';
+      - a Execucao registrada acompanha o resultado (status + contadores).
+    """
+
+    def setUp(self):
+        from apps.fornecedores.models import CadenciaFornecedor
+
+        self.instancia = _instancia("EKK Brindes")
+        _credencial(self.instancia, "xbz", {"cnpj": "0", "token": "0"})
+        # a carga inicial NÃO deve ligar cadência automática
+        self.cadencia = CadenciaFornecedor.objects.get(instancia=self.instancia, fornecedor="xbz")
+        self.cadencia.ativo = False
+        self.cadencia.save()
+
+    def _payload_xbz(self):
+        normal = deepcopy(XBZ_GRUPO_06520)
+        normal[0]["QuantidadeDisponivel"] = 0  # uma variação sem estoque
+        return normal + deepcopy(XBZ_GRUPO_P12288)  # + o grupo P@12288
+
+    def _rodar_task(self):
+        from apps.fornecedores.tasks import executar_sincronizacao_manual_task
+
+        execucao = Execucao.objects.create(
+            instancia=self.instancia, fornecedor="xbz",
+            tipo="carga_inicial", status=StatusExecucao.RODANDO,
+        )
+        executar_sincronizacao_manual_task(execucao.id)
+        execucao.refresh_from_db()
+        return execucao
+
+    @patch("apps.fornecedores.xbz.XbzFornecedor.buscar")
+    def test_carga_inicial_espelha_tudo_sem_tocar_o_tiny(self, mock_buscar):
+        mock_buscar.return_value = self._payload_xbz()
+        estoura = lambda *a, **k: (_ for _ in ()).throw(AssertionError("chamou o Tiny!"))  # noqa: E731
+
+        with patch.object(TinyApiClient, "__init__", estoura), \
+             patch.object(TinyApiClient, "get", estoura), \
+             patch.object(TinyApiClient, "post", estoura), \
+             patch.object(TinyApiClient, "buscar_produto_por_sku", estoura), \
+             patch.object(TinyApiClient, "criar_produto", estoura), \
+             patch.object(TinyApiClient, "atualizar_estoque", estoura):
+            execucao = self._rodar_task()
+
+        self.assertEqual(execucao.status, StatusExecucao.SUCESSO)
+        self.assertEqual(execucao.total_lidos, 8)  # 6 do grupo 06520 + 2 do P@12288
+        self.assertEqual(execucao.total_novos, 8)
+        self.assertIsNotNone(execucao.finalizada_em)
+
+        # SKU original (CodigoXbz) preservado exatamente
+        v = Variacao.objects.get(sku="X000477")
+        self.assertEqual(v.produto.codigo_pai, "06520")
+        self.assertEqual(v.status, StatusVariacao.PENDENTE)
+
+        # estoque zero -> aguardando, mas continua no espelho
+        sem_estoque = Variacao.objects.get(sku="X000019")
+        self.assertEqual(sem_estoque.status, StatusVariacao.AGUARDANDO)
+
+        # P@ -> descontinuado e fora da fila de cadastro (só PENDENTE entra)
+        p_arroba = Produto.objects.get(codigo_pai="P@12288")
+        self.assertTrue(p_arroba.descontinuado)
+        self.assertTrue(all(vv.status == StatusVariacao.DESCONTINUADO for vv in p_arroba.variacoes.all()))
+        elegiveis = Variacao.objects.filter(
+            produto__instancia=self.instancia, produto__codigo_pai="P@12288",
+            status=StatusVariacao.PENDENTE,
+        )
+        self.assertEqual(elegiveis.count(), 0)
+
+        # cadência continua desligada (carga inicial não ativa automação)
+        self.cadencia.refresh_from_db()
+        self.assertFalse(self.cadencia.ativo)
+
+    @patch("apps.fornecedores.xbz.XbzFornecedor.buscar")
+    def test_task_marca_execucao_como_falha_sem_tocar_o_tiny(self, mock_buscar):
+        mock_buscar.side_effect = RuntimeError("XBZ fora do ar")
+        estoura = lambda *a, **k: (_ for _ in ()).throw(AssertionError("chamou o Tiny!"))  # noqa: E731
+
+        with patch.object(TinyApiClient, "__init__", estoura), \
+             patch.object(TinyApiClient, "post", estoura), \
+             patch.object(TinyApiClient, "criar_produto", estoura):
+            execucao = self._rodar_task()
+
+        self.assertEqual(execucao.status, StatusExecucao.FALHA)
+        self.assertIn("XBZ fora do ar", execucao.mensagem_erro)
+        self.assertEqual(Variacao.objects.count(), 0)

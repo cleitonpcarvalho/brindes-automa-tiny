@@ -340,17 +340,26 @@ class SincronizarFornecedorView(APIView):
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        ja_rodando = Execucao.objects.filter(
-            instancia=instancia, fornecedor=fornecedor, status=StatusExecucao.RODANDO
-        ).exists()
-        if ja_rodando:
+        execucoes_do_fornecedor = Execucao.objects.filter(
+            instancia=instancia, fornecedor=fornecedor
+        )
+        if execucoes_do_fornecedor.filter(status=StatusExecucao.RODANDO).exists():
             return Response(
                 {"detail": "Já existe uma sincronização em andamento para este fornecedor."},
                 status=status.HTTP_409_CONFLICT,
             )
 
+        # A 1ª rodada de um fornecedor nesta instância é a carga inicial; as
+        # seguintes são incrementais. Só rótulo — o pipeline de importação
+        # (mirror-only) é o mesmo nos dois casos (a API do fornecedor sempre
+        # devolve o catálogo inteiro e o upsert por hash pula o que não mudou).
+        tipo = (
+            TipoExecucao.CARGA_INICIAL
+            if not execucoes_do_fornecedor.exists()
+            else TipoExecucao.INCREMENTAL
+        )
         execucao = Execucao.objects.create(
-            instancia=instancia, fornecedor=fornecedor, tipo=TipoExecucao.INCREMENTAL
+            instancia=instancia, fornecedor=fornecedor, tipo=tipo
         )
         executar_sincronizacao_manual_task.delay(execucao.id)
         return Response(

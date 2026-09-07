@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { useSincronizarFornecedor } from "@/lib/api/hooks"
 import { formatarNumero, formatarTempoRelativo } from "@/lib/format"
 import { DOT_POR_COR, ROTULO_FORNECEDOR, ROTULO_POR_COR } from "../cor-fornecedor"
+import { badgeStatus, ROTULO_TIPO } from "./execucao-formato"
 import { FornecedorCredenciaisForm } from "./fornecedor-credenciais-form"
 import { FornecedorCadenciaForm } from "./fornecedor-cadencia-form"
 import { FornecedorCotaCallout } from "./fornecedor-cota-callout"
@@ -44,6 +45,17 @@ export function FornecedorAcordeao({
     ? "Configurado"
     : ROTULO_POR_COR[statusDetalhe.cor]
 
+  const rodando = statusDetalhe.ultima_execucao_status === "rodando"
+  const nuncaImportou = statusDetalhe.produtos_total === 0 && !statusDetalhe.ultima_execucao_em
+  const rotuloBotao = rodando
+    ? "Processando…"
+    : nuncaImportou
+      ? "Iniciar carga inicial"
+      : "Sincronizar"
+  const erroSincronizar = sincronizar.isError
+    ? (sincronizar.error as Error | undefined)?.message ?? "Não foi possível iniciar a sincronização."
+    : null
+
   const descricao = statusDetalhe.ultima_execucao_em
     ? `${statusDetalhe.ultima_execucao_status === "falha" ? "falha " : ""}${formatarTempoRelativo(statusDetalhe.ultima_execucao_em)} · ${formatarNumero(statusDetalhe.produtos_total)} produtos sincronizados · intervalo ${cadencia.intervalo_minutos ?? 60}min`
     : "ainda sem execuções"
@@ -73,10 +85,13 @@ export function FornecedorAcordeao({
               event.stopPropagation()
               sincronizar.mutate()
             }}
-            disabled={!statusDetalhe.credencial_ativa || sincronizar.isPending}
+            disabled={!statusDetalhe.credencial_ativa || sincronizar.isPending || rodando}
           >
-            <RefreshCw size={14} className={sincronizar.isPending ? "animate-spin" : undefined} />
-            Sincronizar
+            <RefreshCw
+              size={14}
+              className={sincronizar.isPending || rodando ? "animate-spin" : undefined}
+            />
+            {rotuloBotao}
           </Button>
           <button
             type="button"
@@ -88,6 +103,16 @@ export function FornecedorAcordeao({
         </div>
       </div>
 
+      {erroSincronizar && (
+        <div
+          role="alert"
+          className="flex items-center gap-2 border-t border-error/20 bg-error-subtle px-4 py-2.5 text-caption-medium text-error"
+        >
+          <AlertTriangle size={14} className="shrink-0" />
+          <span>{erroSincronizar}</span>
+        </div>
+      )}
+
       {!expandido && statusDetalhe.cor === "erro" && mensagemErroUltimaExecucao && (
         <div className="flex items-center gap-2 border-t border-error/20 bg-error-subtle px-4 py-2.5 text-caption-medium text-error">
           <AlertTriangle size={14} className="shrink-0" />
@@ -97,6 +122,7 @@ export function FornecedorAcordeao({
 
       {expandido && (
         <div className="border-t border-border p-6">
+          <UltimaCargaResumo detalhe={statusDetalhe} rodando={rodando} />
           <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
             <FornecedorCredenciaisForm fornecedor={fornecedor} credencial={credencial} slug={slug} />
             <FornecedorCadenciaForm fornecedor={fornecedor} cadencia={cadencia} slug={slug} />
@@ -105,5 +131,64 @@ export function FornecedorAcordeao({
         </div>
       )}
     </article>
+  )
+}
+
+function UltimaCargaResumo({ detalhe, rodando }: { detalhe: FornecedorDetalhe; rodando: boolean }) {
+  const execucao = detalhe.ultima_execucao
+  const badge = badgeStatus(detalhe.ultima_execucao_status ?? "")
+
+  return (
+    <div className="mb-6 rounded-lg bg-secondary/40 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="text-caption-medium font-semibold text-foreground">Última carga</h3>
+        {detalhe.ultima_execucao_status ? (
+          <>
+            <Badge variant={badge.variant}>{badge.rotulo}</Badge>
+            {execucao && (
+              <span className="text-caption-label text-muted-foreground">
+                {ROTULO_TIPO[execucao.tipo] ?? execucao.tipo} · {formatarTempoRelativo(execucao.iniciada_em)}
+              </span>
+            )}
+          </>
+        ) : (
+          <span className="text-caption-label text-muted-foreground">ainda sem execuções</span>
+        )}
+      </div>
+
+      {execucao && (
+        <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-1.5 text-caption-label sm:grid-cols-3">
+          <ResumoItem rotulo="Lidos" valor={execucao.total_lidos} />
+          <ResumoItem rotulo="Novos" valor={execucao.total_novos} />
+          <ResumoItem rotulo="Atualizados" valor={execucao.total_atualizados} />
+          <ResumoItem rotulo="Ignorados" valor={execucao.total_ignorados} />
+          <ResumoItem rotulo="Erros" valor={execucao.total_erros} />
+        </dl>
+      )}
+
+      <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-1.5 border-t border-border pt-3 text-caption-label sm:grid-cols-3">
+        <ResumoItem rotulo="No espelho" valor={detalhe.produtos_total} />
+        <ResumoItem rotulo="Sem estoque (aguardando)" valor={detalhe.produtos_aguardando} />
+        <ResumoItem rotulo="Descontinuados (P@)" valor={detalhe.produtos_descontinuados} />
+      </dl>
+
+      {rodando && (
+        <p className="mt-3 text-caption-label text-muted-foreground">
+          Processando em segundo plano — esta tela atualiza sozinha quando terminar.
+        </p>
+      )}
+      {execucao?.status === "falha" && execucao.mensagem_erro && (
+        <p className="mt-3 text-caption-label text-error">{execucao.mensagem_erro}</p>
+      )}
+    </div>
+  )
+}
+
+function ResumoItem({ rotulo, valor }: { rotulo: string; valor: number }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <dt className="text-muted-foreground">{rotulo}</dt>
+      <dd className="font-semibold text-foreground">{formatarNumero(valor)}</dd>
+    </div>
   )
 }

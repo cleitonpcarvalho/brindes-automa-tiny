@@ -42,6 +42,14 @@ biblioteca padrão, determinístico). NENHUM score vira "match" aqui: o
 objetivo é observar a distribuição real dos dados antes de decidir a
 regra. Não há threshold de produção — os cortes `--score-perigo` /
 `--gap-perigo` existem só para separar os casos de risco na saída.
+
+Seções 16–17: sobre os mesmos pares (variação, melhor candidato Tiny),
+extrai atributos numéricos com unidade EXPLÍCITA embutidos na descrição
+(capacidade em ml/l, quantidade de peças, dimensões em cm/mm, peso em
+g/kg — ver `extrair_atributos`) e marca CONFLITO quando os dois lados
+informam o mesmo tipo de atributo com valores diferentes ("300ml" x
+"390ml", "4 pçs" x "6 pçs"). Ausência de um lado é "não comparável",
+nunca conflito. Continua exploratório: nada vira descarte automático.
 """
 
 import re
@@ -199,6 +207,173 @@ def _faixa_score(score: float) -> str:
         if score >= limite:
             return rotulo
     return FAIXAS_SCORE[-1][1]
+
+
+# ---------------------------------------------------------------------------
+# Seções 16–17: atributos numéricos embutidos na descrição
+# ---------------------------------------------------------------------------
+#
+# Objetivo: pegar falso positivo que o score textual não pega — "CANECA EM
+# VIDRO 300ML" x "Caneca em vidro 390ml" tem score 0.95 mas 300 != 390.
+#
+# Só extraímos número QUANDO COLADO/ADJACENTE A UMA UNIDADE conhecida
+# (item 12 do pedido): "300ml", "4 pçs", "15x20 cm". Um número solto
+# ("KIT 90395", "modelo 2024") NÃO vira atributo.
+#
+# Ausência de atributo de um lado NUNCA é conflito (item 11): fornecedor
+# com "500ml" e Tiny sem capacidade => "não comparável".
+
+ATRIBUTOS_ROTULO = {
+    "capacidade_ml": "capacidade",
+    "pecas": "peças",
+    "dimensoes_cm": "dimensões",
+    "peso_g": "peso",
+}
+
+# unidade -> fator para a unidade canônica (ml para volume, g para peso).
+# "l"/"lt"/"litro" viram ml; "kg" vira g; "mm" vira cm (÷10, ver _dim_para_cm).
+_FATOR_VOLUME_ML = {
+    "ml": 1.0, "l": 1000.0, "lt": 1000.0, "lts": 1000.0,
+    "litro": 1000.0, "litros": 1000.0,
+}
+_FATOR_PESO_G = {"g": 1.0, "kg": 1000.0}
+
+_RE_CAPACIDADE = re.compile(
+    r"(\d+(?:[.,]\d+)?)\s*(litros|litro|lts|lt|ml|l)\b", re.IGNORECASE
+)
+_RE_PECAS = re.compile(r"(\d+)\s*(pcs|pc|pecas|peca)\b", re.IGNORECASE)
+_RE_PESO = re.compile(r"(\d+(?:[.,]\d+)?)\s*(kg|g)\b", re.IGNORECASE)
+# dimensão multi-eixo ("32x14,5x5,5 mm", "15 x 20cm") — precisa de pelo menos
+# um "x" entre números e de unidade cm/mm logo depois.
+_RE_DIMENSAO_MULTI = re.compile(
+    r"(\d+(?:[.,]\d+)?(?:\s*[x×]\s*\d+(?:[.,]\d+)?)+)\s*(mm|cm)\b", re.IGNORECASE
+)
+# dimensão de um número só ("10 cm") — sinal fraco, mas ainda é "número +
+# unidade". Rodada só DEPOIS de remover os trechos multi-eixo, e o número
+# não pode encostar em letra/dígito/decimal antes dele (senão pegava o
+# "5" de "...x5,5 mm").
+_RE_DIMENSAO_UNICA = re.compile(
+    r"(?<![0-9a-z.,x×])(\d+(?:[.,]\d+)?)\s*(mm|cm)\b", re.IGNORECASE
+)
+
+
+def _num(texto: str) -> float:
+    return float(texto.replace(",", "."))
+
+
+def _texto_para_extracao(texto: str) -> str:
+    """
+    casefold + remoção de acentos, PRESERVANDO pontuação e dígitos (ao
+    contrário de `normalizar_descricao`, que apagaria a vírgula decimal de
+    "14,5" e o "x" às vezes). É só o pré-processamento da extração de
+    atributos — não entra no score textual.
+    """
+    if not texto:
+        return ""
+    decomposto = unicodedata.normalize("NFKD", texto)
+    return "".join(
+        c for c in decomposto if not unicodedata.category(c).startswith("M")
+    ).casefold()
+
+
+def _dim_para_cm(expressao: str, unidade: str) -> tuple:
+    fator = 0.1 if unidade.lower() == "mm" else 1.0
+    numeros = [
+        round(_num(parte) * fator, 2)
+        for parte in re.split(r"[x×]", expressao)
+        if parte.strip()
+    ]
+    return tuple(sorted(numeros))
+
+
+def extrair_atributos(texto: str) -> dict:
+    """
+    Extrai atributos numéricos com unidade explícita da descrição.
+    Determinística. Devolve dict {chave: frozenset(valores)} só com as
+    chaves de fato encontradas. Valores já normalizados para a unidade
+    canônica:
+
+      - capacidade_ml: volume em ml (litro -> x1000);
+      - pecas: contagem inteira (pç/pçs/peça/peças/pc/pcs);
+      - dimensoes_cm: tupla ordenada de medidas em cm (mm -> /10);
+      - peso_g: peso em g (kg -> x1000).
+
+    "1 litro" e "1000 ml" -> mesmo valor. "4 PÇS" e "4 peças" -> mesmo
+    valor. Número sem unidade adjacente é ignorado.
+    """
+    base = _texto_para_extracao(texto)
+    atributos: dict[str, set] = {}
+
+    caps = {
+        round(_num(n) * _FATOR_VOLUME_ML[u.lower()], 3)
+        for n, u in _RE_CAPACIDADE.findall(base)
+    }
+    if caps:
+        atributos["capacidade_ml"] = caps
+
+    pecas = {int(n) for n, _u in _RE_PECAS.findall(base)}
+    if pecas:
+        atributos["pecas"] = pecas
+
+    pesos = {
+        round(_num(n) * _FATOR_PESO_G[u.lower()], 3)
+        for n, u in _RE_PESO.findall(base)
+    }
+    if pesos:
+        atributos["peso_g"] = pesos
+
+    dims = {_dim_para_cm(expr, u) for expr, u in _RE_DIMENSAO_MULTI.findall(base)}
+    # tira os trechos multi-eixo antes de procurar dimensão de número único,
+    # para não recontar o último número de "32x14,5x5,5 mm".
+    resto = _RE_DIMENSAO_MULTI.sub(" ", base)
+    for n, u in _RE_DIMENSAO_UNICA.findall(resto):
+        dims.add(_dim_para_cm(n, u))
+    if dims:
+        atributos["dimensoes_cm"] = dims
+
+    return {chave: frozenset(valores) for chave, valores in atributos.items()}
+
+
+def comparar_atributos(forn: dict, tiny: dict) -> dict:
+    """
+    Compara dois dicts de `extrair_atributos`. Por tipo de atributo:
+
+      - os dois lados têm o atributo e os conjuntos são IGUAIS  -> "igual";
+      - os dois lados têm o atributo e os conjuntos DIFEREM     -> "conflito";
+      - só um lado tem o atributo                                -> "não comparável"
+        (item 11: ausência NUNCA é conflito).
+
+    Devolve {"iguais": [...], "conflitos": [...], "nao_comparaveis": [...]}
+    com as chaves de `ATRIBUTOS_ROTULO`.
+    """
+    iguais, conflitos, nao_comparaveis = [], [], []
+    for chave in ATRIBUTOS_ROTULO:
+        va = forn.get(chave) or frozenset()
+        vb = tiny.get(chave) or frozenset()
+        if va and vb:
+            (iguais if va == vb else conflitos).append(chave)
+        elif va or vb:
+            nao_comparaveis.append(chave)
+    return {"iguais": iguais, "conflitos": conflitos, "nao_comparaveis": nao_comparaveis}
+
+
+def _fmt_valor_atributo(chave: str, valores: frozenset) -> str:
+    if chave == "dimensoes_cm":
+        return " | ".join(
+            "x".join(f"{x:g}" for x in tup) + "cm" for tup in sorted(valores)
+        )
+    sufixo = {"capacidade_ml": "ml", "peso_g": "g", "pecas": ""}[chave]
+    return " | ".join(f"{v:g}{sufixo}" for v in sorted(valores))
+
+
+def formatar_atributos(atributos: dict) -> str:
+    if not atributos:
+        return "(nenhum)"
+    return ", ".join(
+        f"{ATRIBUTOS_ROTULO[chave]}={_fmt_valor_atributo(chave, atributos[chave])}"
+        for chave in ATRIBUTOS_ROTULO
+        if atributos.get(chave)
+    )
 
 
 class Command(BaseCommand):
@@ -602,6 +777,11 @@ class Command(BaseCommand):
             else:
                 n_quase_iguais = 0
             faixas[_faixa_score(s1)] += 1
+
+            attrs_forn = extrair_atributos(variacao.nome or variacao.produto.nome)
+            attrs_tiny = extrair_atributos(melhor.descricao)
+            comparacao = comparar_atributos(attrs_forn, attrs_tiny)
+
             resultados.append(
                 {
                     "variacao": variacao,
@@ -612,10 +792,19 @@ class Command(BaseCommand):
                     "gap": gap,
                     "n_candidatos": len(candidatos),
                     "n_quase_iguais": n_quase_iguais,
+                    "attrs_forn": attrs_forn,
+                    "attrs_tiny": attrs_tiny,
+                    "attrs_iguais": comparacao["iguais"],
+                    "attrs_conflitos": comparacao["conflitos"],
+                    "attrs_nao_comparaveis": comparacao["nao_comparaveis"],
+                    "attrs_comparavel": bool(comparacao["iguais"] or comparacao["conflitos"]),
+                    "attrs_tem_conflito": bool(comparacao["conflitos"]),
                 }
             )
 
         resultados.sort(key=lambda r: (-r["s1"], r["variacao"].sku, r["variacao"].pk))
+
+        atributos = self._agregar_atributos(resultados, score_perigo)
 
         perigosos = [
             r
@@ -639,6 +828,36 @@ class Command(BaseCommand):
             "perigosos": perigosos,
             "score_perigo": score_perigo,
             "gap_perigo": gap_perigo,
+            "atributos": atributos,
+        }
+
+    @staticmethod
+    def _agregar_atributos(resultados, score_perigo):
+        """
+        Consolida a comparação de atributos numéricos sobre os pares
+        (variação, melhor candidato Tiny) da análise de similaridade.
+        """
+        total = len(resultados)
+        com_comparavel = sum(1 for r in resultados if r["attrs_comparavel"])
+        com_conflito = sum(1 for r in resultados if r["attrs_tem_conflito"])
+        todos_comparaveis_iguais = sum(
+            1 for r in resultados if r["attrs_comparavel"] and not r["attrs_tem_conflito"]
+        )
+        conflitos_por_tipo = Counter()
+        for r in resultados:
+            for chave in r["attrs_conflitos"]:
+                conflitos_por_tipo[ATRIBUTOS_ROTULO[chave]] += 1
+
+        alto_score = [r for r in resultados if r["s1"] >= score_perigo]
+        return {
+            "total": total,
+            "sem_comparavel": total - com_comparavel,
+            "com_comparavel": com_comparavel,
+            "todos_comparaveis_iguais": todos_comparaveis_iguais,
+            "com_conflito": com_conflito,
+            "conflitos_por_tipo": conflitos_por_tipo,
+            "alto_sem_conflito": [r for r in alto_score if not r["attrs_tem_conflito"]],
+            "alto_com_conflito": [r for r in alto_score if r["attrs_tem_conflito"]],
         }
 
     @staticmethod
@@ -705,6 +924,8 @@ class Command(BaseCommand):
         else:
             for r in sim["perigosos"][:tamanho_amostra]:
                 self._linha_similaridade(r)
+        w("")
+        self._imprimir_secao_atributos(sim["atributos"], sim["score_perigo"], tamanho_amostra)
 
     def _linha_similaridade(self, r):
         w = self.stdout.write
@@ -712,6 +933,16 @@ class Command(BaseCommand):
         melhor = r["melhor"]
         s2 = "-" if r["s2"] is None else f"{r['s2']:.4f}"
         gap = "-" if r["gap"] is None else f"{r['gap']:.4f}"
+        conflitos = (
+            ", ".join(ATRIBUTOS_ROTULO[c] for c in r["attrs_conflitos"])
+            if r["attrs_conflitos"]
+            else "(nenhum)"
+        )
+        nao_comp = (
+            ", ".join(ATRIBUTOS_ROTULO[c] for c in r["attrs_nao_comparaveis"])
+            if r["attrs_nao_comparaveis"]
+            else "-"
+        )
         w(
             f"  - {v.sku}  ->  {melhor.sku}  (tiny_id {melhor.tiny_id})\n"
             f"    score ......: {r['s1']:.4f}   2º: {s2}   gap: {gap}   "
@@ -720,8 +951,48 @@ class Command(BaseCommand):
             f"    desc Tiny ..: {melhor.descricao}\n"
             f"    NCM ........: {v.ncm!r}  vs  {melhor.ncm!r}\n"
             f"    dim forn ...: {self._dimensoes(v)}\n"
-            f"    dim Tiny ...: {self._dimensoes(melhor)}"
+            f"    dim Tiny ...: {self._dimensoes(melhor)}\n"
+            f"    attrs forn .: {formatar_atributos(r['attrs_forn'])}\n"
+            f"    attrs Tiny .: {formatar_atributos(r['attrs_tiny'])}\n"
+            f"    CONFLITO ...: {conflitos}   (não comparável: {nao_comp})"
         )
+
+    def _imprimir_secao_atributos(self, attrs, score_perigo, tamanho_amostra):
+        w = self.stdout.write
+        w("== 16. Atributos numéricos na descrição (EXPLORATÓRIO — nada vira descarte) ==")
+        w("  Base: pares (variação, melhor candidato Tiny) da análise de similaridade.")
+        w("  Só conta como atributo número COM unidade adjacente (ml, l, pç, cm/mm, g/kg).")
+        w("  Ausência de um lado = 'não comparável', NUNCA conflito.")
+        w(f"  Total de pares analisados ....................... {attrs['total']}")
+        w(f"  Pares sem nenhum atributo comparável ............ {attrs['sem_comparavel']}")
+        w(f"  Pares com pelo menos um atributo comparável ..... {attrs['com_comparavel']}")
+        w(f"    ...com TODOS os comparáveis iguais ........... {attrs['todos_comparaveis_iguais']}")
+        w(f"    ...com pelo menos um CONFLITO ................ {attrs['com_conflito']}")
+        w("  Conflitos por tipo:")
+        if not attrs["conflitos_por_tipo"]:
+            w("    (nenhum)")
+        for tipo, qtd in sorted(attrs["conflitos_por_tipo"].items(), key=lambda t: (-t[1], t[0])):
+            w(f"    {tipo:<14} {qtd:>6}")
+        w("")
+        w(
+            f"== 17. Candidatos com score textual >= {score_perigo}, "
+            f"separados por conflito numérico =="
+        )
+        grupos = (
+            ("SEM conflito numérico detectado", attrs["alto_sem_conflito"]),
+            ("COM conflito numérico detectado", attrs["alto_com_conflito"]),
+        )
+        for rotulo, itens in grupos:
+            w("")
+            w(f"  --- {rotulo}: {len(itens)} ---")
+            if not itens:
+                w("  (nenhum)")
+                continue
+            mostrados = itens[:tamanho_amostra]
+            for r in mostrados:
+                self._linha_similaridade(r)
+            if len(itens) > len(mostrados):
+                w(f"  ... (+{len(itens) - len(mostrados)} não exibidos; use --amostra-sim)")
 
     @staticmethod
     def _dimensoes(obj):

@@ -131,6 +131,65 @@ class SimilaridadeDescricaoUnitTests(TestCase):
         self.assertEqual(cmd._faixa_score(0.5), "< 0.80")
 
 
+class ExtrairAtributosUnitTests(TestCase):
+    def _cmp(self, a, b):
+        return cmd.comparar_atributos(cmd.extrair_atributos(a), cmd.extrair_atributos(b))
+
+    def test_capacidade_extraida_com_e_sem_espaco(self):
+        self.assertEqual(cmd.extrair_atributos("CANECA EM VIDRO - 300ML")["capacidade_ml"], frozenset({300.0}))
+        self.assertEqual(cmd.extrair_atributos("Garrafa 1,5 L")["capacidade_ml"], frozenset({1500.0}))
+
+    def test_300ml_vs_390ml_conflito_capacidade(self):
+        r = self._cmp("Caneca em vidro 300ml", "Caneca em vidro 390ml")
+        self.assertEqual(r["conflitos"], ["capacidade_ml"])
+        self.assertEqual(r["iguais"], [])
+        self.assertEqual(r["nao_comparaveis"], [])
+
+    def test_1_litro_vs_1000ml_igual(self):
+        r = self._cmp("Jarra 1 litro", "Jarra 1000 ml")
+        self.assertEqual(r["iguais"], ["capacidade_ml"])
+        self.assertEqual(r["conflitos"], [])
+
+    def test_4_pcs_vs_6_pecas_conflito_quantidade(self):
+        r = self._cmp("KIT QUEIJO E VINHO - 4 PÇS", "Kit Queijo E Vinho - 6 Peças")
+        self.assertEqual(r["conflitos"], ["pecas"])
+
+    def test_4_pcs_vs_4_pecas_igual(self):
+        r = self._cmp("Kit 4 PÇS", "Kit 4 peças")
+        self.assertEqual(r["iguais"], ["pecas"])
+        self.assertEqual(r["conflitos"], [])
+
+    def test_atributo_so_de_um_lado_e_nao_comparavel_nao_conflito(self):
+        r = self._cmp("Squeeze 500ml inox", "Squeeze inox")
+        self.assertEqual(r["conflitos"], [])
+        self.assertEqual(r["iguais"], [])
+        self.assertEqual(r["nao_comparaveis"], ["capacidade_ml"])
+
+    def test_numero_sem_unidade_nao_vira_atributo(self):
+        self.assertEqual(cmd.extrair_atributos("Caneca modelo 90395 azul 12 meses garantia"), {})
+        r = self._cmp("Kit modelo 300 edicao 4", "Kit modelo 900 edicao 8")
+        self.assertEqual(r["conflitos"], [])
+        self.assertEqual(r["iguais"], [])
+        self.assertEqual(r["nao_comparaveis"], [])
+
+    def test_dimensoes_mm_para_cm_e_ordenacao(self):
+        a = cmd.extrair_atributos("Suporte 32x14,5x5,5 mm (AxLxP)")
+        self.assertEqual(a["dimensoes_cm"], frozenset({(0.55, 1.45, 3.2)}))
+        r = self._cmp("Caixa 10x20 cm", "Caixa 20 x 10 cm")
+        self.assertEqual(r["iguais"], ["dimensoes_cm"])
+
+    def test_peso_kg_para_g(self):
+        r = self._cmp("Kit 147 g", "Kit 0,147 kg")
+        self.assertEqual(r["iguais"], ["peso_g"])
+
+    def test_formatar_atributos(self):
+        self.assertEqual(cmd.formatar_atributos({}), "(nenhum)")
+        self.assertEqual(
+            cmd.formatar_atributos(cmd.extrair_atributos("Kit 4 pçs 300ml")),
+            "capacidade=300ml, peças=4",
+        )
+
+
 class AuditoriaTests(TestCase):
     def setUp(self):
         self.instancia = Instancia.objects.create(nome="EKK Brindes")
@@ -435,6 +494,64 @@ class AuditoriaTests(TestCase):
         self._variacao("F-1", "Garrafa Térmica Inox 500ml", "96170010")
         self._tiny(1, "T-1", "Garrafa Termica Inox 500 ml", "96170010")
         self._tiny(2, "T-2", "Garrafa Térmica Inox 500 ml Preta", "96170010")
+
+        antes = self._snapshot()
+        self._rodar()
+        self.assertEqual(self._snapshot(), antes)
+
+    # -- seções 16–17: atributos numéricos na descrição ---------------
+
+    def test_secao_16_conta_conflitos_por_tipo(self):
+        # score alto dos dois, conflito de capacidade
+        self._variacao("F-1", "CANECA EM VIDRO - 300ML", "70139900")
+        self._tiny(1, "T-1", "Caneca em vidro 390ml", "70139900")
+        # score alto, conflito de peças
+        self._variacao("F-2", "KIT QUEIJO E VINHO - 4 PÇS", "82119200")
+        self._tiny(2, "T-2", "Kit Queijo E Vinho - 6 Pcs", "82119200")
+        # score alto, atributos iguais
+        self._variacao("F-3", "Squeeze Aluminio 750ml", "76151000")
+        self._tiny(3, "T-3", "Squeeze Aluminio 750 ml", "76151000")
+
+        saida = self._rodar()
+        s16 = _secao(saida, "16. Atributos numéricos")
+        self.assertEqual(self._contagem(s16, "Total de pares analisados"), 3)
+        self.assertEqual(self._contagem(s16, "Pares com pelo menos um atributo comparável"), 3)
+        self.assertEqual(self._contagem(s16, "com TODOS os comparáveis iguais"), 1)
+        self.assertEqual(self._contagem(s16, "com pelo menos um CONFLITO"), 2)
+        self.assertRegex(s16, r"capacidade\s+1")
+        self.assertRegex(s16, r"peças\s+1")
+
+    def test_secao_17_separa_alto_score_por_conflito(self):
+        self._variacao("F-1", "CANECA EM VIDRO - 300ML", "70139900")
+        self._tiny(1, "T-1", "Caneca em vidro 390ml", "70139900")
+        self._variacao("F-2", "Squeeze Aluminio 750ml", "76151000")
+        self._tiny(3, "T-3", "Squeeze Aluminio 750 ml", "76151000")
+
+        saida = self._rodar()
+        s17 = _secao(saida, "17. Candidatos com score textual")
+        self.assertIn("--- SEM conflito numérico detectado: 1 ---", s17)
+        self.assertIn("--- COM conflito numérico detectado: 1 ---", s17)
+        # o par com conflito mostra descrições, NCM, score, atributos e o conflito
+        self.assertIn("F-1  ->  T-1  (tiny_id 1)", s17)
+        self.assertIn("attrs forn .: capacidade=300ml", s17)
+        self.assertIn("attrs Tiny .: capacidade=390ml", s17)
+        self.assertIn("CONFLITO ...: capacidade", s17)
+
+    def test_ausencia_de_atributo_nao_e_conflito_na_auditoria(self):
+        self._variacao("F-1", "Garrafa Inox 500ml Premium", "96170010")
+        self._tiny(1, "T-1", "Garrafa Inox Premium", "96170010")  # Tiny sem capacidade
+
+        saida = self._rodar()
+        s16 = _secao(saida, "16. Atributos numéricos")
+        self.assertEqual(self._contagem(s16, "com pelo menos um CONFLITO"), 0)
+        self.assertEqual(self._contagem(s16, "Pares sem nenhum atributo comparável"), 1)
+        self.assertIn("CONFLITO ...: (nenhum)   (não comparável: capacidade)", saida)
+
+    def test_atributos_read_only(self):
+        self._variacao("F-1", "CANECA EM VIDRO - 300ML", "70139900")
+        self._tiny(1, "T-1", "Caneca em vidro 390ml", "70139900")
+        self._variacao("F-2", "Kit 4 pçs 32x14,5x5,5 mm", "82119200")
+        self._tiny(2, "T-2", "Kit 6 pcs 33x15x6 mm", "82119200")
 
         antes = self._snapshot()
         self._rodar()

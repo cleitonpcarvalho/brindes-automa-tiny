@@ -292,6 +292,63 @@ describe("FornecedorAcordeao", () => {
     expect(mutacao.mutate).toHaveBeenCalledTimes(1);
   });
 
+  it("clicar em 'Iniciar carga inicial' dispara a sincronização e NÃO abre o acordeão", () => {
+    render(
+      <FornecedorAcordeao
+        statusDetalhe={fornecedorDetalhe({ produtos_total: 0, ultima_execucao_em: null, ultima_execucao_status: null, ultima_execucao: null })}
+        credencial={CREDENCIAL_XBZ}
+        cadencia={CADENCIA_XBZ}
+        slug="loja-x"
+      />
+    );
+
+    expect(screen.getByRole("button", { name: "Expandir detalhes" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Iniciar carga inicial/ }));
+
+    const mutacao = vi.mocked(hooks.useSincronizarFornecedor).mock.results.at(-1)!.value;
+    expect(mutacao.mutate).toHaveBeenCalledTimes(1);
+    // o acordeão continua recolhido — o clique no botão não pode alternar o painel
+    expect(screen.getByRole("button", { name: "Expandir detalhes" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Token")).not.toBeInTheDocument();
+  });
+
+  it("regressão: clicar no botão DESABILITADO não abre/fecha o acordeão nem dispara a mutation", () => {
+    render(
+      <FornecedorAcordeao
+        statusDetalhe={fornecedorDetalhe({ cor: "nao_configurado", credencial_ativa: false, produtos_total: 0, ultima_execucao_em: null, ultima_execucao_status: null, ultima_execucao: null })}
+        credencial={{ ...CREDENCIAL_XBZ, ativo: false }}
+        cadencia={CADENCIA_XBZ}
+        slug="loja-x"
+      />
+    );
+
+    const botao = screen.getByRole("button", { name: /Iniciar carga inicial/ });
+    expect(botao).toBeDisabled();
+    fireEvent.click(botao);
+
+    const mutacao = vi.mocked(hooks.useSincronizarFornecedor).mock.results.at(-1)!.value;
+    expect(mutacao.mutate).not.toHaveBeenCalled();
+    // não pode ter aberto o acordeão (era esse o bug: o clique "atravessava" para o cabeçalho)
+    expect(screen.getByRole("button", { name: "Expandir detalhes" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Token")).not.toBeInTheDocument();
+  });
+
+  it("o resto do cabeçalho continua abrindo/fechando o acordeão", () => {
+    render(
+      <FornecedorAcordeao
+        statusDetalhe={fornecedorDetalhe({})}
+        credencial={CREDENCIAL_XBZ}
+        cadencia={CADENCIA_XBZ}
+        slug="loja-x"
+      />
+    );
+
+    fireEvent.click(screen.getByText("XBZ"))
+    expect(screen.getByRole("button", { name: "Recolher detalhes" })).toBeInTheDocument();
+    const mutacao = vi.mocked(hooks.useSincronizarFornecedor).mock.results.at(-1)!.value;
+    expect(mutacao.mutate).not.toHaveBeenCalled();
+  });
+
   it("mostra 'Processando…' e desabilita o botão enquanto a carga está rodando", () => {
     render(
       <FornecedorAcordeao

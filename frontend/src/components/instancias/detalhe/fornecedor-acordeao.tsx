@@ -78,21 +78,30 @@ export function FornecedorAcordeao({
         </div>
         <div className="flex items-center gap-4">
           <span className="text-caption-label text-muted-foreground">{descricao}</span>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={(event) => {
-              event.stopPropagation()
-              sincronizar.mutate()
-            }}
-            disabled={!statusDetalhe.credencial_ativa || sincronizar.isPending || rodando}
+          {/*
+            Envelope que isola os cliques do botão do onClick do cabeçalho (que
+            abre/fecha o acordeão). Precisa ser um elemento com área real: um
+            botão DESABILITADO tem `pointer-events: none` e, sem este envelope,
+            o clique "atravessava" para o cabeçalho e só alternava o acordeão.
+          */}
+          <span
+            className="inline-flex"
+            role="presentation"
+            onClick={(event) => event.stopPropagation()}
           >
-            <RefreshCw
-              size={14}
-              className={sincronizar.isPending || rodando ? "animate-spin" : undefined}
-            />
-            {rotuloBotao}
-          </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => sincronizar.mutate()}
+              disabled={!statusDetalhe.credencial_ativa || sincronizar.isPending || rodando}
+            >
+              <RefreshCw
+                size={14}
+                className={sincronizar.isPending || rodando ? "animate-spin" : undefined}
+              />
+              {rotuloBotao}
+            </Button>
+          </span>
           <button
             type="button"
             aria-label={expandido ? "Recolher detalhes" : "Expandir detalhes"}

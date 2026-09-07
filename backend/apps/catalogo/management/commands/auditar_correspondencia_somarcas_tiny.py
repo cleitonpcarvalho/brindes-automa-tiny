@@ -50,8 +50,19 @@ g/kg — ver `extrair_atributos`) e marca CONFLITO quando os dois lados
 informam o mesmo tipo de atributo com valores diferentes ("300ml" x
 "390ml", "4 pçs" x "6 pçs"). Ausência de um lado é "não comparável",
 nunca conflito. Continua exploratório: nada vira descarte automático.
+
+Seção 18: agrupa os resultados da análise de similaridade pelo tiny_id
+do MELHOR candidato e destaca as COLISÕES (2+ variações da Só Marcas
+apontando o mesmo produto Tiny). Para as colisões de alta confiança
+(score >= corte em todas), despeja lado a lado tudo que existe
+localmente — inclusive o payload bruto real da Só Marcas
+(`titulo`, `descricao`, `dimensoes_do_produto`, `produtos_similares`,
+preços, etc.) — e classifica APENAS PARA AUDITORIA em POSSÍVEL VARIAÇÃO
+DO MESMO PRODUTO / PROVAVELMENTE PRODUTOS DIFERENTES / DADOS
+INSUFICIENTES, com motivos objetivos. Nada disso vira regra de matching.
 """
 
+import itertools
 import re
 import unicodedata
 from collections import Counter, defaultdict
@@ -75,6 +86,10 @@ TOP_NCM_PADRAO = 20
 # matching vem depois, olhando a distribuição real.
 SCORE_PERIGO_PADRAO = 0.90  # score alto o bastante para "quase igual"
 GAP_PERIGO_PADRAO = 0.05  # distância pequena entre 1º e 2º = candidato não se destaca
+
+# Caso real que motivou a seção 18 — a subseção de detalhe roda para estas
+# SKUs se elas existirem na instância. Configurável por --detalhe-skus.
+DETALHE_SKUS_PADRAO = "KT-9032Q,KT-9034S"
 
 # Faixas de score para o histograma da seção 13 (limite inferior, rótulo).
 FAIXAS_SCORE = (
@@ -376,6 +391,123 @@ def formatar_atributos(atributos: dict) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# Seção 18: colisões de melhor candidato Tiny (2+ variações -> mesmo tiny_id)
+# ---------------------------------------------------------------------------
+#
+# Campos REAIS do payload bruto da Só Marcas (confirmados em
+# samples/somarcas/produtos_*.json e no que `apps/fornecedores/somarcas.py`
+# de fato lê). Só isto é lido aqui — nada é inventado. Chave -> rótulo.
+CAMPOS_SOMARCAS_UTEIS = (
+    ("titulo", "título (nome original)"),
+    ("descricao", "descrição livre"),
+    ("ncm", "NCM"),
+    ("estoque", "estoque"),
+    ("dimensoes_do_produto", "dimensões do produto"),
+    ("dimensoes_da_embalagem", "dimensões da embalagem"),
+    ("peso_da_embalagem", "peso da embalagem"),
+    ("embalagem_do_produto", "embalagem"),
+    ("tipo_gravacao", "tipo de gravação"),
+    ("garantia_do_produto", "garantia"),
+    ("matriz_de_categorias", "categorias"),
+    ("produtos_similares", "produtos similares (família)"),
+    ("quantidade_minima_sugerida", "qtd mínima sugerida"),
+    ("quantidade_calculo_preco", "qtd base do cálculo de preço"),
+    ("ipi", "IPI (%)"),
+    ("preco_sem_gravacao_sem_impostos", "preço s/ gravação s/ impostos"),
+    ("preco_com_gravacao_sem_impostos", "preço c/ gravação s/ impostos"),
+    ("preco_sem_gravacao_com_impostos", "preço s/ gravação c/ impostos"),
+    ("preco_com_gravacao_com_impostos", "preço c/ gravação c/ impostos"),
+    ("produto_ativo", "ativo no fornecedor"),
+    ("data_ultima_atualizacao", "última atualização no fornecedor"),
+)
+
+# Campos do ProdutoTiny úteis para diferenciar (todos já armazenados localmente).
+CAMPOS_TINY_UTEIS = (
+    ("sku", "SKU"),
+    ("descricao", "descrição"),
+    ("descricao_complementar", "descrição complementar"),
+    ("ncm", "NCM"),
+    ("gtin", "GTIN"),
+    ("marca", "marca"),
+    ("categoria", "categoria"),
+    ("unidade", "unidade"),
+    ("situacao", "situação"),
+    ("preco", "preço"),
+    ("preco_custo", "preço de custo"),
+    ("preco_promocional", "preço promocional"),
+    ("estoque_quantidade", "estoque"),
+    ("largura", "largura (cm)"),
+    ("altura", "altura (cm)"),
+    ("comprimento", "comprimento (cm)"),
+    ("diametro", "diâmetro (cm)"),
+    ("peso_liquido", "peso líquido (kg)"),
+    ("peso_bruto", "peso bruto (kg)"),
+    ("tem_detalhe", "detalhe do Tiny já buscado"),
+)
+
+
+def _texto_atributos_somarcas(variacao) -> str:
+    """
+    Junta os campos de texto da Só Marcas onde um atributo numérico pode
+    aparecer (nome/título e descrição livre e a string de dimensões), para
+    `extrair_atributos` ter o máximo de contexto REAL — sem inventar nada.
+    """
+    pb = variacao.payload_bruto or {}
+    partes = [variacao.nome or "", (variacao.produto.nome if variacao.produto_id else "")]
+    for chave in ("titulo", "descricao", "dimensoes_do_produto"):
+        valor = pb.get(chave)
+        if isinstance(valor, str):
+            partes.append(valor)
+    return " \n ".join(p for p in partes if p)
+
+
+def _codigos_similares_somarcas(variacao) -> set:
+    """
+    `produtos_similares` da Só Marcas é uma string de exibição, ex.:
+      ";AS-00611|#333b3b|3459|arquivo.webp|GARRAFA ... PRETO;AS-00610|#FFFFFF|..."
+    Cada bloco separado por ";" começa com o código do irmão. Devolve o
+    conjunto de códigos citados, normalizados por `normalizar_sku`. NÃO
+    inventa relação — só lê o que o fornecedor mandou.
+    """
+    pb = variacao.payload_bruto or {}
+    bruto = pb.get("produtos_similares")
+    if not isinstance(bruto, str) or not bruto.strip():
+        return set()
+    codigos = set()
+    for bloco in bruto.split(";"):
+        bloco = bloco.strip()
+        if not bloco:
+            continue
+        primeiro = bloco.split("|", 1)[0].strip()
+        if primeiro:
+            codigos.add(normalizar_sku(primeiro))
+    return codigos
+
+
+def _campos_somarcas(variacao) -> list:
+    """(rótulo, valor) para os campos REAIS presentes no payload da Só Marcas."""
+    pb = variacao.payload_bruto or {}
+    linhas = []
+    for chave, rotulo in CAMPOS_SOMARCAS_UTEIS:
+        if chave in pb and pb[chave] not in (None, "", [], {}):
+            linhas.append((rotulo, pb[chave]))
+    # `atributos` normalizados que o importador guardou na Variacao
+    for chave, valor in (variacao.atributos or {}).items():
+        if valor not in (None, "", [], {}):
+            linhas.append((f"atributos.{chave}", valor))
+    return linhas
+
+
+def _campos_tiny(produto_tiny) -> list:
+    linhas = []
+    for chave, rotulo in CAMPOS_TINY_UTEIS:
+        valor = getattr(produto_tiny, chave, None)
+        if valor not in (None, "", [], {}):
+            linhas.append((rotulo, valor))
+    return linhas
+
+
 class Command(BaseCommand):
     help = (
         "Auditoria SOMENTE LEITURA: mede a correspondência exata entre o espelho "
@@ -433,6 +565,12 @@ class Command(BaseCommand):
             help="Processa no máximo N variações não identificadas na análise de "
             "similaridade (0 = todas). Útil para uma passada rápida.",
         )
+        parser.add_argument(
+            "--detalhe-skus",
+            default=DETALHE_SKUS_PADRAO,
+            help="Seção 18: SKUs da Só Marcas (separadas por vírgula) para o dump "
+            f"campo a campo lado a lado (padrão: {DETALHE_SKUS_PADRAO}).",
+        )
 
     def handle(self, *args, **options):
         instancia = self._obter_instancia(options["instancia_slug"])
@@ -443,6 +581,7 @@ class Command(BaseCommand):
         gap_perigo = options["gap_perigo"]
         limite_sim = max(0, options["limite_sim"])
         top_ncm = max(0, options["top_ncm"])
+        detalhe_skus = [s.strip() for s in (options["detalhe_skus"] or "").split(",") if s.strip()]
 
         variacoes = list(
             Variacao.objects.filter(
@@ -529,6 +668,7 @@ class Command(BaseCommand):
             gap_perigo=gap_perigo,
             limite=limite_sim,
         )
+        colisoes = self._agregar_colisoes(similaridade["resultados"], score_perigo)
 
         # --- impressão ---------------------------------------------------
         w = self.stdout.write
@@ -574,6 +714,11 @@ class Command(BaseCommand):
         self._imprimir_secao_sku(sku, tamanho_amostra_sku)
         w("")
         self._imprimir_secao_similaridade(similaridade, tamanho_amostra_sim)
+        w("")
+        self._imprimir_secao_colisoes(
+            colisoes, similaridade, score_perigo, tamanho_amostra_sim,
+            variacoes, produtos_tiny, detalhe_skus,
+        )
 
     # -- seção 11: regra de prefixo EK/EKK no SKU ---------------------
 
@@ -1014,6 +1159,258 @@ class Command(BaseCommand):
         if getattr(obj, "peso_liquido", None) is not None:
             partes.append(f"{obj.peso_liquido:g}kg líq")
         return " ".join(partes) or "(sem dimensões)"
+
+    # -- seção 18: colisões de melhor candidato Tiny -----------------
+
+    @staticmethod
+    def _fmt(valor, limite=400):
+        texto = valor if isinstance(valor, str) else repr(valor)
+        texto = " ".join(texto.split())
+        return texto if len(texto) <= limite else texto[:limite] + " …"
+
+    @staticmethod
+    def _agregar_colisoes(resultados, score_perigo):
+        """
+        Agrupa os resultados da análise de similaridade pelo tiny_id do
+        MELHOR candidato. Colisão = 2+ variações distintas da Só Marcas com
+        o mesmo tiny_id como melhor candidato. Só leitura, só memória.
+        """
+        por_tiny = defaultdict(list)
+        for r in resultados:
+            por_tiny[r["melhor"].tiny_id].append(r)
+
+        grupos = []
+        for tiny_id, itens in por_tiny.items():
+            if len({rr["variacao"].pk for rr in itens}) < 2:
+                continue
+            itens = sorted(itens, key=lambda rr: (rr["variacao"].sku, rr["variacao"].pk))
+            grupos.append(
+                {
+                    "tiny_id": tiny_id,
+                    "tiny": itens[0]["melhor"],
+                    "itens": itens,
+                    "alta_confianca": all(rr["s1"] >= score_perigo for rr in itens),
+                    "tem_conflito_numerico": any(rr["attrs_conflitos"] for rr in itens),
+                }
+            )
+        grupos.sort(
+            key=lambda g: (-len(g["itens"]), -max(rr["s1"] for rr in g["itens"]), g["tiny_id"])
+        )
+
+        alta = [g for g in grupos if g["alta_confianca"]]
+        return {
+            "grupos": grupos,
+            "total_tiny_colidido": len(grupos),
+            "total_variacoes": sum(len(g["itens"]) for g in grupos),
+            "distribuicao": Counter(len(g["itens"]) for g in grupos),
+            "alta_confianca": alta,
+            "alta_sem_conflito": [g for g in alta if not g["tem_conflito_numerico"]],
+            "alta_com_conflito": [g for g in alta if g["tem_conflito_numerico"]],
+            "score_perigo": score_perigo,
+        }
+
+    def _classificar_colisao(self, grupo):
+        """
+        Classifica uma colisão SÓ PARA AUDITORIA. Conservador (item 11):
+        SKU/descrição/NCM isolados não decidem nada; ausência de dado não é
+        igualdade.
+
+          - conflito numérico objetivo entre as descrições das variações do
+            fornecedor            -> PROVAVELMENTE PRODUTOS DIFERENTES
+          - o fornecedor lista as SKUs como família em `produtos_similares`
+                                  -> POSSÍVEL VARIAÇÃO DO MESMO PRODUTO
+          - nenhum dos dois       -> DADOS INSUFICIENTES
+        """
+        variacoes = [rr["variacao"] for rr in grupo["itens"]]
+        atributos = {
+            v.sku: extrair_atributos(_texto_atributos_somarcas(v)) for v in variacoes
+        }
+
+        conflitos_forn = set()
+        for a, b in itertools.combinations(variacoes, 2):
+            conflitos_forn |= set(comparar_atributos(atributos[a.sku], atributos[b.sku])["conflitos"])
+
+        codigos = {normalizar_sku(v.sku) for v in variacoes}
+        similares = {v.sku: _codigos_similares_somarcas(v) for v in variacoes}
+        todas_se_referenciam = bool(any(similares.values())) and all(
+            (codigos - {normalizar_sku(v.sku)}).issubset(similares[v.sku]) for v in variacoes
+        )
+        parcialmente_referenciam = any(
+            (codigos - {normalizar_sku(v.sku)}) & similares[v.sku] for v in variacoes
+        )
+
+        descr_norm = {normalizar_descricao(v.nome or v.produto.nome) for v in variacoes}
+        ncm_norm = {normalizar_ncm(v.ncm) for v in variacoes}
+        dims_raw = {
+            (v.payload_bruto or {}).get("dimensoes_do_produto")
+            for v in variacoes
+        } - {None, ""}
+        precos = {v.preco for v in variacoes}
+
+        motivos = []
+        if conflitos_forn:
+            classificacao = "PROVAVELMENTE PRODUTOS DIFERENTES"
+            motivos.append(
+                "atributo numérico divergente entre as descrições do fornecedor: "
+                + ", ".join(sorted(ATRIBUTOS_ROTULO[c] for c in conflitos_forn))
+            )
+        elif todas_se_referenciam:
+            classificacao = "POSSÍVEL VARIAÇÃO DO MESMO PRODUTO"
+            motivos.append(
+                "o próprio fornecedor lista essas SKUs como similares/variações "
+                "entre si (campo produtos_similares)"
+            )
+            if len(descr_norm) == 1:
+                motivos.append("descrição normalizada idêntica entre as variações")
+            if len(ncm_norm) == 1:
+                motivos.append("mesmo NCM")
+        else:
+            classificacao = "DADOS INSUFICIENTES"
+            motivos.append(
+                "descrição normalizada idêntica — mas isso sozinho não prova mesmo produto"
+                if len(descr_norm) == 1
+                else "descrições normalizadas diferentes entre as variações do fornecedor"
+            )
+            motivos.append(
+                "há referência PARCIAL em produtos_similares (nem todas as SKUs se citam)"
+                if parcialmente_referenciam
+                else "nenhuma referência de família (produtos_similares) liga essas SKUs"
+            )
+            if not any(atributos.values()):
+                motivos.append(
+                    "nenhum atributo numérico extraível das descrições do fornecedor"
+                )
+            if len(dims_raw) > 1:
+                motivos.append(f"campo 'dimensoes_do_produto' difere: {sorted(dims_raw)}")
+            if len(precos) > 1:
+                motivos.append(
+                    "preços diferentes no fornecedor: "
+                    + ", ".join(sorted(f"{p:g}" for p in precos))
+                )
+        return classificacao, motivos, atributos
+
+    def _imprimir_secao_colisoes(
+        self, col, sim, score_perigo, tamanho_amostra, variacoes, produtos_tiny, detalhe_skus
+    ):
+        w = self.stdout.write
+        w("== 18. Colisões de melhor candidato Tiny (2+ variações -> mesmo tiny_id) — AUDITORIA ==")
+        w("  Base: a análise de similaridade (seções 13–15), agrupada pelo tiny_id do melhor candidato.")
+        w("  Exploratório — NÃO é regra de matching e NÃO descarta nada.")
+        w(f"  a. Produtos Tiny que receberam >1 variação como melhor candidato . {col['total_tiny_colidido']}")
+        w(f"  b. Variações Só Marcas envolvidas nessas colisões ............... {col['total_variacoes']}")
+        w("  c. Distribuição por quantidade de variações apontando o mesmo Tiny:")
+        if not col["distribuicao"]:
+            w("     (nenhuma colisão)")
+        for tamanho, qtd in sorted(col["distribuicao"].items()):
+            w(f"     {tamanho} variações -> mesmo Tiny .................. {qtd}")
+        w(f"  d. Colisões de alta confiança (score >= {score_perigo} em TODAS) . {len(col['alta_confianca'])}")
+        w("     ('conflito numérico' aqui = variação × seu melhor Tiny, como nas seções 16–17)")
+        w(f"  e.   ...sem nenhum conflito numérico na descrição .............. {len(col['alta_sem_conflito'])}")
+        w(f"  f.   ...com algum conflito numérico na descrição .............. {len(col['alta_com_conflito'])}")
+        w("")
+        w(f"== 18.1 Detalhe das colisões de alta confiança (até {tamanho_amostra}) ==")
+        if not col["alta_confianca"]:
+            w("  (nenhuma)")
+        for grupo in col["alta_confianca"][:tamanho_amostra]:
+            self._imprimir_grupo_colisao(grupo)
+        if len(col["alta_confianca"]) > tamanho_amostra:
+            w(f"  ... (+{len(col['alta_confianca']) - tamanho_amostra} colisões não exibidas; use --amostra-sim)")
+        w("")
+        self._imprimir_detalhe_especifico(detalhe_skus, sim, variacoes, produtos_tiny)
+
+    def _imprimir_grupo_colisao(self, grupo):
+        w = self.stdout.write
+        tiny = grupo["tiny"]
+        classificacao, motivos, atributos = self._classificar_colisao(grupo)
+        w("")
+        w(f"  ### tiny_id {tiny.tiny_id} <- {len(grupo['itens'])} variações Só Marcas ###")
+        w("  -- lado TINY --")
+        for rotulo, valor in _campos_tiny(tiny):
+            w(f"     {rotulo:<26}: {self._fmt(valor)}")
+        w(f"     {'dimensões (modelo)':<26}: {self._dimensoes(tiny)}")
+        for rr in grupo["itens"]:
+            v = rr["variacao"]
+            s2 = "-" if rr["s2"] is None else f"{rr['s2']:.4f}"
+            gap = "-" if rr["gap"] is None else f"{rr['gap']:.4f}"
+            conflitos = ", ".join(ATRIBUTOS_ROTULO[c] for c in rr["attrs_conflitos"]) or "(nenhum)"
+            w(f"  -- lado FORNECEDOR: {v.sku} --")
+            w(f"     {'descrição':<26}: {self._fmt(v.nome or v.produto.nome)}")
+            w(f"     {'NCM':<26}: {v.ncm!r}")
+            w(f"     {'preço':<26}: {v.preco}")
+            w(f"     {'estoque':<26}: {v.estoque}")
+            w(f"     {'dimensões (modelo)':<26}: {self._dimensoes(v)}")
+            w(f"     {'atributos numéricos':<26}: {formatar_atributos(atributos[v.sku])}")
+            for rotulo, valor in _campos_somarcas(v):
+                w(f"     {rotulo:<26}: {self._fmt(valor)}")
+            w(
+                f"     {'matching':<26}: score {rr['s1']:.4f}  2º {s2}  gap {gap}  "
+                f"conflitos: {conflitos}  candidatos mesmo NCM: {rr['n_candidatos']}"
+            )
+        w(f"  >> CLASSIFICAÇÃO (só auditoria): {classificacao}")
+        for motivo in motivos:
+            w(f"     - {motivo}")
+
+    def _imprimir_detalhe_especifico(self, detalhe_skus, sim, variacoes, produtos_tiny):
+        w = self.stdout.write
+        titulo = " × ".join(detalhe_skus) if detalhe_skus else "(sem SKUs)"
+        w(f"== 18.2 Detalhe {titulo} (dump de todos os campos locais úteis) ==")
+        if not detalhe_skus:
+            w("  (--detalhe-skus vazio)")
+            return
+
+        por_sku = {v.sku: v for v in variacoes}
+        achadas = [(s, por_sku[s]) for s in detalhe_skus if s in por_sku]
+        faltando = [s for s in detalhe_skus if s not in por_sku]
+        if faltando:
+            w(f"  SKUs não encontradas nesta instância (fornecedor somarcas): {faltando}")
+        if not achadas:
+            return
+
+        resultado_por_pk = {r["variacao"].pk: r for r in sim["resultados"]}
+        tiny_alvos = {}
+        for _s, v in achadas:
+            w("")
+            w(f"  --- Só Marcas: {v.sku}  (Variacao id {v.pk} · Produto {v.produto.codigo_pai}) ---")
+            for campo in (
+                "nome", "ncm", "preco", "estoque", "cor", "tamanho", "capacidade",
+                "largura", "altura", "comprimento", "diametro",
+                "peso_liquido", "peso_bruto", "status", "tiny_id",
+            ):
+                w(f"     Variacao.{campo:<16}: {self._fmt(getattr(v, campo))}")
+            w(f"     Produto.nome          : {self._fmt(v.produto.nome)}")
+            w(f"     Produto.descricao     : {self._fmt(v.produto.descricao)}")
+            w(f"     Produto.categorias    : {self._fmt(v.produto.categorias)}")
+            w(f"     Variacao.atributos    : {self._fmt(v.atributos)}")
+            w(f"     produtos_similares(cod): {sorted(_codigos_similares_somarcas(v))}")
+            w("     payload_bruto (Só Marcas, cru):")
+            for chave in sorted((v.payload_bruto or {})):
+                w(f"       {chave:<32}: {self._fmt((v.payload_bruto or {})[chave])}")
+            r = resultado_por_pk.get(v.pk)
+            if r:
+                tiny_alvos[r["melhor"].tiny_id] = r["melhor"]
+                gap = "-" if r["gap"] is None else f"{r['gap']:.4f}"
+                w(
+                    f"     >> melhor candidato Tiny: tiny_id {r['melhor'].tiny_id} "
+                    f"(score {r['s1']:.4f}, gap {gap})"
+                )
+            else:
+                w("     >> sem melhor candidato calculado (não entrou na análise de similaridade)")
+
+        for tiny_id, tiny in tiny_alvos.items():
+            w("")
+            w(f"  --- Tiny: tiny_id {tiny_id} (SKU {tiny.sku!r}) ---")
+            for campo in (
+                "tiny_id", "sku", "descricao", "descricao_complementar", "ncm", "gtin",
+                "marca", "marca_id", "categoria", "unidade", "origem", "situacao", "tipo",
+                "preco", "preco_custo", "preco_promocional", "estoque_quantidade",
+                "largura", "altura", "comprimento", "diametro", "peso_liquido", "peso_bruto",
+                "data_criacao_tiny", "data_alteracao_tiny", "tem_detalhe",
+            ):
+                w(f"     ProdutoTiny.{campo:<22}: {self._fmt(getattr(tiny, campo, None))}")
+            w("     payload_bruto (Tiny, cru):")
+            pb = tiny.payload_bruto or {}
+            for chave in sorted(pb):
+                w(f"       {chave:<20}: {self._fmt(pb[chave])}")
 
     # -- helpers -------------------------------------------------------
 

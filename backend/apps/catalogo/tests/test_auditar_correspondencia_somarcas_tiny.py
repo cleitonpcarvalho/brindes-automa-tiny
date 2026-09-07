@@ -205,23 +205,33 @@ class AuditoriaTests(TestCase):
             instancia=self.instancia, fornecedor=Fornecedor.XBZ, codigo_pai="X", nome="x"
         )
 
-    def _variacao(self, sku, nome, ncm, produto=None):
+    def _variacao(self, sku, nome, ncm, produto=None, preco="10.00", estoque=5, payload_bruto=None):
         return Variacao.objects.create(
             produto=produto or self.produto,
             sku=sku,
             nome=nome,
             ncm=ncm,
-            preco=Decimal("10.00"),
-            estoque=5,
+            preco=Decimal(preco),
+            estoque=estoque,
+            payload_bruto=payload_bruto or {},
         )
 
-    def _tiny(self, tiny_id, sku, descricao, ncm, instancia=None):
+    def _produto_somarcas(self, codigo_pai, nome="pai"):
+        return Produto.objects.create(
+            instancia=self.instancia,
+            fornecedor=Fornecedor.SOMARCAS,
+            codigo_pai=codigo_pai,
+            nome=nome,
+        )
+
+    def _tiny(self, tiny_id, sku, descricao, ncm, instancia=None, **extra):
         return ProdutoTiny.objects.create(
             instancia=instancia or self.instancia,
             tiny_id=tiny_id,
             sku=sku,
             descricao=descricao,
             ncm=ncm,
+            **extra,
         )
 
     def _rodar(self, *args):
@@ -556,6 +566,111 @@ class AuditoriaTests(TestCase):
         antes = self._snapshot()
         self._rodar()
         self.assertEqual(self._snapshot(), antes)
+
+    # -- seção 18: colisões de melhor candidato Tiny -------------------
+
+    def _colisao_familia(self):
+        """Duas SKUs Só Marcas que o próprio fornecedor liga como família,
+        descrições próximas mas não exatas, apontando ao mesmo Tiny."""
+        pa = self._produto_somarcas("KT-9032Q")
+        pb = self._produto_somarcas("KT-9034S")
+        sim_a = ";KT-9034S|#000|1|f.webp;KT-9032Q|#fff|2|g.webp"
+        sim_b = ";KT-9032Q|#fff|2|g.webp;KT-9034S|#000|1|f.webp"
+        self._variacao(
+            "KT-9032Q", "KIT DE QUEIJO E VINHO 7 PCS", "82119200", produto=pa, preco="120.00",
+            payload_bruto={"codigo": "KT-9032Q", "titulo": "KIT DE QUEIJO E VINHO 7 PCS",
+                           "descricao": "Kit em bambu com 7 pçs.", "dimensoes_do_produto": "35x25cm",
+                           "produtos_similares": sim_a},
+        )
+        self._variacao(
+            "KT-9034S", "KIT QUEIJO E VINHO C/ 7 PCS", "82119200", produto=pb, preco="135.00",
+            payload_bruto={"codigo": "KT-9034S", "titulo": "KIT QUEIJO E VINHO C/ 7 PCS",
+                           "descricao": "Kit em bambu com 7 pçs.", "dimensoes_do_produto": "35x25cm",
+                           "produtos_similares": sim_b},
+        )
+        self._tiny(90020, "EK90020", "Kit Queijo e Vinho 7 Pcs", "82119200",
+                   gtin="789", marca="EKK", preco=Decimal("199.90"), estoque_quantidade=3)
+
+    def test_duas_skus_ao_mesmo_tiny_sao_colisao_e_agrupam(self):
+        self._colisao_familia()
+        saida = self._rodar()
+        s18 = _secao(saida, "18. Colisões de melhor candidato Tiny")
+        self.assertEqual(
+            self._contagem(s18, "Produtos Tiny que receberam >1 variação como melhor candidato"), 1
+        )
+        self.assertEqual(self._contagem(s18, "Variações Só Marcas envolvidas nessas colisões"), 2)
+        self.assertIn("2 variações -> mesmo Tiny", s18)
+
+    def test_colisao_de_familia_classifica_como_possivel_variacao(self):
+        self._colisao_familia()
+        s181 = _secao(self._rodar("--score-perigo", "0.1"), "18.1 Detalhe das colisões")
+        self.assertIn("### tiny_id 90020 <- 2 variações", s181)
+        self.assertIn("CLASSIFICAÇÃO (só auditoria): POSSÍVEL VARIAÇÃO DO MESMO PRODUTO", s181)
+        self.assertIn("produtos_similares", s181)
+        # lado a lado: as duas SKUs do fornecedor + o Tiny
+        self.assertIn("lado FORNECEDOR: KT-9032Q", s181)
+        self.assertIn("lado FORNECEDOR: KT-9034S", s181)
+        self.assertIn("lado TINY", s181)
+
+    def test_colisao_com_conflito_numerico_classifica_como_produtos_diferentes(self):
+        pa = self._produto_somarcas("G-300")
+        pb = self._produto_somarcas("G-500")
+        self._variacao("G-300", "GARRAFA TERMICA PRETA 300 ML", "96170010", produto=pa,
+                       payload_bruto={"titulo": "GARRAFA TERMICA PRETA 300 ML"})
+        self._variacao("G-500", "GARRAFA TERMICA PRETA 500 ML", "96170010", produto=pb,
+                       payload_bruto={"titulo": "GARRAFA TERMICA PRETA 500 ML"})
+        # Tiny com capacidade -> conflito forn×Tiny em AMBAS as variações
+        self._tiny(700, "T-700", "Garrafa Termica Preta 400ml", "96170010")
+
+        saida = self._rodar("--score-perigo", "0.1")
+        s181 = _secao(saida, "18.1 Detalhe das colisões")
+        self.assertIn("CLASSIFICAÇÃO (só auditoria): PROVAVELMENTE PRODUTOS DIFERENTES", s181)
+        self.assertIn("atributo numérico divergente entre as descrições do fornecedor: capacidade", s181)
+        s18 = _secao(saida, "18. Colisões de melhor candidato Tiny")
+        self.assertEqual(self._contagem(s18, "com algum conflito numérico na descrição"), 1)
+        self.assertEqual(self._contagem(s18, "sem nenhum conflito numérico na descrição"), 0)
+
+    def test_colisao_sem_pistas_classifica_como_dados_insuficientes(self):
+        pa = self._produto_somarcas("C-1")
+        pb = self._produto_somarcas("C-2")
+        self._variacao("C-1", "CANECA LISA", "69120000", produto=pa)
+        self._variacao("C-2", "CANECA LISA", "69120000", produto=pb)
+        self._tiny(1, "T-1", "Caneca Lisa Branca", "69120000")
+
+        s181 = _secao(self._rodar("--score-perigo", "0.1"), "18.1 Detalhe das colisões")
+        self.assertIn("CLASSIFICAÇÃO (só auditoria): DADOS INSUFICIENTES", s181)
+        self.assertIn("nenhuma referência de família", s181)
+
+    def test_detalhe_especifico_18_2_dump_dos_campos_locais(self):
+        self._colisao_familia()
+        s182 = _secao(self._rodar(), "18.2 Detalhe KT-9032Q × KT-9034S")
+        self.assertIn("Só Marcas: KT-9032Q", s182)
+        self.assertIn("Só Marcas: KT-9034S", s182)
+        self.assertIn("payload_bruto (Só Marcas, cru)", s182)
+        self.assertIn("produtos_similares", s182)
+        self.assertIn("Tiny: tiny_id 90020", s182)
+        self.assertIn("ProdutoTiny.gtin", s182)
+
+    def test_detalhe_especifico_18_2_sku_inexistente(self):
+        self._colisao_familia()
+        s182 = _secao(self._rodar("--detalhe-skus", "NAO-EXISTE"), "18.2 Detalhe")
+        self.assertIn("não encontradas nesta instância", s182)
+
+    def test_colisao_read_only(self):
+        self._colisao_familia()
+        antes = self._snapshot()
+        self._rodar("--score-perigo", "0.1")
+        self.assertEqual(self._snapshot(), antes)
+
+    def test_secoes_anteriores_preservadas_com_secao_18(self):
+        self._colisao_familia()
+        saida = self._rodar()
+        for marcador in (
+            "== Totais ==", "== 8. NCMs", "== 9. Amostra", "== 11. Regra histórica de SKU",
+            "== 13. Similaridade de descrição", "== 16. Atributos numéricos",
+            "== 17. Candidatos com score textual", "== 18. Colisões de melhor candidato Tiny",
+        ):
+            self.assertIn(marcador, saida)
 
     def _snapshot(self):
         return {

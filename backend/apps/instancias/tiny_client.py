@@ -25,6 +25,17 @@ class TinyApiError(Exception):
     """Erro definitivo ao chamar a API do Tiny (ex.: 429 esgotado)."""
 
 
+class TinyEscritaBloqueadaError(TinyApiError):
+    """
+    O cliente foi criado em modo somente-leitura e algo tentou um método de
+    escrita (POST/PUT/PATCH/DELETE). É uma trava de segurança do --dry-run,
+    não um erro da API.
+    """
+
+
+_METODOS_DE_ESCRITA = {"POST", "PUT", "PATCH", "DELETE"}
+
+
 class TinyApiValidationError(TinyApiError):
     """A API do Tiny recusou a requisição (ex.: 400) com um motivo estruturado."""
 
@@ -53,11 +64,15 @@ class TinyApiClient:
     # reconfirmada aqui, no nosso código, sobre o campo `sku` do item.
     LIMITE_BUSCA_SKU = 20
 
-    def __init__(self, instancia, base_url=None, sleep_fn=time.sleep, limiter=None):
+    def __init__(self, instancia, base_url=None, sleep_fn=time.sleep, limiter=None, somente_leitura=False):
         self.instancia = instancia
         self.base_url = base_url if base_url is not None else _base_url_padrao()
         self._sleep = sleep_fn
         self._limiter = limiter or RateLimiterCompartilhado(instancia.slug, sleep_fn=sleep_fn)
+        # Modo --dry-run: GET liberado, qualquer escrita levanta antes de sair
+        # da máquina. Também não persiste `rate_limit_por_minuto` (o dry-run
+        # não deve alterar NENHUM dado local).
+        self.somente_leitura = somente_leitura
 
     # -- API pública de baixo nível ----------------------------------------
 
@@ -66,6 +81,9 @@ class TinyApiClient:
 
     def post(self, caminho: str, **kwargs) -> requests.Response:
         return self._request("POST", caminho, **kwargs)
+
+    def put(self, caminho: str, **kwargs) -> requests.Response:
+        return self._request("PUT", caminho, **kwargs)
 
     # -- API de domínio (produtos/estoque) ----------------------------------
 
@@ -114,8 +132,32 @@ class TinyApiClient:
         self._levantar_se_erro(resposta)
         return resposta.json()
 
+    def atualizar_preco_venda(self, id_produto, *, preco) -> dict:
+        """
+        Atualiza SOMENTE o preço de VENDA de um produto, pelo endpoint
+        específico da API v3: `PUT /produtos/{idProduto}/preco`.
+
+        Envia apenas `{"preco": <valor>}` — o preço do fornecedor sem margem
+        (regra do cliente nº 4). NÃO mexe em descrição/NCM/dimensões e NÃO é
+        o `precoUnitario` de um movimento de estoque (que é custo de
+        balanço, ver `atualizar_estoque`).
+        """
+        resposta = self.put(f"/produtos/{id_produto}/preco", json={"preco": float(preco)})
+        self._levantar_se_erro(resposta)
+        return resposta.json()
+
     def atualizar_estoque(self, id_produto, *, quantidade, preco_unitario) -> dict:
-        """POST /estoque/{idProduto}, tipo Balanço (define o saldo absoluto, não um delta)."""
+        """
+        POST /estoque/{idProduto}, tipo Balanço (define o saldo absoluto, não
+        um delta).
+
+        `precoUnitario` aqui é o CUSTO do lançamento de balanço exigido por
+        esse endpoint — NÃO é o preço de venda do produto (`precos.preco`,
+        que se ajusta com `atualizar_preco_venda` / comando
+        `sincronizar_preco_tiny`). Mandamos o preço do fornecedor sem margem
+        nos dois lugares porque não há outro "custo" disponível, mas são
+        campos e semânticas diferentes.
+        """
         resposta = self.post(
             f"/estoque/{id_produto}",
             json={
@@ -142,6 +184,10 @@ class TinyApiClient:
     # -- mecânica interna ----------------------------------------------------
 
     def _request(self, metodo: str, caminho: str, **kwargs) -> requests.Response:
+        if self.somente_leitura and metodo in _METODOS_DE_ESCRITA:
+            raise TinyEscritaBloqueadaError(
+                f"Cliente em modo somente-leitura (--dry-run): {metodo} {caminho} bloqueado."
+            )
         if not self.base_url:
             raise ImproperlyConfigured("TINY_API_BASE_URL não configurado.")
 
@@ -169,6 +215,8 @@ class TinyApiClient:
             return resposta
 
     def _atualizar_limite_da_conta(self, resposta: requests.Response):
+        if self.somente_leitura:
+            return  # dry-run não grava nada local, nem esse cache
         valor = resposta.headers.get("x-limit-api")
         if not valor:
             return

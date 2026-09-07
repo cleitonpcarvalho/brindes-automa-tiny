@@ -1,4 +1,5 @@
 from decimal import Decimal
+from io import StringIO
 from unittest.mock import patch
 
 from django.core.management import call_command
@@ -9,6 +10,13 @@ from apps.instancias.models import Instancia
 from apps.instancias.tiny_client import TinyApiValidationError
 
 from ..models import Produto, ProdutoTiny, StatusVariacao, Variacao
+
+
+def _rodar(*args):
+    out = StringIO()
+    err = StringIO()
+    call_command(*args, stdout=out, stderr=err)
+    return out.getvalue() + err.getvalue()
 
 
 def _instancia_pronta(**kwargs):
@@ -86,23 +94,46 @@ class CadastroCriaProdutoTests(TestCase):
         self.assertEqual(payload["precos"]["preco"], 19.90)
         self.assertEqual(payload["unidade"], "UN")
         self.assertEqual(payload["origem"], 0)
+        # produto nasce no Tiny já com o estoque correto
+        self.assertEqual(payload["estoque"], {"controlar": True, "inicial": 7.0})
 
 
-class VinculacaoDeSkuExistenteTests(TestCase):
-    """Regra do cliente: a conta já tem produtos cadastrados manualmente — nunca duplicar."""
+class SkuPreexistenteNoTinyTests(TestCase):
+    """
+    Proteção conservadora: se o SKU exato já existe no Tiny e a Variacao
+    não tem vínculo confirmado, o comando NÃO assume que o produto é da
+    automação — bloqueia, não altera o produto Tiny nem a Variacao.
+    """
 
     @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
     @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
-    def test_sku_ja_existente_e_vinculado_sem_criar_duplicata(self, mock_buscar, mock_criar):
+    def test_sku_ja_existente_sem_vinculo_confirmado_e_bloqueado(self, mock_buscar, mock_criar):
         instancia = _instancia_pronta()
         variacao = _variacao_pendente(instancia, "SKU-ANTIGO")
         mock_buscar.return_value = {"id": 999, "sku": "SKU-ANTIGO"}
 
-        call_command("cadastrar_produtos_tiny", instancia.slug)
+        saida = _rodar("cadastrar_produtos_tiny", instancia.slug)
+
+        variacao.refresh_from_db()
+        self.assertIsNone(variacao.tiny_id)
+        self.assertEqual(variacao.status, StatusVariacao.PENDENTE)  # inalterada
+        mock_criar.assert_not_called()
+        self.assertIn("BLOQUEADO", saida)
+        self.assertIn("não possui vínculo confirmado", saida)
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
+    def test_vinculo_so_acontece_com_confirmacao_explicita_do_operador(self, mock_buscar, mock_criar):
+        instancia = _instancia_pronta()
+        variacao = _variacao_pendente(instancia, "SKU-ANTIGO")
+        mock_buscar.return_value = {"id": 999, "sku": "SKU-ANTIGO"}
+
+        call_command("cadastrar_produtos_tiny", instancia.slug, "--vincular-skus", "SKU-ANTIGO")
 
         variacao.refresh_from_db()
         self.assertEqual(variacao.tiny_id, "999")
         self.assertEqual(variacao.status, StatusVariacao.CADASTRADO)
+        self.assertIsNone(variacao.preco_tiny_sincronizado)  # não assume o preço de um produto preexistente
         mock_criar.assert_not_called()
 
 
@@ -347,17 +378,18 @@ class CorrespondenciaSoPorSkuExatoTests(TestCase):
 
     @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
     @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
-    def test_sku_exato_existente_no_tiny_e_vinculado(self, mock_buscar, mock_criar):
+    def test_sku_exato_existente_no_tiny_sem_vinculo_nao_e_tocado(self, mock_buscar, mock_criar):
+        """Produto legado/preexistente com o mesmo SKU exato: nunca alterado sem vínculo confirmado."""
         instancia = _instancia_pronta()
-        variacao = _variacao_pendente(instancia, "SKU-JA-NO-TINY")
-        mock_buscar.return_value = {"id": 321, "sku": "SKU-JA-NO-TINY"}
+        variacao = _variacao_pendente(instancia, "EKKT-90395")  # forma do catálogo legado
+        mock_buscar.return_value = {"id": 321, "sku": "EKKT-90395"}
 
         call_command("cadastrar_produtos_tiny", instancia.slug)
 
         variacao.refresh_from_db()
-        self.assertEqual(variacao.tiny_id, "321")
-        self.assertEqual(variacao.status, StatusVariacao.CADASTRADO)
-        mock_criar.assert_not_called()
+        self.assertIsNone(variacao.tiny_id)
+        self.assertEqual(variacao.status, StatusVariacao.PENDENTE)
+        mock_criar.assert_not_called()  # nada foi escrito no Tiny
 
 
 class RegrasDeElegibilidadePreservadasTests(TestCase):
@@ -396,13 +428,283 @@ class RegrasDeElegibilidadePreservadasTests(TestCase):
     @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
     def test_preco_enviado_e_o_do_fornecedor_sem_margem(self, mock_buscar, mock_criar):
         instancia = _instancia_pronta()
-        _variacao_pendente(instancia, "SKU-PRECO", preco=Decimal("47.53"))
+        variacao = _variacao_pendente(instancia, "SKU-PRECO", preco=Decimal("47.53"))
         mock_buscar.return_value = None
         mock_criar.return_value = {"id": 1}
 
         call_command("cadastrar_produtos_tiny", instancia.slug)
 
         self.assertEqual(mock_criar.call_args[0][0]["precos"]["preco"], 47.53)
+        variacao.refresh_from_db()
+        # criação levou precos.preco = preço do fornecedor -> já marcado como sincronizado
+        self.assertEqual(variacao.preco_tiny_sincronizado, Decimal("47.53"))
+
+
+def _produto(instancia, fornecedor, codigo_pai, nome="Produto"):
+    return Produto.objects.create(
+        instancia=instancia, fornecedor=fornecedor, codigo_pai=codigo_pai, nome=nome
+    )
+
+
+def _variacao(produto, sku, **kwargs):
+    dados = {"produto": produto, "sku": sku, "nome": f"Variação {sku}", "preco": Decimal("10.00"), "estoque": 5}
+    dados.update(kwargs)
+    return Variacao.objects.create(**dados)
+
+
+class SelecaoControladaTests(TestCase):
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
+    def test_selecao_por_fornecedor(self, mock_buscar, mock_criar):
+        instancia = _instancia_pronta()
+        _variacao(_produto(instancia, "xbz", "x1"), "XBZ-1")
+        _variacao(_produto(instancia, "asia", "a1"), "ASIA-1")
+        mock_buscar.return_value = None
+        mock_criar.return_value = {"id": 1}
+
+        call_command("cadastrar_produtos_tiny", instancia.slug, "--fornecedor", "asia")
+
+        skus_criados = [c.args[0]["sku"] for c in mock_criar.call_args_list]
+        self.assertEqual(skus_criados, ["ASIA-1"])
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
+    def test_selecao_por_skus_explicitos(self, mock_buscar, mock_criar):
+        instancia = _instancia_pronta()
+        p = _produto(instancia, "spot", "s1")
+        for sku in ("SP-A", "SP-B", "SP-C"):
+            _variacao(p, sku)
+        mock_buscar.return_value = None
+        mock_criar.return_value = {"id": 1}
+
+        call_command("cadastrar_produtos_tiny", instancia.slug, "--skus", "SP-A, SP-C")
+
+        skus_criados = sorted(c.args[0]["sku"] for c in mock_criar.call_args_list)
+        self.assertEqual(skus_criados, ["SP-A", "SP-C"])
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
+    def test_selecao_fornecedor_mais_skus(self, mock_buscar, mock_criar):
+        instancia = _instancia_pronta()
+        _variacao(_produto(instancia, "asia", "a"), "COD-1")
+        _variacao(_produto(instancia, "asia", "b"), "COD-2")
+        _variacao(_produto(instancia, "somarcas", "c"), "COD-3")
+        mock_buscar.return_value = None
+        mock_criar.return_value = {"id": 1}
+
+        call_command("cadastrar_produtos_tiny", instancia.slug, "--fornecedor", "asia", "--skus", "COD-1")
+
+        self.assertEqual([c.args[0]["sku"] for c in mock_criar.call_args_list], ["COD-1"])
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
+    def test_skus_permite_reprocessar_uma_variacao_em_erro(self, mock_buscar, mock_criar):
+        instancia = _instancia_pronta()
+        v = _variacao(_produto(instancia, "xbz", "x"), "RETRY-1", status=StatusVariacao.ERRO, ultimo_erro="falhou antes")
+        mock_buscar.return_value = None
+        mock_criar.return_value = {"id": 77}
+
+        call_command("cadastrar_produtos_tiny", instancia.slug, "--skus", "RETRY-1")
+
+        v.refresh_from_db()
+        self.assertEqual(v.status, StatusVariacao.CADASTRADO)
+        self.assertEqual(v.tiny_id, "77")
+
+
+class DryRunTests(TestCase):
+    def _resp(self, corpo):
+        from unittest.mock import Mock
+
+        r = Mock()
+        r.status_code = 200
+        r.headers = {}
+        r.json.return_value = corpo
+        r.text = ""
+        return r
+
+    @patch("apps.instancias.tiny_client.requests.request")
+    def test_dry_run_nunca_faz_metodo_de_escrita_e_nao_altera_banco(self, mock_request):
+        instancia = _instancia_pronta()
+        v = _variacao(_produto(instancia, "xbz", "x1"), "DRY-1", ncm="12345678", preco=Decimal("9.90"))
+
+        metodos = []
+
+        def handler(metodo, url, **kw):
+            metodos.append(metodo)
+            assert metodo == "GET", f"MÉTODO DE ESCRITA no dry-run: {metodo} {url}"
+            return self._resp({"itens": []})  # SKU não existe no Tiny
+
+        mock_request.side_effect = handler
+        saida = _rodar("cadastrar_produtos_tiny", instancia.slug, "--dry-run")
+
+        self.assertEqual(set(metodos), {"GET"})
+        self.assertIn("SERIA CRIADO", saida)
+        self.assertIn("payload que seria enviado", saida)
+        v.refresh_from_db()
+        self.assertIsNone(v.tiny_id)
+        self.assertEqual(v.status, StatusVariacao.PENDENTE)
+        self.assertIsNone(v.cadastrado_em)
+        self.assertIsNone(v.preco_tiny_sincronizado)
+
+    @patch("apps.instancias.tiny_client.requests.request")
+    def test_dry_run_nao_persiste_rate_limit_da_conta(self, mock_request):
+        instancia = _instancia_pronta()
+        _variacao(_produto(instancia, "xbz", "x1"), "DRY-RL")
+
+        def handler(metodo, url, **kw):
+            assert metodo == "GET"
+            r = self._resp({"itens": []})
+            r.headers = {"x-limit-api": "120"}
+            return r
+
+        mock_request.side_effect = handler
+        call_command("cadastrar_produtos_tiny", instancia.slug, "--dry-run")
+
+        instancia.refresh_from_db()
+        self.assertIsNone(instancia.rate_limit_por_minuto)
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
+    def test_dry_run_mostra_bloqueios(self, mock_buscar, mock_criar):
+        instancia = _instancia_pronta()
+        _variacao(_produto(instancia, "xbz", "P@99"), "PA-1")  # descontinuado por P@
+        mock_buscar.return_value = None
+
+        saida = _rodar("cadastrar_produtos_tiny", instancia.slug, "--dry-run", "--skus", "PA-1")
+
+        self.assertIn("BLOQUEADO", saida)
+        mock_criar.assert_not_called()
+
+
+class BloqueiosTests(TestCase):
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
+    def test_p_arroba_bloqueado_mesmo_quando_pedido_por_skus(self, mock_buscar, mock_criar):
+        instancia = _instancia_pronta()
+        p = _produto(instancia, "xbz", "P@12288", "Saindo de linha")
+        v = _variacao(p, "PA-SKU", estoque=50)
+        self.assertEqual(v.status, StatusVariacao.DESCONTINUADO)
+        mock_buscar.return_value = None
+
+        saida = _rodar("cadastrar_produtos_tiny", instancia.slug, "--skus", "PA-SKU")
+
+        mock_criar.assert_not_called()
+        mock_buscar.assert_not_called()
+        self.assertIn("BLOQUEADO", saida)
+        self.assertIn("P@", saida)
+        v.refresh_from_db()
+        self.assertEqual(v.status, StatusVariacao.DESCONTINUADO)
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
+    def test_estoque_zero_bloqueado_mesmo_quando_pedido_por_skus(self, mock_buscar, mock_criar):
+        instancia = _instancia_pronta()
+        v = _variacao(_produto(instancia, "asia", "a"), "SEM-EST", estoque=0)
+        self.assertEqual(v.status, StatusVariacao.AGUARDANDO)
+        mock_buscar.return_value = None
+
+        saida = _rodar("cadastrar_produtos_tiny", instancia.slug, "--skus", "SEM-EST")
+
+        mock_criar.assert_not_called()
+        self.assertIn("estoque <= 0", saida)
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
+    def test_colisao_cross_supplier_bloqueia_o_sku_e_nao_escreve(self, mock_buscar, mock_criar):
+        instancia = _instancia_pronta()
+        _variacao(_produto(instancia, "xbz", "x"), "DUP-1")
+        _variacao(_produto(instancia, "somarcas", "s"), "DUP-1")  # mesmo SKU, fornecedor diferente
+        mock_buscar.return_value = None
+
+        saida = _rodar("cadastrar_produtos_tiny", instancia.slug, "--skus", "DUP-1")
+
+        mock_criar.assert_not_called()
+        self.assertIn("mais de um fornecedor", saida)
+        self.assertIn("somarcas", saida)
+        self.assertIn("xbz", saida)
+        self.assertEqual(
+            Variacao.objects.filter(sku="DUP-1", tiny_id__isnull=False).count(), 0
+        )
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
+    def test_produto_legado_preexistente_nunca_e_alterado_sem_vinculo(self, mock_buscar, mock_criar):
+        instancia = _instancia_pronta()
+        v = _variacao(_produto(instancia, "somarcas", "s"), "AS-00610")
+        mock_buscar.return_value = {"id": 4040, "sku": "AS-00610", "descricao": "produto do cliente"}
+
+        call_command("cadastrar_produtos_tiny", instancia.slug)
+
+        mock_criar.assert_not_called()  # nenhum POST
+        v.refresh_from_db()
+        self.assertIsNone(v.tiny_id)
+        self.assertEqual(v.status, StatusVariacao.PENDENTE)
+
+
+class RespostaDaCriacaoTests(TestCase):
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
+    def test_resposta_sem_id_e_reconsulta_nao_confirma_marca_erro(self, mock_buscar, mock_criar):
+        instancia = _instancia_pronta()
+        v = _variacao(_produto(instancia, "xbz", "x"), "SEM-ID")
+        mock_buscar.return_value = None            # 1ª busca: não existe
+        mock_criar.return_value = {"status": "ok"}  # resposta ambígua, sem id
+
+        call_command("cadastrar_produtos_tiny", instancia.slug)
+
+        v.refresh_from_db()
+        self.assertEqual(v.status, StatusVariacao.ERRO)   # NUNCA "cadastrado" sem confirmação
+        self.assertIsNone(v.tiny_id)
+        self.assertIn("id utilizável", v.ultimo_erro)
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
+    def test_resposta_sem_id_mas_reconsulta_confirma_usa_o_id_reconsultado(self, mock_buscar, mock_criar):
+        instancia = _instancia_pronta()
+        v = _variacao(_produto(instancia, "xbz", "x"), "RECONS")
+        # 1ª busca: não existe; após o POST ambíguo, reconsulta encontra o produto
+        mock_buscar.side_effect = [None, {"id": 555, "sku": "RECONS"}]
+        mock_criar.return_value = {}
+
+        call_command("cadastrar_produtos_tiny", instancia.slug)
+
+        v.refresh_from_db()
+        self.assertEqual(v.status, StatusVariacao.CADASTRADO)
+        self.assertEqual(v.tiny_id, "555")
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
+    def test_id_aninhado_em_wrapper_e_aceito(self, mock_buscar, mock_criar):
+        instancia = _instancia_pronta()
+        v = _variacao(_produto(instancia, "xbz", "x"), "WRAP")
+        mock_buscar.return_value = None
+        mock_criar.return_value = {"produto": {"id": 909}}
+
+        call_command("cadastrar_produtos_tiny", instancia.slug)
+
+        v.refresh_from_db()
+        self.assertEqual(v.tiny_id, "909")
+
+
+class SemHeuristicaTests(TestCase):
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
+    def test_nunca_usa_nome_ncm_descricao_ou_produtotiny(self, mock_buscar, mock_criar):
+        instancia = _instancia_pronta()
+        v = _variacao(_produto(instancia, "xbz", "x"), "SKU-NOVO-XYZ", nome="Caneca Preta", ncm="69120000")
+        ProdutoTiny.objects.create(
+            instancia=instancia, tiny_id=1, sku="OUTRO-SKU",
+            descricao="Caneca Preta", ncm="69120000",
+        )
+        mock_buscar.return_value = None  # SKU exato não existe
+        mock_criar.return_value = {"id": 1}
+
+        call_command("cadastrar_produtos_tiny", instancia.slug)
+
+        mock_buscar.assert_called_once_with("SKU-NOVO-XYZ")  # só SKU exato
+        mock_criar.assert_called_once()                       # criou, não vinculou ao ProdutoTiny
+        v.refresh_from_db()
+        self.assertEqual(v.tiny_id, "1")
 
 
 class RetomadaAposInterrupcaoTests(TestCase):

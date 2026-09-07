@@ -168,6 +168,17 @@ class Variacao(models.Model):
         "diferente de `estoque` (ou nulo), o comando de atualização de estoque "
         "considera esta variação pendente de sincronização.",
     )
+    preco_tiny_sincronizado = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Último preço de VENDA (precos.preco) efetivamente publicado no "
+        "cadastro do produto no Tiny. Enquanto for diferente de `preco` (ou nulo), o "
+        "comando `sincronizar_preco_tiny` considera esta variação pendente de "
+        "sincronização de preço. NÃO confundir com o precoUnitario do movimento de "
+        "estoque (que é custo do balanço, não preço de venda).",
+    )
 
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)

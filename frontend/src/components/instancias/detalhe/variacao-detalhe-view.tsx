@@ -11,6 +11,7 @@ import { ApiError } from "@/lib/api/client"
 import { useVariacaoInstancia } from "@/lib/api/hooks"
 import { ROTULO_FORNECEDOR } from "../cor-fornecedor"
 import { varianteBadgeStatus } from "./variacao-status"
+import { apresentarAtributo, humanizarChave } from "./atributo-formato"
 import { VariacaoGaleria } from "./variacao-galeria"
 import type { VariacaoDetalhe } from "@/lib/api/types"
 
@@ -83,12 +84,14 @@ function EspecificacoesCard({ dados }: { dados: VariacaoDetalhe }) {
 
   const categorias = listaDeTextos(dados.produto_categorias)
 
+  // Todos os atributos existentes (variação + produto, sem duplicar chave),
+  // cada valor passado por `apresentarAtributo` — nunca JSON cru nem
+  // "[object Object]". Nenhum atributo é descartado: valor vazio vira "—".
   const atributos = new Map<string, string>()
   for (const fonte of [registro(dados.atributos), registro(dados.produto_atributos)]) {
     for (const [chave, valor] of Object.entries(fonte)) {
       if (atributos.has(chave)) continue
-      if (valor == null || valor === "") continue
-      atributos.set(chave, typeof valor === "object" ? JSON.stringify(valor) : String(valor))
+      atributos.set(chave, apresentarAtributo(valor))
     }
   }
 
@@ -144,8 +147,8 @@ function EspecificacoesCard({ dados }: { dados: VariacaoDetalhe }) {
             <dl className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2">
               {[...atributos.entries()].map(([chave, valor]) => (
                 <div key={chave} className="flex justify-between gap-3 border-b border-border-subtle py-1">
-                  <dt className="text-body-default text-muted-foreground">{chave}</dt>
-                  <dd className="text-body-default break-words text-right text-foreground">{valor}</dd>
+                  <dt className="text-body-default text-muted-foreground">{humanizarChave(chave)}</dt>
+                  <dd className="min-w-0 text-body-default break-words text-right text-foreground">{valor}</dd>
                 </div>
               ))}
             </dl>
@@ -197,6 +200,7 @@ function DadosTecnicos({ dados }: { dados: VariacaoDetalhe }) {
 function Conteudo({ slug, dados }: { slug: string; dados: VariacaoDetalhe }) {
   const galeria = listaDeTextos(dados.imagens)
   const imagens = galeria.length > 0 ? galeria : listaDeTextos(dados.produto_imagens)
+  const mostrarNomeVariacao = Boolean(dados.nome) && dados.nome !== dados.produto_nome
 
   return (
     <div className="flex flex-col gap-6">
@@ -219,11 +223,20 @@ function Conteudo({ slug, dados }: { slug: string; dados: VariacaoDetalhe }) {
           {dados.produto_descontinuado && <Badge variant="neutral">Descontinuado</Badge>}
         </div>
 
-        {dados.nome && dados.nome !== dados.produto_nome && (
-          <p className="text-body-default text-muted-foreground">{dados.nome}</p>
-        )}
-        {dados.produto_descricao && (
-          <p className="max-w-3xl text-body-default text-muted-foreground">{dados.produto_descricao}</p>
+        {(mostrarNomeVariacao || dados.produto_descricao) && (
+          // Bloco de texto normal (não um flex item direto): o <p> segue o
+          // fluxo de bloco e quebra linha na largura de leitura, sem ser
+          // espremido pelo flex do cabeçalho nem afetar os badges.
+          <div className="w-full max-w-2xl">
+            {mostrarNomeVariacao && (
+              <p className="text-body-default text-muted-foreground">{dados.nome}</p>
+            )}
+            {dados.produto_descricao && (
+              <p className="mt-1 text-body-default leading-relaxed break-words text-muted-foreground">
+                {dados.produto_descricao}
+              </p>
+            )}
+          </div>
         )}
       </div>
 

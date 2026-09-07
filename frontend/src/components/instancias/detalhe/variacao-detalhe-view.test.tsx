@@ -95,6 +95,47 @@ describe("VariacaoDetalheView", () => {
     expect(screen.getByText("porcelana")).toBeInTheDocument()
   })
 
+  it("renderiza uma descrição longa por extenso, num bloco de largura de leitura", () => {
+    const longa =
+      "Mochila para notebook de 15,6 polegadas em poliéster 600D com dois compartimentos, " +
+      "divisória almofadada, interior forrado e alça de transporte reforçada para uso diário."
+    mock({ data: detalhe({ produto_descricao: longa }) })
+    render(<VariacaoDetalheView slug="loja-x" variacaoId="42" />)
+
+    const paragrafo = screen.getByText(longa)
+    expect(paragrafo).toBeInTheDocument()
+    expect(paragrafo.tagName).toBe("P")
+    // o texto vive num bloco com teto de largura, não espremido pelo cabeçalho
+    expect(paragrafo.closest("div")).toHaveClass("max-w-2xl")
+  })
+
+  it("apresenta atributos estruturados da Asia (objeto com value) de forma legível, sem JSON", () => {
+    mock({
+      data: detalhe({
+        atributos: {
+          cor: { name: "cinza", value: "Cinza", hexadecimal: "#7f7f7f" },
+          "volume-litros": { name: "29l", value: "29L" },
+        },
+        produto_atributos: { "dimensao-produto": "39x42x18cm (AxLxP)" },
+      }),
+    })
+    const { container } = render(<VariacaoDetalheView slug="loja-x" variacaoId="42" />)
+
+    expect(screen.getByText("Cinza")).toBeInTheDocument()
+    expect(screen.getByText("29L")).toBeInTheDocument()
+    expect(screen.getByText("volume litros")).toBeInTheDocument()
+    expect(screen.getByText("39x42x18cm (AxLxP)")).toBeInTheDocument()
+    expect(container.textContent).not.toContain("[object Object]")
+    expect(container.textContent).not.toContain('{"name"')
+    expect(container.textContent).not.toContain("hexadecimal")
+  })
+
+  it("mantém um atributo de valor vazio visível como travessão (não some da lista)", () => {
+    mock({ data: detalhe({ atributos: { garantia_do_produto: "" }, produto_atributos: {} }) })
+    render(<VariacaoDetalheView slug="loja-x" variacaoId="42" />)
+    expect(screen.getByText("garantia do produto")).toBeInTheDocument()
+  })
+
   it("renderiza a galeria com miniaturas quando há múltiplas imagens", () => {
     mock({ data: detalhe() })
     render(<VariacaoDetalheView slug="loja-x" variacaoId="42" />)

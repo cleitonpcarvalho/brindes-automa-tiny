@@ -21,6 +21,96 @@ _PADRAO_DIAMETRO_COMPRIMENTO = re.compile(
     r"^\s*[øØ]\s*([\d,\.]+)\s*x\s*([\d,\.]+)\s*mm", re.IGNORECASE
 )
 
+# Teto de imagens por variação enviadas ao espelho (e, adiante, ao Tiny —
+# `imagens_utilizaveis` também corta em 5). Escolha nossa, não do cliente.
+MAX_IMAGENS_POR_VARIACAO = 5
+
+# Nome de foto de catálogo da Spot: "<ref>_<cor>" com sufixos opcionais
+# ("-a", "-c", "-logo", "-box"...). NÃO casa de propósito com as imagens
+# técnicas, cujo stem tem mais de um "_": marcação ("11110_1_1_1.png"),
+# componente ("11110_105_C1.png"), localização ("11110_105_C1_L1.png").
+_PADRAO_NOME_FOTO = re.compile(r"^\d+_[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$")
+_EXTENSOES_FOTO = (".jpg", ".jpeg", ".png", ".webp")
+# Sufixos que NÃO são a foto limpa do produto: mockup com logo, foto da
+# caixa / saco / pouch, foto de ambiente.
+_SUFIXOS_NAO_LIMPOS = frozenset({"logo", "box", "pouch", "bag", "amb"})
+
+
+def _nomes_de_imagem_spot(opcional: dict, produto_bruto: dict) -> list[str]:
+    """Nomes de arquivo candidatos, na ordem em que a Spot os entrega."""
+    bruto = opcional.get("AllImageList") or produto_bruto.get("AllImageList") or ""
+    nomes = [n.strip() for n in bruto.split(",") if n and n.strip()]
+    if not nomes:
+        principal = (opcional.get("MainImage") or produto_bruto.get("MainImage") or "").strip()
+        nomes = [principal] if principal else []
+    return nomes
+
+
+def _prioridade_imagem_spot(nome: str, referencia: str, cor: str) -> int:
+    """
+    Chave de ordenação (menor = mais relevante para ESTA variação). Só é
+    chamada depois de o nome passar por `_PADRAO_NOME_FOTO`.
+    """
+    stem = nome.rsplit(".", 1)[0]
+    ref, _, resto = stem.partition("_")
+    partes = resto.split("-")
+    cor_arquivo = partes[0]
+    sufixos = [s for s in partes[1:] if s]
+    mesma_ref = bool(referencia) and ref == referencia
+    mesma_cor = bool(cor) and cor_arquivo == cor
+    limpa = not any(s in _SUFIXOS_NAO_LIMPOS for s in sufixos)
+    tem_sufixo = bool(sufixos)
+    if not mesma_ref:
+        return 5
+    if mesma_cor and not tem_sufixo:
+        return 0
+    if mesma_cor and limpa:
+        return 1
+    if limpa and not tem_sufixo:
+        return 2
+    if mesma_cor:
+        return 3
+    return 4
+
+
+def imagens_spot_da_variacao(opcional: dict, produto_bruto: dict, url_base: str) -> list[str]:
+    """
+    URLs absolutas de imagem de uma variação Spot, a partir do nome de
+    arquivo (`AllImageList`, ou `MainImage` como fallback) + `url_base`
+    (`ConfiguracaoFornecedor.url_base_imagens`).
+
+    - fotos limpas da cor da variação primeiro; mockup com logo / foto de
+      caixa por último; nomes de campo técnico nunca entram;
+    - dedupe por URL, no máximo `MAX_IMAGENS_POR_VARIACAO`;
+    - `url_base` vazio -> lista vazia (comportamento atual preservado).
+
+    Pura: usada tanto por `SpotFornecedor.normalizar` quanto pelo comando
+    `backfill_imagens_spot` (que a alimenta com o `payload_bruto` salvo).
+    """
+    if not url_base:
+        return []
+    referencia = str(
+        opcional.get("ProdReference") or produto_bruto.get("ProdReference") or ""
+    ).strip()
+    cor = str(opcional.get("ColorCode") or "").strip()
+
+    candidatos = [
+        nome
+        for nome in _nomes_de_imagem_spot(opcional, produto_bruto)
+        if nome.lower().endswith(_EXTENSOES_FOTO)
+        and _PADRAO_NOME_FOTO.match(nome.rsplit(".", 1)[0])
+    ]
+    # sort estável: dentro da mesma prioridade, mantém a ordem do fornecedor.
+    candidatos.sort(key=lambda nome: _prioridade_imagem_spot(nome, referencia, cor))
+
+    prefixo = url_base.rstrip("/") + "/"
+    urls: list[str] = []
+    for nome in candidatos:
+        url = prefixo + nome.lstrip("/")
+        if url not in urls:
+            urls.append(url)
+    return urls[:MAX_IMAGENS_POR_VARIACAO]
+
 
 class SpotFornecedor(FornecedorBase):
     """
@@ -33,15 +123,24 @@ class SpotFornecedor(FornecedorBase):
     ("o join é por Sku e WebSku"), para o caso de algum SKU só bater por
     WebSku.
 
-    Duas pendências abertas com o fornecedor, deixadas preparadas e NÃO
-    resolvidas por conta própria:
+    Pendência aberta com o fornecedor, deixada preparada e NÃO resolvida
+    por conta própria:
       - NCM: o único campo fiscal disponível é o Taric, não confirmado
         como equivalente ao NCM brasileiro. `ncm` fica sempre vazio para
         este fornecedor (o Taric vai só em `atributos`, para não se perder).
-      - Imagens: vêm só como nome de arquivo (ex.: "11112_115.jpg"), sem
-        host nem caminho. Só são montadas em URL se
-        `configuracao["url_base_imagens"]` estiver preenchido (ver
-        ConfiguracaoFornecedor); enquanto vazio, a variação fica sem imagem.
+
+    Imagens: a API devolve só o nome do arquivo (ex.: "11112_115.jpg"), sem
+    host. A URL é montada com `configuracao["url_base_imagens"]`
+    (ConfiguracaoFornecedor) — enquanto vazio, a variação fica sem imagem.
+    A fonte é `AllImageList` (lista separada por vírgula, no nível do
+    `optionalsComplete`, com o mesmo conteúdo para todas as cores do
+    produto); se vier vazia, cai para `MainImage`. A foto limpa da cor da
+    variação (`<ref>_<cor>.jpg`, sem sufixo) vem primeiro; mockups com logo
+    e fotos de caixa/saco (`-logo`, `-box`, `-pouch`, ...) vão para o fim.
+    Campos técnicos (`Area*Image`, `Component*Image`, `Location*Image`) NÃO
+    entram — não são lidos e o padrão de nome de arquivo os exclui. Máximo
+    de `MAX_IMAGENS_POR_VARIACAO` (5) por variação. Ver
+    `imagens_spot_da_variacao`.
 
     Dimensões/peso (passo 6): `CombinedSizes` é uma string livre e
     inconsistente ("55 x 22 x 12 mm", "ø7 x 129 mm", "250 x 80 mm",
@@ -128,8 +227,7 @@ class SpotFornecedor(FornecedorBase):
             if estoque is None:
                 estoque = estoque_por_websku.get(opcional.get("WebSku"), 0)
 
-            nome_arquivo_imagem = opcional.get("MainImage") or produto_bruto.get("MainImage")
-            imagens = self._montar_imagens(nome_arquivo_imagem, url_base_imagens)
+            imagens = imagens_spot_da_variacao(opcional, produto_bruto, url_base_imagens)
 
             taric = produto_bruto.get("Taric", "")
             produto.variacoes.append(
@@ -147,12 +245,6 @@ class SpotFornecedor(FornecedorBase):
                 )
             )
         return list(produtos_normalizados.values())
-
-    @staticmethod
-    def _montar_imagens(nome_arquivo, url_base):
-        if not nome_arquivo or not url_base:
-            return []
-        return [url_base.rstrip("/") + "/" + nome_arquivo.lstrip("/")]
 
 
 def _dimensoes_do_produto(produto_bruto) -> DimensoesNormalizadas:

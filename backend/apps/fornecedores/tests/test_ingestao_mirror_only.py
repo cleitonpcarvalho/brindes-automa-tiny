@@ -299,6 +299,11 @@ class DryRunTests(TestCase):
         cad_touch = cadencia.atualizado_em
         credencial = CredencialFornecedor.objects.get(instancia=self.instancia, fornecedor="somarcas")
         cred_snapshot = (credencial.credenciais, credencial.ativo)
+        # a migration 0004 semeia a config da Spot — o dry-run não pode
+        # criar/alterar nenhuma (nem a de somarcas, nem qualquer outra).
+        config_snapshot = sorted(
+            ConfiguracaoFornecedor.objects.values_list("fornecedor", "url_base_imagens")
+        )
 
         self._rodar_dry_run()
 
@@ -306,7 +311,13 @@ class DryRunTests(TestCase):
         self.assertEqual(cadencia.intervalo_minutos, 180)
         self.assertFalse(cadencia.ativo)
         self.assertEqual(cadencia.atualizado_em, cad_touch)
-        self.assertEqual(ConfiguracaoFornecedor.objects.count(), 0)
+        self.assertFalse(
+            ConfiguracaoFornecedor.objects.filter(fornecedor="somarcas").exists()
+        )
+        self.assertEqual(
+            sorted(ConfiguracaoFornecedor.objects.values_list("fornecedor", "url_base_imagens")),
+            config_snapshot,
+        )
         credencial.refresh_from_db()
         self.assertEqual((credencial.credenciais, credencial.ativo), cred_snapshot)
 

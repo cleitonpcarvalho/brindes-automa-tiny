@@ -22,6 +22,16 @@ def _payload():
     }
 
 
+def _payload_uma_variacao(opcional, produto=None):
+    ref = opcional["ProdReference"]
+    produto = produto or {"ProdReference": ref, "Name": f"{ref}. Produto", "Taric": ""}
+    return {
+        "products": [produto],
+        "optionals": [opcional],
+        "stocks": [{"Sku": opcional["Sku"], "WebSku": opcional["Sku"], "Quantity": 10}],
+    }
+
+
 class NormalizarSpotTests(TestCase):
     """
     Usa um recorte real de samples/spot/ — ProdReference "11112" (mochila,
@@ -79,6 +89,85 @@ class NormalizarSpotTests(TestCase):
         ).normalizar(_payload())
         for variacao in produtos[0].variacoes:
             self.assertEqual(variacao.imagens, ["https://cdn.exemplo.com/spot/11112_115.jpg"])
+
+
+class ImagensSpotTests(TestCase):
+    """
+    `AllImageList` (lista separada por vírgula) é a fonte; `MainImage` é só
+    fallback. A foto limpa da cor da variação vem primeiro, `-logo`/`-box`
+    por último, campos técnicos (`11110_1_1_1.png`, `11110_105_C1.png`)
+    nunca entram. Dedupe por URL, no máximo 5.
+    """
+
+    BASE = "https://www.spotgifts.com.br/fotos/produtos"
+
+    def _imagens(self, opcional, produto=None, base=BASE):
+        config = {"url_base_imagens": base} if base else {}
+        produtos = SpotFornecedor(configuracao=config).normalizar(
+            _payload_uma_variacao(opcional, produto)
+        )
+        return produtos[0].variacoes[0].imagens
+
+    def _op(self, **extra):
+        base = {"Sku": "11110-105", "ProdReference": "11110", "ColorCode": "105", "Price1": 1.99}
+        base.update(extra)
+        return base
+
+    def test_sem_nenhum_campo_de_imagem_fica_vazio(self):
+        self.assertEqual(self._imagens(self._op()), [])
+
+    def test_sem_url_base_continua_sem_imagem(self):
+        op = self._op(AllImageList="11110_105.jpg")
+        self.assertEqual(self._imagens(op, base=None), [])
+
+    def test_all_image_list_vazio_cai_para_main_image(self):
+        op = self._op(MainImage="11110_105.jpg")
+        self.assertEqual(self._imagens(op), [f"{self.BASE}/11110_105.jpg"])
+
+    def test_all_image_list_com_uma_imagem(self):
+        op = self._op(AllImageList="11110_105.jpg")
+        self.assertEqual(self._imagens(op), [f"{self.BASE}/11110_105.jpg"])
+
+    def test_prioriza_foto_limpa_da_cor_e_manda_logo_para_o_fim(self):
+        op = self._op(AllImageList="11110_105-logo.jpg, 11110_105.jpg")
+        self.assertEqual(
+            self._imagens(op),
+            [f"{self.BASE}/11110_105.jpg", f"{self.BASE}/11110_105-logo.jpg"],
+        )
+
+    def test_multiplas_imagens_da_cor_certa_antes_das_outras_cores(self):
+        op = self._op(
+            Sku="11112-104",
+            ProdReference="11112",
+            ColorCode="104",
+            AllImageList="11112_115.jpg, 11112_104.jpg, 11112_104-c.jpg",
+        )
+        self.assertEqual(
+            self._imagens(op),
+            [
+                f"{self.BASE}/11112_104.jpg",
+                f"{self.BASE}/11112_104-c.jpg",
+                f"{self.BASE}/11112_115.jpg",
+            ],
+        )
+
+    def test_deduplica_urls_repetidas(self):
+        op = self._op(
+            AllImageList="11110_105.jpg, 11110_105.jpg ,  11110_105.jpg",
+            MainImage="11110_105.jpg",
+        )
+        self.assertEqual(self._imagens(op), [f"{self.BASE}/11110_105.jpg"])
+
+    def test_limita_a_cinco_imagens(self):
+        angulos = ", ".join(f"11110_105-{s}.jpg" for s in "abcdefgh")
+        op = self._op(AllImageList=f"11110_105.jpg, {angulos}")
+        imagens = self._imagens(op)
+        self.assertEqual(len(imagens), 5)
+        self.assertEqual(imagens[0], f"{self.BASE}/11110_105.jpg")
+
+    def test_ignora_imagens_tecnicas_de_area_e_componente(self):
+        op = self._op(AllImageList="11110_1_1_1.png, 11110_105_C1.png, 11110_105.jpg")
+        self.assertEqual(self._imagens(op), [f"{self.BASE}/11110_105.jpg"])
 
 
 class ConversaoDeUnidadesSpotTests(TestCase):

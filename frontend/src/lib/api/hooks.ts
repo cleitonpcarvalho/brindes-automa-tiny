@@ -132,21 +132,29 @@ export function useInstanciasListagem(filtros: FiltrosInstancias = {}) {
  * o andamento/resultado sem depender de refresh manual — não é uma barra de
  * progresso, é o estado real vindo da Execucao.
  */
+/**
+ * Há alguma sincronização em curso (importação de espelho `rodando`, ou
+ * cadastro Tiny `sincronizando`/`pausando`) em algum fornecedor da
+ * instância? Enquanto sim, o detalhe faz polling — é assim que o progresso
+ * incremental da sincronização Tiny chega à tela (o backend persiste os
+ * contadores a cada ~5s; a UI busca a cada 4s).
+ */
+export function instanciaTemSincronizacaoAtiva(instancia: InstanciaDetalhe | undefined): boolean {
+  return (instancia?.fornecedores ?? []).some(
+    (f) =>
+      f.ultima_execucao_status === "rodando" ||
+      f.cadastro_tiny.estado === "sincronizando" ||
+      f.cadastro_tiny.estado === "pausando",
+  );
+}
+
 export function useInstancia(slug: string) {
   return useQuery({
     queryKey: ["instancias", "detalhe", slug],
     queryFn: () => apiClient.get<InstanciaDetalhe>(`/instancias/${slug}`),
     enabled: Boolean(slug),
-    refetchInterval: (query) => {
-      const fornecedores = query.state.data?.fornecedores ?? [];
-      const algoAtivo = fornecedores.some(
-        (f) =>
-          f.ultima_execucao_status === "rodando" ||
-          f.cadastro_tiny.estado === "sincronizando" ||
-          f.cadastro_tiny.estado === "pausando",
-      );
-      return algoAtivo ? 4000 : false;
-    },
+    refetchInterval: (query) =>
+      instanciaTemSincronizacaoAtiva(query.state.data) ? 4000 : false,
   });
 }
 

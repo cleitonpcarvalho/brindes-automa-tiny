@@ -85,6 +85,53 @@ describe("FornecedorCadastroTiny — estados e ações", () => {
     expect(screen.queryByRole("button", { name: /Retomar/ })).not.toBeInTheDocument()
   })
 
+  it("o 3º número é 'a fazer' enquanto roda e 'não cadastrados' quando conclui", () => {
+    const { rerender } = renderComp({
+      estado: estadoBase("sincronizando", { total_ignorados: 710 }),
+    })
+    expect(screen.getByText("710")).toBeInTheDocument()
+    expect(screen.getByText("a fazer")).toBeInTheDocument()
+    expect(screen.queryByText(/bloquead/i)).not.toBeInTheDocument()
+
+    rerender(
+      <FornecedorCadastroTiny
+        slug="loja-x"
+        fornecedor="xbz"
+        estado={estadoBase("parcial", { total_ignorados: 12 })}
+      />,
+    )
+    expect(screen.getByText("não cadastrados")).toBeInTheDocument()
+  })
+
+  it("recebe novos números por atualização de props (polling) e a barra acompanha", () => {
+    const { rerender } = renderComp({
+      estado: estadoBase("sincronizando", {
+        total_cadastrados: 0,
+        total_erros: 0,
+        total_ignorados: 1137,
+        progresso: 0,
+      }),
+    })
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "0")
+
+    rerender(
+      <FornecedorCadastroTiny
+        slug="loja-x"
+        fornecedor="xbz"
+        estado={estadoBase("sincronizando", {
+          total_cadastrados: 421,
+          total_erros: 6,
+          total_ignorados: 710,
+          progresso: 0.376,
+        })}
+      />,
+    )
+    expect(screen.getByText("421")).toBeInTheDocument()
+    expect(screen.getByText("6")).toBeInTheDocument()
+    expect(screen.getByText("710")).toBeInTheDocument()
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "38")
+  })
+
   it("PAUSANDO: nenhum botão de ação, texto 'terminando o produto atual'", () => {
     renderComp({ estado: estadoBase("pausando") })
     expect(screen.getByText("Pausando…")).toBeInTheDocument()

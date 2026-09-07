@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import timedelta
 
 from celery import shared_task
@@ -31,7 +32,44 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Controlador: heartbeat + detecção cooperativa de pausa / perda de lease
+# Contadores de progresso — SEMPRE recomputados da verdade do banco (3
+# COUNTs por fornecedor), nunca acumulados em memória: assim a retomada
+# continua exata e o número na tela é sempre o estado real.
+# ---------------------------------------------------------------------------
+
+
+def _contadores_da_fila(instancia_id, fornecedor) -> dict:
+    do_fornecedor = Variacao.objects.filter(
+        produto__instancia_id=instancia_id, produto__fornecedor=fornecedor
+    )
+    cadastrados = do_fornecedor.filter(status=StatusVariacao.CADASTRADO).exclude(tiny_id="").count()
+    erros = do_fornecedor.filter(status=StatusVariacao.ERRO).count()
+    pendentes = do_fornecedor.filter(status=StatusVariacao.PENDENTE).count()
+    return {
+        "total_cadastrados": cadastrados,
+        "total_novos": cadastrados,
+        "total_erros": erros,
+        # `total_ignorados` = variações ainda `pendente` do fornecedor.
+        # DURANTE a execução são "a fazer" (a maioria ainda não chegou a ser
+        # avaliada); só DEPOIS de uma rodada COMPLETA elas são os
+        # "bloqueados" de fato. A UI escolhe o rótulo pelo estado.
+        "total_ignorados": pendentes,
+        "total_lidos": cadastrados + erros + pendentes,  # universo cadastrável
+    }
+
+
+def _persistir_contadores(execucao_id, token, *, agora=None) -> int:
+    """Grava os contadores atuais na Execucao, sob o lease. Devolve linhas afetadas."""
+    execucao = Execucao.objects.filter(pk=execucao_id).values("instancia_id", "fornecedor").first()
+    if execucao is None:
+        return 0
+    campos = _contadores_da_fila(execucao["instancia_id"], execucao["fornecedor"])
+    campos["heartbeat_em"] = agora or timezone.now()
+    return Execucao.objects.filter(pk=execucao_id, lease_token=token).update(**campos)
+
+
+# ---------------------------------------------------------------------------
+# Controlador: heartbeat + progresso incremental + pausa / perda de lease
 # ---------------------------------------------------------------------------
 
 
@@ -41,13 +79,26 @@ class _ControladorLease(ControladorSincronizacao):
       - se o `lease_token` no banco não é mais o meu -> outra retomada
         assumiu a Execucao; PARO já, sem tocar em nada (o novo dono cuida);
       - se `pausa_solicitada` (ou status já `pausando`) -> PARO após a
-        unidade atual; a task encerra em `pausado`;
-      - senão -> bato o heartbeat e sigo.
+        unidade atual;
+      - senão -> bato o heartbeat e, a cada
+        `PROGRESSO_A_CADA_SEGUNDOS`/`PROGRESSO_A_CADA_PRODUTOS`, recomputo os
+        contadores (3 COUNTs) e persisto junto — a mesma `UPDATE ... WHERE
+        lease_token=?` do heartbeat, então progresso e lease/heartbeat nunca
+        se atrapalham. A verificação de pausa acontece ANTES disso, então a
+        pausa continua instantânea.
     """
+
+    # 5s deixa a tela (polling de 4s) no máximo ~9s atrás do real; 3 COUNTs
+    # a cada 5s numa rodada de horas é desprezível. O teto por produtos
+    # cobre o caso raro de muitos produtos rápidos seguidos.
+    PROGRESSO_A_CADA_SEGUNDOS = 5.0
+    PROGRESSO_A_CADA_PRODUTOS = 40
 
     def __init__(self, execucao_id: int, token: str):
         self.execucao_id = execucao_id
         self.token = token
+        self._produtos_desde_progresso = 0
+        self._ultimo_progresso = time.monotonic()
 
     def checar(self) -> str | None:
         linha = (
@@ -62,9 +113,21 @@ class _ControladorLease(ControladorSincronizacao):
             StatusExecucao.PAUSADO,
         ):
             return PARADA_PAUSA
-        Execucao.objects.filter(pk=self.execucao_id, lease_token=self.token).update(
-            heartbeat_em=timezone.now()
+
+        self._produtos_desde_progresso += 1
+        agora_mono = time.monotonic()
+        vencido = (
+            agora_mono - self._ultimo_progresso >= self.PROGRESSO_A_CADA_SEGUNDOS
+            or self._produtos_desde_progresso >= self.PROGRESSO_A_CADA_PRODUTOS
         )
+        if vencido:
+            _persistir_contadores(self.execucao_id, self.token)
+            self._produtos_desde_progresso = 0
+            self._ultimo_progresso = agora_mono
+        else:
+            Execucao.objects.filter(pk=self.execucao_id, lease_token=self.token).update(
+                heartbeat_em=timezone.now()
+            )
         return None
 
 
@@ -139,24 +202,10 @@ class _EventosExecucao(EventosSincronizacao):
             )
 
 
-# ---------------------------------------------------------------------------
-# Contadores de progresso — SEMPRE recomputados da verdade do banco (nunca
-# acumulados), para a retomada continuar exata sem depender de memória.
-# ---------------------------------------------------------------------------
-
-
 def _atualizar_contadores(execucao: Execucao) -> None:
-    do_fornecedor = Variacao.objects.filter(
-        produto__instancia_id=execucao.instancia_id, produto__fornecedor=execucao.fornecedor
-    )
-    cadastrados = do_fornecedor.filter(status=StatusVariacao.CADASTRADO).exclude(tiny_id="").count()
-    erros = do_fornecedor.filter(status=StatusVariacao.ERRO).count()
-    pendentes = do_fornecedor.filter(status=StatusVariacao.PENDENTE).count()
-    execucao.total_cadastrados = cadastrados
-    execucao.total_novos = cadastrados
-    execucao.total_erros = erros
-    execucao.total_ignorados = pendentes  # ainda pendentes (bloqueados ou não feitos)
-    execucao.total_lidos = cadastrados + erros + pendentes  # universo cadastrável do fornecedor
+    """Recomputa os contadores da verdade do banco NO objeto (para o save do _finalizar)."""
+    for campo, valor in _contadores_da_fila(execucao.instancia_id, execucao.fornecedor).items():
+        setattr(execucao, campo, valor)
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +245,10 @@ def cadastrar_produtos_tiny_task(execucao_id, lease_token=None):
             return
         token = atual.lease_token
         Execucao.objects.filter(pk=execucao_id).update(heartbeat_em=agora)
+
+    # Progresso imediato: numa retomada, a tela mostra o baseline (ex.: "421
+    # cadastrados") já na 1ª atualização, sem esperar o 1º ciclo do controlador.
+    _persistir_contadores(execucao_id, token, agora=agora)
 
     instancia = execucao.instancia
     resultado: ResultadoSincronizacao | None = None

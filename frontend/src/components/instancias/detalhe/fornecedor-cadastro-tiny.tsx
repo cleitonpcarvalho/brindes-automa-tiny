@@ -22,7 +22,11 @@ import {
 } from "@/lib/api/hooks"
 import { formatarNumero } from "@/lib/format"
 import { ROTULO_FORNECEDOR } from "../cor-fornecedor"
-import { ROTULO_ESTADO_CADASTRO_TINY, VARIANTE_ESTADO_CADASTRO_TINY } from "./cadastro-tiny-estado"
+import {
+  ROTULO_ESTADO_CADASTRO_TINY,
+  VARIANTE_ESTADO_CADASTRO_TINY,
+  rotuloRestantes,
+} from "./cadastro-tiny-estado"
 import type { CadastroTinyEstado, FornecedorEnum } from "@/lib/api/types"
 
 interface Props {
@@ -132,7 +136,8 @@ function Progresso({ estado }: { estado: CadastroTinyEstado }) {
           <strong className="text-foreground">{formatarNumero(estado.total_erros)}</strong> erros
         </span>
         <span>
-          <strong className="text-foreground">{formatarNumero(estado.total_ignorados)}</strong> restantes/bloqueados
+          <strong className="text-foreground">{formatarNumero(estado.total_ignorados)}</strong>{" "}
+          {rotuloRestantes(estado.estado)}
         </span>
       </div>
       <div className="h-1.5 w-56 max-w-full overflow-hidden rounded-full bg-muted">

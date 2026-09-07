@@ -10,7 +10,12 @@ from apps.instancias.models import Instancia
 from apps.sincronizacao.models import Execucao, LogItem, NivelLog, StatusExecucao, TipoExecucao
 
 from ..models import Produto, StatusVariacao, Variacao
-from ..tasks import _ControladorLease, cadastrar_produtos_tiny_task, reconciliar_execucoes_travadas
+from ..tasks import (
+    _ControladorLease,
+    _persistir_contadores,
+    cadastrar_produtos_tiny_task,
+    reconciliar_execucoes_travadas,
+)
 
 
 def _instancia():
@@ -281,6 +286,111 @@ class HeartbeatELeaseTests(TestCase):
         self.assertEqual(execucao.lease_token, "token-do-novo-dono")
         # a task que perdeu o lease NÃO fecha a execução
         self.assertEqual(execucao.status, StatusExecucao.RODANDO)
+
+
+class ProgressoIncrementalTests(TestCase):
+    @patch.object(_ControladorLease, "PROGRESSO_A_CADA_PRODUTOS", 1)
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku", return_value=None)
+    def test_progresso_aumenta_durante_a_execucao(self, _mb, mock_criar):
+        inst = _instancia()
+        _variacao(inst, "PG-1")
+        _variacao(inst, "PG-2")
+        _variacao(inst, "PG-3")
+        execucao = _execucao(inst)
+
+        vistos = []
+
+        def cria(payload):
+            # snapshot do que a UI veria neste instante (o controlador já
+            # persistiu o progresso ANTES deste produto)
+            e = Execucao.objects.get(pk=execucao.id)
+            vistos.append((e.total_cadastrados, e.total_ignorados, e.total_lidos))
+            return {"id": len(vistos), "sku": payload["sku"]}
+
+        mock_criar.side_effect = cria
+
+        cadastrar_produtos_tiny_task(execucao.id, execucao.lease_token)
+
+        # antes de cada produto: 0 feitos/3 restantes -> 1/2 -> 2/1
+        self.assertEqual([v[0] for v in vistos], [0, 1, 2])   # cadastrados
+        self.assertEqual([v[1] for v in vistos], [3, 2, 1])   # a fazer (pendentes)
+        self.assertTrue(all(v[2] == 3 for v in vistos))       # universo estável
+        execucao.refresh_from_db()
+        self.assertEqual(execucao.total_cadastrados, 3)       # definitivo reconciliado
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku", return_value=None)
+    def test_progresso_imediato_no_baseline_ao_retomar(self, _mb, mock_criar):
+        inst = _instancia()
+        # 2 já cadastradas antes, 1 pendente
+        _variacao(inst, "B-1", status=StatusVariacao.CADASTRADO, tiny_id="1")
+        _variacao(inst, "B-2", status=StatusVariacao.CADASTRADO, tiny_id="2")
+        pend = _variacao(inst, "B-3")
+        execucao = _execucao(inst, total_cadastrados=0)  # contador "zerado" como no bug
+
+        baseline = {}
+
+        def cria(payload):
+            baseline["cadastrados"] = Execucao.objects.get(pk=execucao.id).total_cadastrados
+            return {"id": 3, "sku": payload["sku"]}
+
+        mock_criar.side_effect = cria
+        cadastrar_produtos_tiny_task(execucao.id, execucao.lease_token)
+
+        # já no 1º produto a Execucao mostra as 2 que existiam (baseline persistido no claim)
+        self.assertEqual(baseline["cadastrados"], 2)
+        execucao.refresh_from_db()
+        self.assertEqual(execucao.total_cadastrados, 3)
+        pend.refresh_from_db()
+        self.assertEqual(pend.status, StatusVariacao.CADASTRADO)
+
+    def test_persistir_contadores_recomputa_da_verdade_do_banco(self):
+        inst = _instancia()
+        _variacao(inst, "C-1", status=StatusVariacao.CADASTRADO, tiny_id="1")
+        _variacao(inst, "C-2", status=StatusVariacao.ERRO)
+        _variacao(inst, "C-3")  # pendente
+        ex = _execucao(inst)
+
+        n = _persistir_contadores(ex.id, ex.lease_token)
+
+        ex.refresh_from_db()
+        self.assertEqual(n, 1)
+        self.assertEqual(ex.total_cadastrados, 1)
+        self.assertEqual(ex.total_erros, 1)
+        self.assertEqual(ex.total_ignorados, 1)
+        self.assertEqual(ex.total_lidos, 3)
+
+    def test_persistir_contadores_com_token_errado_nao_toca_na_execucao(self):
+        inst = _instancia()
+        _variacao(inst, "T-1", status=StatusVariacao.CADASTRADO, tiny_id="1")
+        ex = _execucao(inst, total_cadastrados=99, heartbeat_em=timezone.now() - timedelta(minutes=3))
+        hb_antes = ex.heartbeat_em
+
+        n = _persistir_contadores(ex.id, "token-de-outra-retomada")
+
+        ex.refresh_from_db()
+        self.assertEqual(n, 0)
+        self.assertEqual(ex.total_cadastrados, 99)  # intacto — lease protege
+        self.assertEqual(ex.heartbeat_em, hb_antes)
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku", return_value=None)
+    def test_progresso_nao_atrapalha_heartbeat_nem_lease(self, _mb, mock_criar):
+        inst = _instancia()
+        _variacao(inst, "HL-1")
+        _variacao(inst, "HL-2")
+        mock_criar.side_effect = [{"id": 1, "sku": "HL-1"}, {"id": 2, "sku": "HL-2"}]
+        antigo = timezone.now() - timedelta(minutes=9)
+        execucao = _execucao(inst, heartbeat_em=antigo)
+        token = execucao.lease_token
+
+        cadastrar_produtos_tiny_task(execucao.id, token)
+
+        execucao.refresh_from_db()
+        self.assertGreater(execucao.heartbeat_em, antigo)   # heartbeat avançou (junto com o progresso)
+        self.assertEqual(execucao.lease_token, token)       # lease inalterado
+        self.assertEqual(execucao.status, StatusExecucao.SUCESSO)
 
 
 class ReconciliarExecucoesTravadasTests(TestCase):

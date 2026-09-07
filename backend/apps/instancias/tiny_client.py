@@ -137,12 +137,16 @@ class TinyApiClient:
 
     def anexos_do_produto(self, id_produto) -> list[str]:
         """
-        URLs dos anexos (imagens/links) que o produto JÁ tem no Tiny.
+        URLs dos anexos que o produto JÁ tem no Tiny (do `GET /produtos/{id}`,
+        que devolve `anexos` só no detalhe — ver `catalogo.ProdutoTiny`).
 
-        Lê do `GET /produtos/{id}` (o `anexos` só vem no detalhe — ver
-        `catalogo.ProdutoTiny`). Cada anexo é um objeto; extraímos só a
-        `url`, ignorando entradas sem url. Usado para diff/idempotência
-        antes de qualquer POST de anexo.
+        ATENÇÃO: quando enviamos com `externo=false`, o Tiny BAIXA a imagem e
+        passa a devolver aqui a URL INTERNA dele
+        (`s3.amazonaws.com/tiny-anexos-us/...`), diferente da URL original do
+        fornecedor. Por isso o chamador NÃO deve comparar essas URLs com as
+        do espelho por igualdade — só a CONTAGEM é confiável (ver
+        `sincronizar_imagens_tiny`, que usa `Variacao.imagens_tiny_sincronizadas`
+        como marcador das URLs originais).
         """
         detalhe = self.obter_produto(id_produto)
         anexos = detalhe.get("anexos") or []
@@ -153,21 +157,24 @@ class TinyApiClient:
                 urls.append(url.strip())
         return urls
 
-    def adicionar_anexos_produto(self, id_produto, urls) -> dict:
+    def sincronizar_anexos_produto(self, id_produto, urls) -> dict:
         """
-        Adiciona anexos externos (links de imagem) a um produto já existente
-        no Tiny, pelo endpoint específico `POST /produtos/{idProduto}/anexos`.
+        Define os anexos (imagens) de um produto já existente no Tiny, pelo
+        endpoint `PUT /produtos/{idProduto}/anexos`.
 
-        Só links reais (o Tiny apenas guarda a URL, `externo=true`, sem subir
-        arquivo). Quem chama garante: URLs não vazias, no máximo 5, e que
-        ainda não estão no produto (diff via `anexos_do_produto`).
+        Enviamos com `externo=false` (comportamento CONFIRMADO em produção no
+        MC511): o Tiny baixa a imagem e a hospeda internamente, e aí ela
+        aparece no cadastro e na listagem do ERP — com `externo=true` a URL
+        ficava registrada mas a imagem não aparecia.
+
+        Quem chama garante: só links reais, no máximo 5, e só chama quando há
+        de fato imagem a (re)definir.
 
         Body (contrato oficial Olist ERP v3, confirmado manualmente): LISTA
-        JSON direta `[{"url": ..., "externo": true}]`, sem chave "anexos" —
-        ver `_corpo_anexos()`. Semântica de APPEND assumida (adiciona; o diff
-        via `anexos_do_produto` garante que não reenviamos o que já existe).
+        JSON direta `[{"url": ..., "externo": false}]`, sem chave "anexos" —
+        ver `_corpo_anexos()`.
         """
-        resposta = self.post(f"/produtos/{id_produto}/anexos", json=_corpo_anexos(urls))
+        resposta = self.put(f"/produtos/{id_produto}/anexos", json=_corpo_anexos(urls))
         self._levantar_se_erro(resposta)
         return self._corpo(resposta)
 
@@ -294,13 +301,15 @@ class TinyApiClient:
 
 def _corpo_anexos(urls) -> list[dict]:
     """
-    Body do `POST /produtos/{id}/anexos` — ponto ÚNICO de definição do
-    formato. Contrato oficial (Olist ERP v3, confirmado manualmente na doc):
-    é uma LISTA JSON direta, SEM chave "anexos":
+    Body do `PUT /produtos/{id}/anexos` — ponto ÚNICO de definição do formato.
+    Contrato oficial (Olist ERP v3, confirmado manualmente): LISTA JSON
+    direta, SEM chave "anexos", e `externo=false` para o Tiny BAIXAR e
+    hospedar a imagem (confirmado no MC511 — com `externo=true` a imagem não
+    aparecia no ERP):
 
-        [{"url": "<string>", "externo": true}, ...]
+        [{"url": "<url original do fornecedor>", "externo": false}, ...]
     """
-    return [{"url": url, "externo": True} for url in urls]
+    return [{"url": url, "externo": False} for url in urls]
 
 
 def _base_url_padrao():

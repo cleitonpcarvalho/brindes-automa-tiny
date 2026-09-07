@@ -380,6 +380,36 @@ describe("FornecedorAcordeao", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Já existe uma sincronização em andamento");
   });
 
+  it("assim que o POST está em voo (isPending) o botão vira 'Processando…' e fica desabilitado", () => {
+    vi.mocked(hooks.useSincronizarFornecedor).mockReturnValue(mutacaoParada({ isPending: true }));
+    render(
+      <FornecedorAcordeao
+        statusDetalhe={fornecedorDetalhe({ produtos_total: 0, ultima_execucao_em: null, ultima_execucao_status: null, ultima_execucao: null })}
+        credencial={CREDENCIAL_XBZ}
+        cadencia={CADENCIA_XBZ}
+        slug="loja-x"
+      />
+    );
+
+    // não depende mais de o backend já ter registrado a Execucao como "rodando"
+    expect(screen.getByRole("button", { name: /Processando/ })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /Iniciar carga inicial/ })).not.toBeInTheDocument();
+  });
+
+  it("quando a credencial não está ativa, explica o motivo em vez de um botão silencioso", () => {
+    render(
+      <FornecedorAcordeao
+        statusDetalhe={fornecedorDetalhe({ credencial_ativa: false, produtos_total: 0, ultima_execucao_em: null, ultima_execucao_status: null, ultima_execucao: null })}
+        credencial={{ ...CREDENCIAL_XBZ, ativo: false }}
+        cadencia={CADENCIA_XBZ}
+        slug="loja-x"
+      />
+    );
+
+    expect(screen.getByRole("button", { name: /Iniciar carga inicial/ })).toBeDisabled();
+    expect(screen.getByText(/Ative a credencial deste fornecedor/)).toBeInTheDocument();
+  });
+
   it("exibe os contadores da última carga e o estado real do espelho no painel expandido", () => {
     render(
       <FornecedorAcordeao
@@ -401,6 +431,90 @@ describe("FornecedorAcordeao", () => {
     expect(screen.getByText("Atualizados").nextElementSibling).toHaveTextContent("56");
     expect(screen.getByText("Sem estoque (aguardando)").nextElementSibling).toHaveTextContent("40");
     expect(screen.getByText("Descontinuados (P@)").nextElementSibling).toHaveTextContent("7");
+  });
+});
+
+describe("carga inicial dispara a sincronização de verdade (hook real + fetch mockado)", () => {
+  let hooksReais: typeof hooks;
+  const clientes: QueryClient[] = [];
+
+  beforeAll(async () => {
+    hooksReais = await vi.importActual<typeof hooks>("@/lib/api/hooks");
+  });
+
+  beforeEach(() => {
+    vi.mocked(hooks.useSincronizarFornecedor).mockImplementation(hooksReais.useSincronizarFornecedor);
+  });
+
+  afterEach(() => {
+    clientes.forEach((c) => c.clear());
+    clientes.length = 0;
+    vi.unstubAllGlobals();
+  });
+
+  const DETALHE_FRESCO = fornecedorDetalhe({
+    cor: "nao_configurado",
+    produtos_total: 0,
+    ultima_execucao_em: null,
+    ultima_execucao_status: null,
+    ultima_execucao: null,
+    credencial_ativa: true,
+    credencial_configurada: true,
+  });
+
+  function montar(client: QueryClient) {
+    clientes.push(client);
+    client.setQueryData(["instancias", "detalhe", "loja-x"], { fornecedores: [DETALHE_FRESCO] });
+    client.setQueryData(["instancias", "execucoes", "loja-x", {}], { results: [] });
+    client.setQueryData(["instancias", "listagem", {}], { results: [] });
+    render(
+      <QueryClientProvider client={client}>
+        <FornecedorAcordeao statusDetalhe={DETALHE_FRESCO} credencial={CREDENCIAL_XBZ} cadencia={CADENCIA_XBZ} slug="loja-x" />
+      </QueryClientProvider>,
+    );
+  }
+
+  it("clicar em 'Iniciar carga inicial' faz POST no endpoint certo (instância + fornecedor), sem body", async () => {
+    let concluir!: (r: Response) => void;
+    const fetchMock = vi.fn(() => new Promise<Response>((res) => { concluir = res; }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    montar(client);
+
+    fireEvent.click(screen.getByRole("button", { name: /Iniciar carga inicial/ }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/backend/instancias/loja-x/fornecedores/xbz/sincronizar/",
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: undefined },
+    );
+    // requisito 3: já vira "Processando…" com o POST em voo
+    expect(screen.getByRole("button", { name: /Processando/ })).toBeDisabled();
+
+    concluir(new Response(JSON.stringify({ execucao_id: 7, status: "rodando" }), { status: 202 }));
+
+    // requisito 4: invalida as queries previstas no onSuccess do hook
+    await waitFor(() => {
+      expect(client.getQueryState(["instancias", "detalhe", "loja-x"])?.isInvalidated).toBe(true);
+      expect(client.getQueryState(["instancias", "execucoes", "loja-x", {}])?.isInvalidated).toBe(true);
+      expect(client.getQueryState(["instancias", "listagem", {}])?.isInvalidated).toBe(true);
+    });
+  });
+
+  it("requisito 5: erro do backend (409) aparece no alert existente", async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(new Response(JSON.stringify({ detail: "Já existe uma sincronização em andamento para este fornecedor." }), { status: 409 })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    montar(client);
+
+    fireEvent.click(screen.getByRole("button", { name: /Iniciar carga inicial/ }));
+
+    const alerta = await screen.findByRole("alert");
+    expect(alerta).toHaveTextContent("Já existe uma sincronização em andamento");
+    // e o acordeão não abriu por causa do clique
+    expect(screen.getByRole("button", { name: "Expandir detalhes" })).toBeInTheDocument();
   });
 });
 
@@ -467,7 +581,7 @@ describe("persistência das credenciais pelo BFF", () => {
     return cliente;
   }
 
-  it("envia PUT por instância, preserva ativo e atualiza card/cache com a resposta mascarada antes do refetch", async () => {
+  it("envia PUT por instância, ATIVA a credencial recém-configurada e atualiza card/cache antes do refetch", async () => {
     let concluirPut!: (resposta: Response) => void;
     const putPendente = new Promise<Response>((resolve) => { concluirPut = resolve; });
     // Mantém o refetch pendente para comprovar que a resposta do PUT atualiza a tela imediatamente.
@@ -483,7 +597,8 @@ describe("persistência das credenciais pelo BFF", () => {
       {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ credenciais: { cnpj: "11222333000181", token: "token-ficticio-de-teste" }, ativo: false }),
+        // credencial nova -> nasce ativa (senão o botão de sincronizar fica inerte para sempre)
+        body: JSON.stringify({ credenciais: { cnpj: "11222333000181", token: "token-ficticio-de-teste" }, ativo: true }),
       },
     ));
     expect(screen.getByRole("button", { name: "Salvando…" })).toBeDisabled();

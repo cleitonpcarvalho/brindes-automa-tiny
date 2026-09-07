@@ -51,7 +51,14 @@ export function FornecedorCredenciaisForm({ fornecedor, credencial, slug }: Prop
     setMensagemErro(null)
     try {
       // O PUT substitui o conjunto completo; máscaras nunca entram no payload.
-      await atualizar.mutateAsync({ credenciais: valores, ativo: credencial.ativo })
+      // Uma credencial recém-configurada nasce ATIVA (é o default do backend e
+      // o que o operador espera ao terminar de preencher) — senão o botão de
+      // sincronizar/carga inicial fica desabilitado para sempre. Ao editar uma
+      // credencial já existente, preserva o estado atual (`ativo`).
+      await atualizar.mutateAsync({
+        credenciais: valores,
+        ativo: credencial.configurado ? credencial.ativo : true,
+      })
       encerrarEdicao()
     } catch (erro) {
       setMensagemErro(erro instanceof ApiError

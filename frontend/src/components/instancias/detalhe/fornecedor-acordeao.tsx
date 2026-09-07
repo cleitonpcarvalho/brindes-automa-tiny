@@ -46,8 +46,11 @@ export function FornecedorAcordeao({
     : ROTULO_POR_COR[statusDetalhe.cor]
 
   const rodando = statusDetalhe.ultima_execucao_status === "rodando"
+  // "Processando…" tanto no POST em voo (isPending) quanto depois que o backend
+  // já registrou a Execucao como rodando — o operador vê a mudança na hora.
+  const processando = rodando || sincronizar.isPending
   const nuncaImportou = statusDetalhe.produtos_total === 0 && !statusDetalhe.ultima_execucao_em
-  const rotuloBotao = rodando
+  const rotuloBotao = processando
     ? "Processando…"
     : nuncaImportou
       ? "Iniciar carga inicial"
@@ -55,6 +58,9 @@ export function FornecedorAcordeao({
   const erroSincronizar = sincronizar.isError
     ? (sincronizar.error as Error | undefined)?.message ?? "Não foi possível iniciar a sincronização."
     : null
+  // Botão inerte por falta de credencial ativa: explica o porquê em vez de
+  // ficar "clicável mas sem efeito".
+  const bloqueadoPorCredencial = !statusDetalhe.credencial_ativa && !processando
 
   const descricao = statusDetalhe.ultima_execucao_em
     ? `${statusDetalhe.ultima_execucao_status === "falha" ? "falha " : ""}${formatarTempoRelativo(statusDetalhe.ultima_execucao_em)} · ${formatarNumero(statusDetalhe.produtos_total)} produtos sincronizados · intervalo ${cadencia.intervalo_minutos ?? 60}min`
@@ -85,7 +91,7 @@ export function FornecedorAcordeao({
             o clique "atravessava" para o cabeçalho e só alternava o acordeão.
           */}
           <span
-            className="inline-flex"
+            className="inline-flex flex-col items-end gap-1"
             role="presentation"
             onClick={(event) => event.stopPropagation()}
           >
@@ -93,14 +99,19 @@ export function FornecedorAcordeao({
               variant="secondary"
               size="sm"
               onClick={() => sincronizar.mutate()}
-              disabled={!statusDetalhe.credencial_ativa || sincronizar.isPending || rodando}
+              disabled={!statusDetalhe.credencial_ativa || processando}
             >
               <RefreshCw
                 size={14}
-                className={sincronizar.isPending || rodando ? "animate-spin" : undefined}
+                className={processando ? "animate-spin" : undefined}
               />
               {rotuloBotao}
             </Button>
+            {bloqueadoPorCredencial && (
+              <span className="text-caption-label text-muted-foreground">
+                Ative a credencial deste fornecedor para iniciar.
+              </span>
+            )}
           </span>
           <button
             type="button"

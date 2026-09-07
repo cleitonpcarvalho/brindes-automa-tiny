@@ -127,10 +127,13 @@ class TinyApiClient:
         return resposta.json()
 
     def criar_produto(self, payload: dict) -> dict:
-        """POST /produtos — cria um produto tipo 'S' (Simples). Uma Variacao = um produto."""
+        """
+        POST /produtos — cria um produto tipo 'S' (Simples). Uma Variacao = um
+        produto. O Tiny responde HTTP 201 com {"id", "codigo", "descricao"}.
+        """
         resposta = self.post("/produtos", json=payload)
         self._levantar_se_erro(resposta)
-        return resposta.json()
+        return self._corpo(resposta)
 
     def atualizar_preco_venda(self, id_produto, *, preco) -> dict:
         """
@@ -144,7 +147,7 @@ class TinyApiClient:
         """
         resposta = self.put(f"/produtos/{id_produto}/preco", json={"preco": float(preco)})
         self._levantar_se_erro(resposta)
-        return resposta.json()
+        return self._corpo(resposta)
 
     def atualizar_estoque(self, id_produto, *, quantidade, preco_unitario) -> dict:
         """
@@ -167,19 +170,26 @@ class TinyApiClient:
             },
         )
         self._levantar_se_erro(resposta)
-        return resposta.json()
+        return self._corpo(resposta)
 
     @staticmethod
     def _levantar_se_erro(resposta: requests.Response):
-        if resposta.status_code == 200:
+        # Sucesso é QUALQUER 2xx — o Tiny responde 201 no POST /produtos,
+        # e pode responder 200/204 nos PUT/POST de preço e estoque.
+        if 200 <= resposta.status_code < 300:
             return
-        corpo = {}
+        corpo = TinyApiClient._corpo(resposta)
+        mensagem = corpo.get("mensagem") or f"Tiny retornou {resposta.status_code}: {resposta.text[:300]}"
+        raise TinyApiValidationError(mensagem, corpo.get("detalhes"))
+
+    @staticmethod
+    def _corpo(resposta: requests.Response) -> dict:
+        """Corpo JSON (objeto) da resposta, ou {} quando não há corpo (ex.: 204) / não é objeto."""
         try:
             corpo = resposta.json()
         except ValueError:
-            pass
-        mensagem = corpo.get("mensagem") or f"Tiny retornou {resposta.status_code}: {resposta.text[:300]}"
-        raise TinyApiValidationError(mensagem, corpo.get("detalhes"))
+            return {}
+        return corpo if isinstance(corpo, dict) else {}
 
     # -- mecânica interna ----------------------------------------------------
 

@@ -206,6 +206,46 @@ class DominioProdutosTests(TestCase):
 
     @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
     @patch("apps.instancias.tiny_client.requests.request")
+    def test_criar_produto_aceita_http_201_como_sucesso(self, mock_request):
+        """Bug real de produção: o Tiny responde 201 no POST /produtos e o cliente tratava como erro."""
+        instancia = _instancia()
+        mock_request.return_value = _resposta(
+            201,
+            {},
+            {"id": 924252038, "codigo": "X000019", "descricao": "CANECA ACRÍLICA 400 ML COM TAMPA"},
+        )
+
+        cliente = TinyApiClient(instancia, sleep_fn=lambda s: None, limiter=LimiterFalso())
+        resultado = cliente.criar_produto({"sku": "X000019", "tipo": "S", "descricao": "x"})
+
+        self.assertEqual(resultado["id"], 924252038)
+        self.assertEqual(resultado["codigo"], "X000019")
+
+    @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.requests.request")
+    def test_metodos_de_escrita_aceitam_2xx_sem_corpo(self, mock_request):
+        """PUT/POST de preço e estoque podem responder 200/204 (com ou sem body)."""
+        instancia = _instancia()
+        sem_corpo = Mock(status_code=204, headers={}, text="")
+        sem_corpo.json.side_effect = ValueError("no body")
+        mock_request.return_value = sem_corpo
+
+        cliente = TinyApiClient(instancia, sleep_fn=lambda s: None, limiter=LimiterFalso())
+        self.assertEqual(cliente.atualizar_preco_venda(1, preco=9), {})
+        self.assertEqual(cliente.atualizar_estoque(1, quantidade=1, preco_unitario=1), {})
+
+    @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.requests.request")
+    def test_status_5xx_continua_sendo_erro(self, mock_request):
+        instancia = _instancia()
+        mock_request.return_value = _resposta(500, {}, {"mensagem": "erro interno"})
+
+        cliente = TinyApiClient(instancia, sleep_fn=lambda s: None, limiter=LimiterFalso())
+        with self.assertRaises(TinyApiValidationError):
+            cliente.criar_produto({"sku": "ABC-1"})
+
+    @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.requests.request")
     def test_criar_produto_com_erro_levanta_validationerror_com_detalhes(self, mock_request):
         instancia = _instancia()
         mock_request.return_value = _resposta(

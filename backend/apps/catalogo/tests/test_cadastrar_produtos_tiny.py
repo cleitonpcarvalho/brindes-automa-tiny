@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from apps.instancias.models import Instancia
 from apps.instancias.tiny_client import TinyApiValidationError
@@ -76,6 +76,37 @@ class CadastroCriaProdutoTests(TestCase):
         self.assertEqual(variacao.status, StatusVariacao.CADASTRADO)
         self.assertIsNotNone(variacao.cadastrado_em)
         mock_criar.assert_called_once()
+
+    @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.requests.request")
+    def test_http_201_do_tiny_e_tratado_como_sucesso_ponta_a_ponta(self, mock_request):
+        """Regressão do 1º teste real: Tiny responde 201 no POST /produtos."""
+        from unittest.mock import Mock
+
+        instancia = _instancia_pronta()
+        variacao = _variacao_pendente(instancia, "X000019", nome="CANECA ACRÍLICA 400 ML COM TAMPA")
+
+        def handler(metodo, url, **kw):
+            r = Mock(headers={}, text="")
+            if metodo == "GET":  # buscar_produto_por_sku: SKU ainda não existe
+                r.status_code = 200
+                r.json.return_value = {"itens": []}
+            else:  # POST /produtos
+                r.status_code = 201
+                r.json.return_value = {
+                    "id": 924252038, "codigo": "X000019",
+                    "descricao": "CANECA ACRÍLICA 400 ML COM TAMPA",
+                }
+            return r
+
+        mock_request.side_effect = handler
+        call_command("cadastrar_produtos_tiny", instancia.slug)
+
+        variacao.refresh_from_db()
+        self.assertEqual(variacao.status, StatusVariacao.CADASTRADO)
+        self.assertEqual(variacao.tiny_id, "924252038")
+        self.assertEqual(variacao.ultimo_erro, "")
+        self.assertEqual(variacao.preco_tiny_sincronizado, variacao.preco)
 
     @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
     @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")

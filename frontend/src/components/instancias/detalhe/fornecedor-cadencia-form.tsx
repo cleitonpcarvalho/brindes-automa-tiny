@@ -53,7 +53,11 @@ export function FornecedorCadenciaForm({ fornecedor, cadencia, slug }: Props) {
           <p className="text-body-medium text-foreground">Sincronização ativa</p>
           <p className="text-caption-label text-muted-foreground">Executar rotina programada automaticamente</p>
         </div>
-        <Switch checked={cadencia.ativo} onCheckedChange={(marcado) => atualizar.mutate({ ativo: marcado })} />
+        <Switch
+          aria-label="Sincronização ativa"
+          checked={cadencia.ativo}
+          onCheckedChange={(marcado) => atualizar.mutate({ ativo: marcado })}
+        />
       </div>
 
       {mensagemErro && <p className="text-caption-label text-error">{mensagemErro}</p>}

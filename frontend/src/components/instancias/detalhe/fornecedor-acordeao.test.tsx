@@ -432,6 +432,102 @@ describe("FornecedorAcordeao", () => {
     expect(screen.getByText("Sem estoque (aguardando)").nextElementSibling).toHaveTextContent("40");
     expect(screen.getByText("Descontinuados (P@)").nextElementSibling).toHaveTextContent("7");
   });
+
+  // ---- controle "Credencial ativa" (distinto de "Sincronização ativa") ----
+
+  const XBZ_CONFIG_INATIVA: CredencialFornecedorResposta = { ...CREDENCIAL_XBZ, ativo: false, configurado: true };
+
+  function renderInativa(overridesDetalhe = {}) {
+    render(
+      <FornecedorAcordeao
+        statusDetalhe={fornecedorDetalhe({ cor: "nao_configurado", credencial_configurada: true, credencial_ativa: false, ...overridesDetalhe })}
+        credencial={XBZ_CONFIG_INATIVA}
+        cadencia={CADENCIA_XBZ}
+        slug="loja-x"
+        defaultExpanded
+      />
+    );
+  }
+
+  it("o switch 'Credencial ativa' reflete credencial.ativo e é somente leitura fora do modo edição", () => {
+    renderInativa();
+    const sw = screen.getByRole("switch", { name: "Credencial ativa" });
+    expect(sw).not.toBeChecked();
+    expect(sw).toBeDisabled();
+    expect(screen.getByText(/Inativa — clique em .Editar. para ativar/)).toBeInTheDocument();
+    // é outro controle, não o da cadência
+    expect(screen.getByRole("switch", { name: "Sincronização ativa" })).toBeInTheDocument();
+  });
+
+  it("ativa uma credencial existente inativa: Editar → liga o switch → reinforma segredos → Salvar envia ativo:true", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(hooks.useAtualizarCredencial).mockReturnValue(mutacaoParada({ mutateAsync }));
+    renderInativa();
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Credencial ativa" }));
+    fireEvent.change(screen.getByLabelText("CNPJ"), { target: { value: "11222333000181" } });
+    fireEvent.change(screen.getByLabelText("Token"), { target: { value: "tok" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+
+    await waitFor(() =>
+      expect(mutateAsync).toHaveBeenCalledWith({
+        credenciais: { cnpj: "11222333000181", token: "tok" },
+        ativo: true,
+      })
+    );
+  });
+
+  it("desativa uma credencial ativa: Editar → desliga o switch → Salvar envia ativo:false", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(hooks.useAtualizarCredencial).mockReturnValue(mutacaoParada({ mutateAsync }));
+    render(
+      <FornecedorAcordeao
+        statusDetalhe={fornecedorDetalhe({})}
+        credencial={CREDENCIAL_XBZ}
+        cadencia={CADENCIA_XBZ}
+        slug="loja-x"
+        defaultExpanded
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar" }));
+    expect(screen.getByRole("switch", { name: "Credencial ativa" })).toBeChecked();
+    fireEvent.click(screen.getByRole("switch", { name: "Credencial ativa" }));
+    fireEvent.change(screen.getByLabelText("CNPJ"), { target: { value: "11222333000181" } });
+    fireEvent.change(screen.getByLabelText("Token"), { target: { value: "tok" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+
+    await waitFor(() =>
+      expect(mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ ativo: false }))
+    );
+  });
+
+  it("credencial nova: o switch 'Credencial ativa' já vem ligado ao editar", () => {
+    render(
+      <FornecedorAcordeao
+        statusDetalhe={fornecedorDetalhe({ cor: "nao_configurado", credencial_configurada: false, credencial_ativa: false })}
+        credencial={{ ...CREDENCIAL_XBZ, ativo: false, configurado: false, campos_mascarados: { cnpj: null, token: null } }}
+        cadencia={CADENCIA_XBZ}
+        slug="loja-x"
+        defaultExpanded
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar" }));
+    expect(screen.getByRole("switch", { name: "Credencial ativa" })).toBeChecked();
+  });
+
+  it("ativar a credencial NÃO mexe na cadência (estados independentes)", () => {
+    const cadenciaMutate = vi.fn();
+    vi.mocked(hooks.useAtualizarCadencia).mockReturnValue(mutacaoParada({ mutate: cadenciaMutate }));
+    renderInativa();
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Credencial ativa" }));
+
+    expect(cadenciaMutate).not.toHaveBeenCalled();
+  });
 });
 
 describe("carga inicial dispara a sincronização de verdade (hook real + fetch mockado)", () => {

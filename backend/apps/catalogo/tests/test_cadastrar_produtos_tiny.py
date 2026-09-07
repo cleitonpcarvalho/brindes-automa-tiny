@@ -259,11 +259,11 @@ class DimensoesAnexosEGarantiaNoPayloadTests(TestCase):
 
     @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
     @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
-    def test_payload_monta_anexos_a_partir_das_imagens_do_espelho(self, mock_buscar, mock_criar):
+    def test_payload_de_criacao_nunca_mais_manda_anexos(self, mock_buscar, mock_criar):
+        """Imagens saíram do POST /produtos (MC511: anexo na criação não apareceu no ERP)."""
         instancia = _instancia_pronta()
         _variacao_pendente(
-            instancia,
-            "SKU-IMG",
+            instancia, "SKU-IMG",
             imagens=["https://cdn.exemplo.com/a.jpg", "https://cdn.exemplo.com/b.jpg"],
         )
         mock_buscar.return_value = None
@@ -271,43 +271,22 @@ class DimensoesAnexosEGarantiaNoPayloadTests(TestCase):
 
         call_command("cadastrar_produtos_tiny", instancia.slug)
 
-        payload = mock_criar.call_args[0][0]
-        self.assertEqual(
-            payload["anexos"],
-            [
-                {"url": "https://cdn.exemplo.com/a.jpg", "externo": True},
-                {"url": "https://cdn.exemplo.com/b.jpg", "externo": True},
-            ],
+        self.assertNotIn("anexos", mock_criar.call_args[0][0])
+
+    def test_imagens_utilizaveis_filtra_vazias_dedup_e_limita_a_cinco(self):
+        from ..management.commands.cadastrar_produtos_tiny import (
+            MAX_ANEXOS_POR_PRODUTO,
+            imagens_utilizaveis,
         )
 
-    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
-    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
-    def test_anexos_respeitam_o_limite_maximo(self, mock_buscar, mock_criar):
-        from ..management.commands.cadastrar_produtos_tiny import MAX_ANEXOS_POR_PRODUTO
-
         instancia = _instancia_pronta()
-        muitas_imagens = [f"https://cdn.exemplo.com/{i}.jpg" for i in range(MAX_ANEXOS_POR_PRODUTO + 5)]
-        _variacao_pendente(instancia, "SKU-MUITAS-IMG", imagens=muitas_imagens)
-        mock_buscar.return_value = None
-        mock_criar.return_value = {"id": 1}
-
-        call_command("cadastrar_produtos_tiny", instancia.slug)
-
-        payload = mock_criar.call_args[0][0]
-        self.assertEqual(len(payload["anexos"]), MAX_ANEXOS_POR_PRODUTO)
-
-    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
-    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
-    def test_sem_imagens_nao_inclui_anexos(self, mock_buscar, mock_criar):
-        instancia = _instancia_pronta()
-        _variacao_pendente(instancia, "SKU-SEM-IMG")
-        mock_buscar.return_value = None
-        mock_criar.return_value = {"id": 1}
-
-        call_command("cadastrar_produtos_tiny", instancia.slug)
-
-        payload = mock_criar.call_args[0][0]
-        self.assertNotIn("anexos", payload)
+        v = _variacao_pendente(
+            instancia, "SKU-U",
+            imagens=["a", "", None, "  ", "a", "b"] + [f"u{i}" for i in range(10)],
+        )
+        urls = imagens_utilizaveis(v)
+        self.assertEqual(urls[:3], ["a", "b", "u0"])          # vazias e duplicata "a" removidas
+        self.assertEqual(len(urls), MAX_ANEXOS_POR_PRODUTO)   # limitado a 5
 
     @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
     @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")

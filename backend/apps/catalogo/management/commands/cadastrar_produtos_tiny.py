@@ -360,6 +360,13 @@ def montar_payload_produto(variacao, instancia):
     leva `controlar=true` e `inicial` = estoque atual da Variacao. A fila só
     contém variações com `estoque > 0` (estoque <= 0 é BLOQUEADO), então
     `inicial` é sempre positivo aqui.
+
+    IMAGENS: NÃO vão mais no payload de criação. No 1º teste real (MC511) o
+    `anexos` foi enviado na criação e a imagem não apareceu no ERP. As
+    imagens são sincronizadas DEPOIS, com o `tiny_id` já confirmado, pelo
+    endpoint específico `POST /produtos/{id}/anexos` (comando
+    `sincronizar_imagens_tiny`). Ausência de imagem nunca bloqueia o
+    cadastro.
     """
     payload = {
         "sku": variacao.sku,
@@ -377,10 +384,6 @@ def montar_payload_produto(variacao, instancia):
     dimensoes = _montar_dimensoes(variacao)
     if dimensoes:
         payload["dimensoes"] = dimensoes
-
-    anexos = _montar_anexos(variacao)
-    if anexos:
-        payload["anexos"] = anexos
 
     garantia = (variacao.atributos or {}).get("garantia_do_produto")
     if garantia:
@@ -412,10 +415,20 @@ def _montar_dimensoes(variacao):
     return preenchidos or None
 
 
-def _montar_anexos(variacao):
+def imagens_utilizaveis(variacao):
     """
-    Imagens já normalizadas no espelho (`Variacao.imagens`) viram anexos
-    externos — o Tiny só guarda o link. Limitado a MAX_ANEXOS_POR_PRODUTO.
+    URLs de imagem REAIS do espelho (`Variacao.imagens`) que devem ser
+    replicadas no Tiny: só strings não vazias, sem duplicatas, na ordem
+    original, no máximo MAX_ANEXOS_POR_PRODUTO.
+
+    Nada de inventar URL — para a Spot, `Variacao.imagens` já vem vazia
+    quando `ConfiguracaoFornecedor.url_base_imagens` não está configurado.
+    Usada pelo comando `sincronizar_imagens_tiny`.
     """
-    urls = [u for u in (variacao.imagens or []) if u][:MAX_ANEXOS_POR_PRODUTO]
-    return [{"url": url, "externo": True} for url in urls]
+    vistas = set()
+    urls = []
+    for item in variacao.imagens or []:
+        if isinstance(item, str) and item.strip() and item.strip() not in vistas:
+            urls.append(item.strip())
+            vistas.add(item.strip())
+    return urls[:MAX_ANEXOS_POR_PRODUTO]

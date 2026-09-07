@@ -135,6 +135,42 @@ class TinyApiClient:
         self._levantar_se_erro(resposta)
         return self._corpo(resposta)
 
+    def anexos_do_produto(self, id_produto) -> list[str]:
+        """
+        URLs dos anexos (imagens/links) que o produto JÁ tem no Tiny.
+
+        Lê do `GET /produtos/{id}` (o `anexos` só vem no detalhe — ver
+        `catalogo.ProdutoTiny`). Cada anexo é um objeto; extraímos só a
+        `url`, ignorando entradas sem url. Usado para diff/idempotência
+        antes de qualquer POST de anexo.
+        """
+        detalhe = self.obter_produto(id_produto)
+        anexos = detalhe.get("anexos") or []
+        urls = []
+        for anexo in anexos:
+            url = anexo.get("url") if isinstance(anexo, dict) else None
+            if isinstance(url, str) and url.strip():
+                urls.append(url.strip())
+        return urls
+
+    def adicionar_anexos_produto(self, id_produto, urls) -> dict:
+        """
+        Adiciona anexos externos (links de imagem) a um produto já existente
+        no Tiny, pelo endpoint específico `POST /produtos/{idProduto}/anexos`.
+
+        Só links reais (o Tiny apenas guarda a URL, `externo=true`, sem subir
+        arquivo). Quem chama garante: URLs não vazias, no máximo 5, e que
+        ainda não estão no produto (diff via `anexos_do_produto`).
+
+        Body (contrato oficial Olist ERP v3, confirmado manualmente): LISTA
+        JSON direta `[{"url": ..., "externo": true}]`, sem chave "anexos" —
+        ver `_corpo_anexos()`. Semântica de APPEND assumida (adiciona; o diff
+        via `anexos_do_produto` garante que não reenviamos o que já existe).
+        """
+        resposta = self.post(f"/produtos/{id_produto}/anexos", json=_corpo_anexos(urls))
+        self._levantar_se_erro(resposta)
+        return self._corpo(resposta)
+
     def atualizar_preco_venda(self, id_produto, *, preco) -> dict:
         """
         Atualiza SOMENTE o preço de VENDA de um produto, pelo endpoint
@@ -254,6 +290,17 @@ class TinyApiClient:
                 pass
         espera = min(self.BACKOFF_BASE_SEGUNDOS * (2 ** (tentativa - 1)), self.BACKOFF_MAXIMO_SEGUNDOS)
         self._sleep(espera)
+
+
+def _corpo_anexos(urls) -> list[dict]:
+    """
+    Body do `POST /produtos/{id}/anexos` — ponto ÚNICO de definição do
+    formato. Contrato oficial (Olist ERP v3, confirmado manualmente na doc):
+    é uma LISTA JSON direta, SEM chave "anexos":
+
+        [{"url": "<string>", "externo": true}, ...]
+    """
+    return [{"url": url, "externo": True} for url in urls]
 
 
 def _base_url_padrao():

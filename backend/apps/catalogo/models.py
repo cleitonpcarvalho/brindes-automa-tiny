@@ -179,6 +179,14 @@ class Variacao(models.Model):
         "sincronização de preço. NÃO confundir com o precoUnitario do movimento de "
         "estoque (que é custo do balanço, não preço de venda).",
     )
+    imagens_tiny_sincronizadas = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="URLs de imagem que o comando `sincronizar_imagens_tiny` já "
+        "confirmou estarem nos anexos do produto no Tiny. Serve de marcador para "
+        "não reenviar/duplicar em reexecuções; a verificação real é sempre feita "
+        "contra o GET /produtos/{id} antes de qualquer POST de anexo.",
+    )
 
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)

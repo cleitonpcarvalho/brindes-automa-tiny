@@ -15,7 +15,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.catalogo.models import StatusVariacao, Variacao
-from apps.catalogo.serializers import VariacaoEspelhoSerializer
+from apps.catalogo.serializers import VariacaoDetalheSerializer, VariacaoEspelhoSerializer
 from apps.fornecedores.models import CadenciaFornecedor
 from apps.fornecedores.services import (
     checar_limite_diario_xbz,
@@ -440,6 +440,29 @@ class ProdutosEspelhoView(generics.ListAPIView):
             queryset = queryset.filter(status=status_variacao)
 
         return queryset
+
+
+class VariacaoDetalheView(generics.RetrieveAPIView):
+    """
+    GET /api/instancias/<slug>/produtos/<variacao_id>/ — detalhe somente
+    leitura de UMA variação (SKU) do espelho local desta instância.
+
+    Não dispara sincronização, não fala com fornecedor nem com o Tiny.
+
+    Isolamento: a variação é resolvida por (id E produto__instancia__slug)
+    numa consulta só — pedir o id de uma variação de outra instância
+    devolve 404, nunca os dados dela. O Produto-pai vem no mesmo hit via
+    `select_related`.
+    """
+
+    serializer_class = VariacaoDetalheSerializer
+
+    def get_object(self):
+        return get_object_or_404(
+            Variacao.objects.select_related("produto", "produto__instancia"),
+            id=self.kwargs["variacao_id"],
+            produto__instancia__slug=self.kwargs["slug"],
+        )
 
 
 @extend_schema_view(

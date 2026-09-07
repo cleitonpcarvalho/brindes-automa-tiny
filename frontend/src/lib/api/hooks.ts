@@ -25,6 +25,7 @@ import type {
   StatusExecucao,
   StatusInstancia,
   StatusVariacao,
+  VariacaoDetalhe,
 } from "./types";
 
 /** Sessão do operador — também serve para confirmar que o token ainda é válido. */
@@ -173,6 +174,22 @@ export function useProdutosInstancia(slug: string, filtros: FiltrosProdutos = {}
       ),
     enabled: Boolean(slug),
     placeholderData: (dadosAnteriores) => dadosAnteriores,
+  });
+}
+
+/**
+ * Detalhe de UMA variação (SKU) do espelho local desta instância — a tela
+ * /instancias/<slug>/produtos/<id>. Só consulta; nenhuma sincronização,
+ * nada é escrito no Tiny. 404 (variação inexistente ou de outra instância)
+ * chega como ApiError e a tela mostra o estado "não encontrada".
+ */
+export function useVariacaoInstancia(slug: string, variacaoId: string | number) {
+  return useQuery({
+    queryKey: ["instancias", "produtos", "detalhe", slug, String(variacaoId)],
+    queryFn: () =>
+      apiClient.get<VariacaoDetalhe>(`/instancias/${slug}/produtos/${variacaoId}`),
+    enabled: Boolean(slug && variacaoId),
+    retry: false,
   });
 }
 

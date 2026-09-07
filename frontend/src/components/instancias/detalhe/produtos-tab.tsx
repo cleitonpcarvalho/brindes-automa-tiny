@@ -9,19 +9,12 @@ import { useProdutosInstancia } from "@/lib/api/hooks"
 import { formatarNumero } from "@/lib/format"
 import { ROTULO_FORNECEDOR } from "../cor-fornecedor"
 import { ProdutosTabela } from "./produtos-tabela"
+import { ROTULO_STATUS_VARIACAO } from "./variacao-status"
 import type { FornecedorEnum, StatusVariacao } from "@/lib/api/types"
 
 const TAMANHO_PAGINA = 20
 
 const FORNECEDORES: FornecedorEnum[] = ["xbz", "asia", "somarcas", "spot"]
-
-const ROTULO_STATUS: Record<StatusVariacao, string> = {
-  pendente: "Pendente",
-  aguardando: "Aguardando reposição",
-  cadastrado: "Cadastrado no Tiny",
-  descontinuado: "Descontinuado",
-  erro: "Erro ao cadastrar",
-}
 
 export function ProdutosTab({ slug }: { slug: string }) {
   const [buscaInput, setBuscaInput] = useState("")
@@ -105,9 +98,9 @@ export function ProdutosTab({ slug }: { slug: string }) {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="todos">Situação: Todas</SelectItem>
-            {(Object.keys(ROTULO_STATUS) as StatusVariacao[]).map((valor) => (
+            {(Object.keys(ROTULO_STATUS_VARIACAO) as StatusVariacao[]).map((valor) => (
               <SelectItem key={valor} value={valor}>
-                {ROTULO_STATUS[valor]}
+                {ROTULO_STATUS_VARIACAO[valor]}
               </SelectItem>
             ))}
           </SelectContent>
@@ -115,6 +108,7 @@ export function ProdutosTab({ slug }: { slug: string }) {
       </div>
 
       <ProdutosTabela
+        slug={slug}
         itens={data?.results ?? []}
         isLoading={isLoading}
         isError={isError}

@@ -21,6 +21,7 @@ export type ExecucaoResumida = components["schemas"]["ExecucaoResumida"];
 
 export type VariacaoEspelho = components["schemas"]["VariacaoEspelho"];
 export type PaginatedVariacaoEspelhoList = components["schemas"]["PaginatedVariacaoEspelhoList"];
+export type VariacaoDetalhe = components["schemas"]["VariacaoDetalhe"];
 export type StatusVariacao = components["schemas"]["StatusVariacaoEnum"];
 
 export type ConfiguracoesInstancia = components["schemas"]["ConfiguracoesInstancia"];

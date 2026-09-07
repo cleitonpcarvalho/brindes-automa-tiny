@@ -14,6 +14,7 @@ from .views import (
     ProdutosEspelhoView,
     SincronizarFornecedorView,
     TinyOAuthCallbackView,
+    VariacaoDetalheView,
 )
 
 router = DefaultRouter()
@@ -59,6 +60,11 @@ urlpatterns = router.urls + [
         "instancias/<slug:slug>/produtos/",
         ProdutosEspelhoView.as_view(),
         name="instancia-produtos",
+    ),
+    path(
+        "instancias/<slug:slug>/produtos/<int:variacao_id>/",
+        VariacaoDetalheView.as_view(),
+        name="instancia-produto-detalhe",
     ),
     path(
         "instancias/<slug:slug>/execucoes/",

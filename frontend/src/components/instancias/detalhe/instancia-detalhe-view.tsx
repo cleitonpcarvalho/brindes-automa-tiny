@@ -19,8 +19,14 @@ export function InstanciaDetalheView({ slug }: { slug: string }) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const autorizado = searchParams.get("autorizado") === "1"
+  // `?tab=` permite voltar direto para uma aba específica — usado pelo
+  // botão "Voltar para Produtos" da tela de detalhe da variação.
+  const abaInicial =
+    ["visao-geral", "fornecedores", "produtos", "execucoes", "configuracoes"].find(
+      (valor) => valor === searchParams.get("tab"),
+    ) ?? (autorizado ? "fornecedores" : "visao-geral")
 
-  const [aba, setAba] = useState(autorizado ? "fornecedores" : "visao-geral")
+  const [aba, setAba] = useState(abaInicial)
   const [mostrarBannerSucesso, setMostrarBannerSucesso] = useState(autorizado)
 
   const { data: instancia, isLoading, isError, refetch } = useInstancia(slug)

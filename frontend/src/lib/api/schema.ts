@@ -419,6 +419,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/instancias/{slug}/produtos/{variacao_id}/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description GET /api/instancias/<slug>/produtos/<variacao_id>/ — detalhe somente
+         *     leitura de UMA variação (SKU) do espelho local desta instância.
+         *
+         *     Não dispara sincronização, não fala com fornecedor nem com o Tiny.
+         *
+         *     Isolamento: a variação é resolvida por (id E produto__instancia__slug)
+         *     numa consulta só — pedir o id de uma variação de outra instância
+         *     devolve 404, nunca os dados dela. O Produto-pai vem no mesmo hit via
+         *     `select_related`.
+         */
+        get: operations["instancias_produtos_retrieve"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/schema/": {
         parameters: {
             query?: never;
@@ -1055,6 +1082,96 @@ export interface components {
             fornecedor: (components["schemas"]["FornecedorEnum"] | components["schemas"]["NullEnum"]) | null;
         };
         /**
+         * @description Detalhe de UMA variação (SKU) do espelho local — a tela
+         *     `/instancias/<slug>/produtos/<id>`. Somente leitura.
+         *
+         *     Junta, achatados via `source`, os campos do Produto-pai e todos os
+         *     campos úteis da própria Variacao (dimensões, pesos, atributos
+         *     normalizados, marcadores de sincronização, timestamps). NÃO expõe
+         *     `payload_bruto` (cru do fornecedor, volumoso) — nada sensível vive aqui
+         *     (credenciais/tokens ficam em CredencialFornecedor/Instancia).
+         *
+         *     A tela se adapta ao que existir: campos vazios/nulos são "—" ou
+         *     omitidos no frontend; cada fornecedor preenche um subconjunto diferente.
+         */
+        VariacaoDetalhe: {
+            readonly id: number;
+            readonly fornecedor: components["schemas"]["FornecedorEnum"];
+            readonly fornecedor_rotulo: string;
+            readonly produto_id: number;
+            readonly produto_codigo_pai: string;
+            readonly produto_nome: string;
+            readonly produto_descricao: string;
+            readonly produto_categorias: unknown;
+            readonly produto_imagens: unknown;
+            readonly produto_atributos: unknown;
+            readonly produto_descontinuado: boolean;
+            /** Format: date-time */
+            readonly produto_atualizado_em_fornecedor: string | null;
+            sku: string;
+            nome: string;
+            /** @description NCM brasileiro. Na Spot o campo de origem é o 'Taric': o normalizador (apps/fornecedores/spot.py, _ncm_do_taric) aproveita só quando ele tem 8 dígitos (~95,5% da amostra) e nunca trunca os códigos CN10/TARIC da UE de 9-10 dígitos; o valor cru fica sempre em atributos['taric']. Backfill dos registros antigos: backfill_ncm_spot. */
+            ncm?: string;
+            /** Format: decimal */
+            preco: string;
+            estoque?: number;
+            cor?: string;
+            tamanho?: string;
+            capacidade?: string;
+            /**
+             * Format: double
+             * @description Centímetros.
+             */
+            largura?: number | null;
+            /**
+             * Format: double
+             * @description Centímetros.
+             */
+            altura?: number | null;
+            /**
+             * Format: double
+             * @description Centímetros.
+             */
+            comprimento?: number | null;
+            /**
+             * Format: double
+             * @description Centímetros.
+             */
+            diametro?: number | null;
+            /**
+             * Format: double
+             * @description Quilogramas.
+             */
+            peso_liquido?: number | null;
+            /**
+             * Format: double
+             * @description Quilogramas.
+             */
+            peso_bruto?: number | null;
+            imagens?: unknown;
+            atributos?: unknown;
+            status?: components["schemas"]["StatusVariacaoEnum"];
+            readonly status_rotulo: string;
+            tiny_id?: string | null;
+            ultimo_erro?: string;
+            /** Format: date-time */
+            cadastrado_em?: string | null;
+            /** Format: date-time */
+            readonly criado_em: string;
+            /** Format: date-time */
+            readonly atualizado_em: string;
+            /** @description Último valor de estoque efetivamente enviado ao Tiny. Enquanto for diferente de `estoque` (ou nulo), o comando de atualização de estoque considera esta variação pendente de sincronização. */
+            estoque_tiny_sincronizado?: number | null;
+            /**
+             * Format: decimal
+             * @description Último preço de VENDA (precos.preco) efetivamente publicado no cadastro do produto no Tiny. Enquanto for diferente de `preco` (ou nulo), o comando `sincronizar_preco_tiny` considera esta variação pendente de sincronização de preço. NÃO confundir com o precoUnitario do movimento de estoque (que é custo do balanço, não preço de venda).
+             */
+            preco_tiny_sincronizado?: string | null;
+            /** @description URLs de imagem que o comando `sincronizar_imagens_tiny` já confirmou estarem nos anexos do produto no Tiny. Serve de marcador para não reenviar/duplicar em reexecuções; a verificação real é sempre feita contra o GET /produtos/{id} antes de qualquer POST de anexo. */
+            imagens_tiny_sincronizadas?: unknown;
+            hash_conteudo?: string;
+        };
+        /**
          * @description Uma linha da aba "Produtos" do detalhe da instância.
          *
          *     A unidade é a Variacao — o SKU. É ela, não o Produto-pai, que vira um
@@ -1681,6 +1798,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PaginatedVariacaoEspelhoList"];
+                };
+            };
+        };
+    };
+    instancias_produtos_retrieve: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                variacao_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VariacaoDetalhe"];
                 };
             };
         };

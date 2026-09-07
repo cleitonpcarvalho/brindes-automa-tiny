@@ -1,22 +1,16 @@
+"use client"
+
+import { useRouter } from "next/navigation"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { formatarNumero } from "@/lib/format"
 import { ROTULO_FORNECEDOR } from "../cor-fornecedor"
+import { varianteBadgeStatus } from "./variacao-status"
 import type { VariacaoEspelho } from "@/lib/api/types"
 
 const COLUNAS = 7
-
-// `status` da Variacao é a situação em relação ao Tiny — o rótulo legível
-// vem pronto do backend (status_rotulo); aqui só mapeamos a variante visual.
-const VARIANTE_POR_STATUS: Record<string, "success" | "warning" | "error" | "neutral"> = {
-  cadastrado: "success",
-  aguardando: "warning",
-  erro: "error",
-  pendente: "neutral",
-  descontinuado: "neutral",
-}
 
 const formatadorMoeda = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
 
@@ -31,6 +25,7 @@ function precoTexto(preco: string) {
 }
 
 interface Props {
+  slug: string
   itens: VariacaoEspelho[]
   isLoading: boolean
   isError: boolean
@@ -38,7 +33,13 @@ interface Props {
   temFiltros: boolean
 }
 
-export function ProdutosTabela({ itens, isLoading, isError, onRetry, temFiltros }: Props) {
+export function ProdutosTabela({ slug, itens, isLoading, isError, onRetry, temFiltros }: Props) {
+  const router = useRouter()
+
+  function abrir(id: number) {
+    router.push(`/instancias/${slug}/produtos/${id}`)
+  }
+
   return (
     <div className="overflow-hidden rounded-xl border border-border">
       <Table>
@@ -96,7 +97,20 @@ export function ProdutosTabela({ itens, isLoading, isError, onRetry, temFiltros 
           {!isLoading &&
             !isError &&
             itens.map((item) => (
-              <TableRow key={item.id}>
+              <TableRow
+                key={item.id}
+                role="link"
+                tabIndex={0}
+                aria-label={`Ver detalhes de ${item.sku}`}
+                className="cursor-pointer"
+                onClick={() => abrir(item.id)}
+                onKeyDown={(evento) => {
+                  if (evento.key === "Enter" || evento.key === " ") {
+                    evento.preventDefault()
+                    abrir(item.id)
+                  }
+                }}
+              >
                 <TableCell>
                   <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-code-inline text-foreground">
                     {ROTULO_FORNECEDOR[item.fornecedor]}
@@ -128,9 +142,7 @@ export function ProdutosTabela({ itens, isLoading, isError, onRetry, temFiltros 
                   {precoTexto(item.preco)}
                 </TableCell>
                 <TableCell>
-                  <Badge variant={VARIANTE_POR_STATUS[item.status ?? "pendente"] ?? "neutral"}>
-                    {item.status_rotulo}
-                  </Badge>
+                  <Badge variant={varianteBadgeStatus(item.status)}>{item.status_rotulo}</Badge>
                 </TableCell>
               </TableRow>
             ))}

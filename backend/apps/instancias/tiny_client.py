@@ -135,6 +135,24 @@ class TinyApiClient:
         self._levantar_se_erro(resposta)
         return self._corpo(resposta)
 
+    def atualizar_produto(self, produto_id, payload: dict) -> dict:
+        """
+        PUT /produtos/{idProduto} — atualiza um produto JÁ existente. O Tiny
+        responde HTTP 204 (sem corpo) em caso de sucesso.
+
+        Passa pelo mesmo rate limiter / autenticação de todo `_request`, e em
+        modo `somente_leitura=True` levanta `TinyEscritaBloqueadaError` ANTES
+        de qualquer chamada HTTP (PUT é método de escrita).
+
+        Não mexe em anexos (endpoint próprio `PUT /produtos/{id}/anexos`) nem
+        move saldo de estoque (`POST /estoque/{id}`). A montagem do payload
+        — inclusive a proteção de "só campos graváveis" — é responsabilidade
+        de quem chama.
+        """
+        resposta = self.put(f"/produtos/{produto_id}", json=payload)
+        self._levantar_se_erro(resposta)
+        return self._corpo(resposta)
+
     def anexos_do_produto(self, id_produto) -> list[str]:
         """
         URLs dos anexos que o produto JÁ tem no Tiny (do `GET /produtos/{id}`,

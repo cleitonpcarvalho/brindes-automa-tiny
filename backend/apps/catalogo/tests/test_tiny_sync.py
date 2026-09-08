@@ -3,9 +3,17 @@ from unittest.mock import patch
 
 from django.test import TestCase
 
-from apps.instancias.models import Instancia
+from apps.instancias.models import CredencialFornecedor, Instancia
 
 from ..models import Produto, StatusVariacao, Variacao
+
+
+def _com_tiny_fornecedor_id(instancia, fornecedor, tiny_id=700_000_000):
+    """Garante o id do contato-fornecedor no Tiny para o par — sem ele o
+    cadastro de novos produtos fica bloqueado."""
+    CredencialFornecedor.objects.update_or_create(
+        instancia=instancia, fornecedor=fornecedor, defaults={"tiny_fornecedor_id": tiny_id}
+    )
 from ..tiny_sync import (
     PARADA_LEASE_PERDIDA,
     PARADA_PAUSA,
@@ -45,6 +53,7 @@ def _variacao(instancia, sku, *, fornecedor="xbz", codigo_pai=None, estoque=5, s
     if status is not None and v.status != status:
         Variacao.objects.filter(pk=v.pk).update(status=status)
         v.refresh_from_db()
+    _com_tiny_fornecedor_id(instancia, fornecedor)
     return v
 
 
@@ -322,6 +331,90 @@ class _ControladorSequencia(ControladorSincronizacao):
     def checar(self):
         self.chamadas += 1
         return self.motivos.pop(0) if self.motivos else None
+
+
+class VinculoFornecedorNoTinyTests(TestCase):
+    def test_payload_de_criacao_leva_o_bloco_fornecedores(self):
+        inst = _instancia()
+        _variacao(inst, "SKU-V", fornecedor="asia")
+        CredencialFornecedor.objects.filter(instancia=inst, fornecedor="asia").update(
+            tiny_fornecedor_id=752133514
+        )
+        mock = _MockTiny()
+
+        _rodar(inst, "asia", mock)
+
+        self.assertEqual(
+            mock.criados[0]["fornecedores"],
+            [{"id": 752133514, "padrao": True, "codigoProdutoNoFornecedor": "SKU-V"}],
+        )
+
+    def test_sem_tiny_fornecedor_id_bloqueia_criacao(self):
+        inst = _instancia()
+        v = _variacao(inst, "SKU-SEM", fornecedor="asia")
+        CredencialFornecedor.objects.filter(instancia=inst, fornecedor="asia").delete()
+        mock = _MockTiny()
+
+        r = _rodar(inst, "asia", mock)
+
+        v.refresh_from_db()
+        self.assertEqual(v.status, StatusVariacao.PENDENTE)  # bloqueado, não erro
+        self.assertIsNone(v.tiny_id)
+        self.assertEqual(mock.criados, [])
+        self.assertEqual(r.bloqueadas, 1)
+        self.assertEqual(r.erros, 0)
+
+    def test_id_resolvido_uma_unica_vez_por_rodada(self):
+        inst = _instancia()
+        for i in range(5):
+            _variacao(inst, f"SKU-{i}", fornecedor="asia")
+        mock = _MockTiny()
+
+        with patch(
+            "apps.catalogo.tiny_sync.tiny_fornecedor_id_de", return_value=752133514
+        ) as mock_resolver:
+            _rodar(inst, "asia", mock)
+
+        self.assertEqual(mock_resolver.call_count, 1)
+        self.assertEqual(len(mock.criados), 5)
+
+    def test_variacao_ja_cadastrada_nao_e_bloqueada_por_falta_de_id(self):
+        inst = _instancia()
+        v = _variacao(
+            inst, "SKU-FEITO", fornecedor="asia", status=StatusVariacao.CADASTRADO, tiny_id="42",
+            imagens=["http://img/a.jpg"],
+        )
+        CredencialFornecedor.objects.filter(instancia=inst, fornecedor="asia").delete()
+        # volta à fila só para concluir a etapa de imagens
+        Variacao.objects.filter(pk=v.pk).update(imagens_tiny_sincronizadas=[])
+        mock = _MockTiny(anexos=[])
+
+        r = _rodar(inst, "asia", mock)
+
+        self.assertEqual(r.bloqueadas, 0)
+        self.assertEqual(r.ja_cadastradas, 1)
+        self.assertEqual(mock.criados, [])
+        self.assertEqual(mock.anexos_enviados, [(42, ["http://img/a.jpg"])])
+
+
+class MontarPayloadProdutoTests(TestCase):
+    def test_com_id_inclui_bloco_com_sku_exato(self):
+        from ..tiny_sync import montar_payload_produto
+
+        inst = _instancia()
+        v = _variacao(inst, "SKU-EXATO", fornecedor="asia")
+        payload = montar_payload_produto(v, inst, tiny_fornecedor_id=752133514)
+        self.assertEqual(
+            payload["fornecedores"],
+            [{"id": 752133514, "padrao": True, "codigoProdutoNoFornecedor": "SKU-EXATO"}],
+        )
+
+    def test_sem_id_nao_inclui_o_bloco(self):
+        from ..tiny_sync import montar_payload_produto
+
+        inst = _instancia()
+        v = _variacao(inst, "SKU-X", fornecedor="asia")
+        self.assertNotIn("fornecedores", montar_payload_produto(v, inst))
 
 
 class PauseResumeOrquestradorTests(TestCase):

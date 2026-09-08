@@ -6,10 +6,16 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import TestCase, override_settings
 
-from apps.instancias.models import Instancia
+from apps.instancias.models import CredencialFornecedor, Instancia
 from apps.instancias.tiny_client import TinyApiValidationError
 
 from ..models import Produto, ProdutoTiny, StatusVariacao, Variacao
+
+
+def _com_tiny_fornecedor_id(instancia, fornecedor, tiny_id=700_000_000):
+    CredencialFornecedor.objects.update_or_create(
+        instancia=instancia, fornecedor=fornecedor, defaults={"tiny_fornecedor_id": tiny_id}
+    )
 
 
 def _rodar(*args):
@@ -42,7 +48,9 @@ def _variacao_pendente(instancia, sku, **kwargs):
         "estoque": 5,
     }
     dados.update(kwargs)
-    return Variacao.objects.create(**dados)
+    variacao = Variacao.objects.create(**dados)
+    _com_tiny_fornecedor_id(instancia, "xbz")
+    return variacao
 
 
 class ValidacaoDeConfiguracaoTests(TestCase):
@@ -317,6 +325,62 @@ class DimensoesAnexosEGarantiaNoPayloadTests(TestCase):
         self.assertNotIn("garantia", payload)
 
 
+class VinculoFornecedorNoTinyTests(TestCase):
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
+    def test_payload_inclui_o_bloco_fornecedores_com_o_id_configurado(self, mock_buscar, mock_criar):
+        instancia = _instancia_pronta()
+        _variacao_pendente(instancia, "SKU-FORN")  # helper já configura tiny_fornecedor_id
+        CredencialFornecedor.objects.filter(instancia=instancia, fornecedor="xbz").update(
+            tiny_fornecedor_id=752131325
+        )
+        mock_buscar.return_value = None
+        mock_criar.return_value = {"id": 1}
+
+        call_command("cadastrar_produtos_tiny", instancia.slug)
+
+        payload = mock_criar.call_args[0][0]
+        self.assertEqual(
+            payload["fornecedores"],
+            [{"id": 752131325, "padrao": True, "codigoProdutoNoFornecedor": "SKU-FORN"}],
+        )
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
+    def test_sem_id_configurado_bloqueia_a_criacao(self, mock_buscar, mock_criar):
+        instancia = _instancia_pronta()
+        variacao = _variacao_pendente(instancia, "SKU-SEM-FORN")
+        CredencialFornecedor.objects.filter(instancia=instancia, fornecedor="xbz").update(
+            tiny_fornecedor_id=None
+        )
+        mock_buscar.return_value = None
+
+        saida = _rodar("cadastrar_produtos_tiny", instancia.slug)
+
+        mock_criar.assert_not_called()
+        variacao.refresh_from_db()
+        self.assertEqual(variacao.status, StatusVariacao.PENDENTE)  # bloqueado, não erro
+        self.assertIn("BLOQUEADO", saida)
+        self.assertIn("Fornecedor no Tiny não configurado", saida)
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku", return_value=None)
+    def test_id_resolvido_uma_vez_por_fornecedor_e_nao_por_sku(self, _mb, mock_criar):
+        instancia = _instancia_pronta()
+        for i in range(4):
+            _variacao(_produto(instancia, "asia", f"pai{i}"), f"ASIA-{i}")
+        mock_criar.return_value = {"id": 1}
+
+        with patch(
+            "apps.catalogo.management.commands.cadastrar_produtos_tiny.tiny_fornecedor_id_de",
+            return_value=752133514,
+        ) as mock_resolver:
+            call_command("cadastrar_produtos_tiny", instancia.slug, "--fornecedor", "asia")
+
+        self.assertEqual(mock_resolver.call_count, 1)  # 1x para o fornecedor, não 4x
+        self.assertEqual(mock_criar.call_count, 4)
+
+
 class FalhaNaoDerrubaLoteTests(TestCase):
     @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
     @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
@@ -451,6 +515,7 @@ class RegrasDeElegibilidadePreservadasTests(TestCase):
 
 
 def _produto(instancia, fornecedor, codigo_pai, nome="Produto"):
+    _com_tiny_fornecedor_id(instancia, fornecedor)
     return Produto.objects.create(
         instancia=instancia, fornecedor=fornecedor, codigo_pai=codigo_pai, nome=nome
     )

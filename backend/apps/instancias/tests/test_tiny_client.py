@@ -236,6 +236,47 @@ class DominioProdutosTests(TestCase):
 
     @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
     @patch("apps.instancias.tiny_client.requests.request")
+    def test_atualizar_produto_usa_put_no_caminho_do_id_e_aceita_http_204(self, mock_request):
+        instancia = _instancia()
+        sem_corpo = Mock(status_code=204, headers={}, text="")
+        sem_corpo.json.side_effect = ValueError("no body")
+        mock_request.return_value = sem_corpo
+
+        cliente = TinyApiClient(instancia, sleep_fn=lambda s: None, limiter=LimiterFalso())
+        resultado = cliente.atualizar_produto(924267500, {"sku": "BL026-BG", "descricao": "x"})
+
+        self.assertEqual(resultado, {})  # 204 sem corpo -> {}
+        metodo, url = mock_request.call_args[0]
+        self.assertEqual(metodo, "PUT")
+        self.assertTrue(url.endswith("/produtos/924267500"))
+        self.assertEqual(mock_request.call_args[1]["json"]["sku"], "BL026-BG")
+
+    @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.requests.request")
+    def test_atualizar_produto_bloqueado_antes_do_http_em_somente_leitura(self, mock_request):
+        from ..tiny_client import TinyEscritaBloqueadaError
+
+        instancia = _instancia()
+        cliente = TinyApiClient(
+            instancia, sleep_fn=lambda s: None, limiter=LimiterFalso(), somente_leitura=True
+        )
+        with self.assertRaises(TinyEscritaBloqueadaError):
+            cliente.atualizar_produto(924267500, {"sku": "BL026-BG", "descricao": "x"})
+        mock_request.assert_not_called()  # nem saiu da máquina
+
+    @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.requests.request")
+    def test_atualizar_produto_propaga_erro_de_validacao_do_tiny(self, mock_request):
+        instancia = _instancia()
+        mock_request.return_value = _resposta(
+            400, {}, {"mensagem": "Ocorreram erros de validação", "detalhes": []}
+        )
+        cliente = TinyApiClient(instancia, sleep_fn=lambda s: None, limiter=LimiterFalso())
+        with self.assertRaises(TinyApiValidationError):
+            cliente.atualizar_produto(1, {"sku": "x", "descricao": "y"})
+
+    @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.requests.request")
     def test_status_5xx_continua_sendo_erro(self, mock_request):
         instancia = _instancia()
         mock_request.return_value = _resposta(500, {}, {"mensagem": "erro interno"})

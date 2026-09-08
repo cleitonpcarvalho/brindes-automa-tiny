@@ -6,7 +6,7 @@ from unittest.mock import patch
 from django.test import TestCase
 from django.utils import timezone
 
-from apps.instancias.models import Instancia
+from apps.instancias.models import CredencialFornecedor, Instancia
 from apps.sincronizacao.models import (
     EventoLog,
     Execucao,
@@ -40,7 +40,11 @@ def _variacao(instancia, sku, *, fornecedor="xbz", **kwargs):
     )
     dados = {"produto": produto, "sku": sku, "nome": f"V {sku}", "preco": Decimal("10.00"), "estoque": 5}
     dados.update(kwargs)
-    return Variacao.objects.create(**dados)
+    variacao = Variacao.objects.create(**dados)
+    CredencialFornecedor.objects.update_or_create(
+        instancia=instancia, fornecedor=fornecedor, defaults={"tiny_fornecedor_id": 700_000_000}
+    )
+    return variacao
 
 
 def _execucao(instancia, fornecedor="xbz", **kwargs):

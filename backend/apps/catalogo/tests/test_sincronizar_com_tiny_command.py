@@ -5,7 +5,7 @@ from unittest.mock import patch
 from django.core.management import call_command
 from django.test import TestCase
 
-from apps.instancias.models import Instancia
+from apps.instancias.models import CredencialFornecedor, Instancia
 
 from ..models import Produto, StatusVariacao, Variacao
 
@@ -22,7 +22,11 @@ def _variacao(instancia, sku, **kwargs):
     )
     dados = {"produto": produto, "sku": sku, "nome": sku, "preco": Decimal("1.00"), "estoque": 3}
     dados.update(kwargs)
-    return Variacao.objects.create(**dados)
+    variacao = Variacao.objects.create(**dados)
+    CredencialFornecedor.objects.update_or_create(
+        instancia=instancia, fornecedor="xbz", defaults={"tiny_fornecedor_id": 700_000_000}
+    )
+    return variacao
 
 
 class SincronizarComTinyCommandTests(TestCase):

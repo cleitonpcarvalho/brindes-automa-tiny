@@ -82,10 +82,10 @@ function instanciaDetalhe(): InstanciaDetalhe {
       },
     })),
     cadencias: [
-      { fornecedor: "xbz", intervalo_minutos: 60, ativo: false, proxima_execucao_em: null },
-      { fornecedor: "asia", intervalo_minutos: 60, ativo: false, proxima_execucao_em: null },
-      { fornecedor: "somarcas", intervalo_minutos: 60, ativo: false, proxima_execucao_em: null },
-      { fornecedor: "spot", intervalo_minutos: 60, ativo: false, proxima_execucao_em: null },
+      { fornecedor: "xbz", intervalo_minutos: 60, ativo: false, propagar_tiny: false, proxima_execucao_em: null },
+      { fornecedor: "asia", intervalo_minutos: 60, ativo: false, propagar_tiny: false, proxima_execucao_em: null },
+      { fornecedor: "somarcas", intervalo_minutos: 60, ativo: false, propagar_tiny: false, proxima_execucao_em: null },
+      { fornecedor: "spot", intervalo_minutos: 60, ativo: false, propagar_tiny: false, proxima_execucao_em: null },
     ],
     ultimas_execucoes: [],
   };

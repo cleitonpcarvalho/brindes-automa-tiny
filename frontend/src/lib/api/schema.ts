@@ -919,6 +919,7 @@ export interface components {
             fornecedor: components["schemas"]["FornecedorEnum"];
             intervalo_minutos: number;
             ativo: boolean;
+            propagar_tiny: boolean;
             /** Format: date-time */
             proxima_execucao_em: string | null;
         };
@@ -926,6 +927,7 @@ export interface components {
             readonly fornecedor: components["schemas"]["FornecedorEnum"];
             intervalo_minutos?: number;
             ativo?: boolean;
+            propagar_tiny?: boolean;
             /** Format: date-time */
             readonly proxima_execucao_em: string | null;
         };
@@ -1384,6 +1386,7 @@ export interface components {
             readonly fornecedor?: components["schemas"]["FornecedorEnum"];
             intervalo_minutos?: number;
             ativo?: boolean;
+            propagar_tiny?: boolean;
             /** Format: date-time */
             readonly proxima_execucao_em?: string | null;
         };

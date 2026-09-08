@@ -405,8 +405,20 @@ def marcar_cadastrada(variacao, tiny_id, *, preco_custo_publicado):
     variacao.ultimo_erro = ""
     campos = ["tiny_id", "status", "cadastrado_em", "ultimo_erro", "atualizado_em"]
     if preco_custo_publicado is not None:
+        # CRIAÇÃO (não VINCULAÇÃO): o POST /produtos já leva o pacote da regra
+        # definitiva (descricaoComplementar, precos {0/0/custo}, fornecedor
+        # padrão) E o estoque inicial (= `variacao.estoque`) — então marca os
+        # três marcadores como publicados, para a propagação automática não
+        # reenviar logo em seguida um Balanço/PUT redundante. Numa VINCULAÇÃO
+        # o produto preexistente no Tiny não passou pela nossa regra:
+        # `preco_custo_publicado` vem None e os marcadores ficam nulos, para o
+        # passo de correção de dados/estoque ajustá-lo depois.
         variacao.preco_custo_tiny_sincronizado = preco_custo_publicado
+        variacao.dados_tiny_sincronizados_em = timezone.now()
+        variacao.estoque_tiny_sincronizado = variacao.estoque
         campos.append("preco_custo_tiny_sincronizado")
+        campos.append("dados_tiny_sincronizados_em")
+        campos.append("estoque_tiny_sincronizado")
     variacao.save(update_fields=campos)
 
 

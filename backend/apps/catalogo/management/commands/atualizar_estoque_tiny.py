@@ -1,6 +1,7 @@
 from django.core.management.base import BaseCommand, CommandError
 from django.db.models import F, Q
 
+from apps.instancias.constants import Fornecedor
 from apps.instancias.models import Instancia
 from apps.instancias.tiny_client import TinyApiClient
 
@@ -22,6 +23,12 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("instancia_slug")
         parser.add_argument("--limite", type=int, default=None)
+        parser.add_argument(
+            "--fornecedor",
+            choices=[f.value for f in Fornecedor],
+            default=None,
+            help="Restringe a fila a um fornecedor (usado pela propagação automática).",
+        )
 
     def handle(self, *args, **options):
         instancia = self._obter_instancia(options["instancia_slug"])
@@ -35,6 +42,8 @@ class Command(BaseCommand):
             .filter(Q(estoque_tiny_sincronizado__isnull=True) | ~Q(estoque=F("estoque_tiny_sincronizado")))
             .order_by("id")
         )
+        if options["fornecedor"]:
+            fila = fila.filter(produto__fornecedor=options["fornecedor"])
         if options["limite"]:
             fila = fila[: options["limite"]]
 

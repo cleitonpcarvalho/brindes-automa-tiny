@@ -1,0 +1,287 @@
+"""
+`propagar_fornecedor_tiny_task` — a ponte automática espelho -> Tiny, disparada
+depois de uma importação de espelho quando a cadência do par tem
+`propagar_tiny` ligado. Reaproveita, SEM duplicar regra:
+
+  1. produtos novos elegíveis + imagens -> cadastro em massa (com Execucao);
+  2. estoque que mudou -> `atualizar_estoque_tiny --fornecedor`;
+  3. custo / descrição / dados que mudaram -> `corrigir_dados_produto_tiny --executar`.
+
+Cada etapa é guiada por marcador de drift: nada que já esteja em dia é
+reescrito.
+"""
+
+from decimal import Decimal
+from unittest.mock import Mock, patch
+
+from django.test import TestCase
+from django.utils import timezone
+
+from apps.instancias.models import CredencialFornecedor, Instancia
+from apps.instancias.tiny_client import TinyApiError
+from apps.sincronizacao.models import Execucao, StatusExecucao, TipoExecucao
+
+from ..models import Produto, StatusVariacao, Variacao
+from ..tasks import propagar_fornecedor_tiny_task
+
+TINY_FORN_ID = 752133514
+
+
+def _get_tiny(tiny_id, sku):
+    return {
+        "id": tiny_id, "sku": sku, "descricao": f"T {sku}", "descricaoComplementar": "",
+        "situacao": "A", "tipo": "S", "unidade": "UN", "ncm": "4820.20.00", "origem": "0",
+        "dimensoes": {}, "precos": {"preco": 0, "precoPromocional": 0, "precoCusto": 0},
+        "estoque": {"controlar": True}, "fornecedores": [], "anexos": [],
+        "variacoes": [], "kit": [], "producao": None,
+    }
+
+
+class _Base(TestCase):
+    def setUp(self):
+        self.instancia = Instancia.objects.create(
+            nome="Loja", access_token="tok", tiny_origem_padrao=0, tiny_unidade_medida_padrao="UN"
+        )
+        CredencialFornecedor.objects.update_or_create(
+            instancia=self.instancia, fornecedor="asia",
+            defaults={"tiny_fornecedor_id": TINY_FORN_ID},
+        )
+
+    def _variacao(self, sku, **extra):
+        produto = extra.pop("produto", None) or Produto.objects.create(
+            instancia=self.instancia, fornecedor="asia", codigo_pai=f"pai-{sku}", nome=f"P {sku}",
+            descricao="Descrição rica.",
+        )
+        dados = {
+            "produto": produto, "sku": sku, "nome": f"V {sku}",
+            "preco": Decimal("10.00"), "estoque": 5,
+        }
+        dados.update(extra)
+        return Variacao.objects.create(**dados)
+
+    def _cadastrada(self, sku, **extra):
+        return self._variacao(
+            sku, status=StatusVariacao.CADASTRADO, tiny_id=extra.pop("tiny_id", "900"),
+            preco_custo_tiny_sincronizado=extra.pop("preco_custo_tiny_sincronizado", Decimal("10.00")),
+            estoque_tiny_sincronizado=extra.pop("estoque_tiny_sincronizado", 5),
+            dados_tiny_sincronizados_em=extra.pop("dados_tiny_sincronizados_em", timezone.now()),
+            **extra,
+        )
+
+    def _rodar(self):
+        propagar_fornecedor_tiny_task(self.instancia.id, "asia")
+
+
+class NovosProdutosTests(_Base):
+    @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.obter_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_estoque")
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto", return_value={"id": 51, "sku": "NOVO-1"})
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku", return_value=None)
+    def test_produto_novo_e_cadastrado_via_execucao_sem_estoque_ou_dados_redundantes(
+        self, _mb, _mc, mock_estoque, mock_get, mock_put
+    ):
+        v = self._variacao("NOVO-1")  # PENDENTE, estoque 5
+
+        self._rodar()
+
+        v.refresh_from_db()
+        self.assertEqual(v.status, StatusVariacao.CADASTRADO)
+        self.assertEqual(v.tiny_id, "51")
+        # rodou dentro de uma Execucao de cadastro Tiny, concluída
+        execucao = Execucao.objects.get(tipo=TipoExecucao.CADASTRO_TINY, fornecedor="asia")
+        self.assertEqual(execucao.status, StatusExecucao.SUCESSO)
+        # o POST /produtos já levou estoque inicial + pacote de dados: nada de
+        # Balanço nem PUT redundante logo em seguida
+        mock_estoque.assert_not_called()
+        mock_put.assert_not_called()
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.obter_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_estoque")
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku", return_value=None)
+    def test_produto_sem_estoque_nao_e_cadastrado_e_nao_gera_execucao(
+        self, _mb, mock_criar, mock_estoque, _mg, _mp
+    ):
+        self._variacao("SEM-ESTOQUE", estoque=0)  # -> AGUARDANDO no save
+
+        self._rodar()
+
+        mock_criar.assert_not_called()
+        mock_estoque.assert_not_called()
+        # fila de cadastro vazia -> nenhuma Execucao criada (sem spam)
+        self.assertFalse(Execucao.objects.filter(tipo=TipoExecucao.CADASTRO_TINY).exists())
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.sincronizar_anexos_produto", return_value={})
+    @patch("apps.instancias.tiny_client.TinyApiClient.anexos_do_produto", return_value=[])
+    @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.obter_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_estoque")
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto", return_value={"id": 7, "sku": "IMG-NOVO"})
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku", return_value=None)
+    def test_imagens_do_produto_novo_vao_junto(
+        self, _mb, _mc, _me, _mg, _mp, _man, mock_anexos
+    ):
+        self._variacao("IMG-NOVO", imagens=["https://cdn/a.jpg"])
+
+        self._rodar()
+
+        mock_anexos.assert_called_once()
+
+
+class DriftTests(_Base):
+    @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.obter_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_estoque")
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
+    def test_sem_mudanca_nenhuma_escrita_no_tiny(
+        self, mock_busca, mock_criar, mock_estoque, mock_get, mock_put
+    ):
+        self._cadastrada("EM-DIA")  # todos os marcadores em dia
+
+        self._rodar()
+
+        mock_busca.assert_not_called()
+        mock_criar.assert_not_called()
+        mock_estoque.assert_not_called()
+        mock_get.assert_not_called()
+        mock_put.assert_not_called()
+        self.assertFalse(Execucao.objects.filter(tipo=TipoExecucao.CADASTRO_TINY).exists())
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.obter_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_estoque", return_value={})
+    def test_estoque_que_mudou_e_empurrado(self, mock_estoque, mock_get, mock_put):
+        v = self._cadastrada("EST-1", tiny_id="111", estoque=42, estoque_tiny_sincronizado=10)
+
+        self._rodar()
+
+        mock_estoque.assert_called_once()
+        self.assertEqual(mock_estoque.call_args.args[0], 111)
+        v.refresh_from_db()
+        self.assertEqual(v.estoque_tiny_sincronizado, 42)
+        mock_put.assert_not_called()  # custo/dados seguem em dia
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_estoque")
+    @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_produto", return_value=_get_tiny(222, "CUSTO-1"))
+    @patch("apps.instancias.tiny_client.TinyApiClient.obter_produto")
+    def test_custo_que_mudou_e_corrigido(self, mock_get, mock_put, mock_estoque):
+        v = self._cadastrada(
+            "CUSTO-1", tiny_id="222", preco=Decimal("18.00"),
+            preco_custo_tiny_sincronizado=Decimal("12.00"),
+        )
+        mock_get.return_value = _get_tiny(222, "CUSTO-1")
+
+        self._rodar()
+
+        mock_put.assert_called_once()
+        v.refresh_from_db()
+        self.assertEqual(v.preco_custo_tiny_sincronizado, Decimal("18.00"))
+        mock_estoque.assert_not_called()
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_estoque")
+    @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_produto", return_value=_get_tiny(333, "DESC-1"))
+    @patch("apps.instancias.tiny_client.TinyApiClient.obter_produto")
+    def test_descricao_que_mudou_e_corrigida(self, mock_get, mock_put, _me):
+        # marcador de dados zerado pela importação (descrição mudou no fornecedor)
+        v = self._cadastrada("DESC-1", tiny_id="333", dados_tiny_sincronizados_em=None)
+        mock_get.return_value = _get_tiny(333, "DESC-1")
+
+        self._rodar()
+
+        mock_put.assert_called_once()
+        v.refresh_from_db()
+        self.assertIsNotNone(v.dados_tiny_sincronizados_em)
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.sincronizar_anexos_produto", return_value={})
+    @patch("apps.instancias.tiny_client.TinyApiClient.anexos_do_produto", return_value=[])
+    @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.obter_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_estoque")
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
+    def test_imagem_que_mudou_e_reenviada(
+        self, mock_busca, _mc, _me, _mg, _mp, _man, mock_anexos
+    ):
+        # marcador de imagem zerado pela importação; produto já cadastrado
+        self._cadastrada(
+            "IMG-DRIFT", tiny_id="444", imagens=["https://cdn/nova.jpg"],
+            imagens_tiny_sincronizadas=[],
+        )
+
+        self._rodar()
+
+        # entrou na fila de cadastro só pela etapa de imagens: reenvia os
+        # anexos, sem recriar o produto (SKU já cadastrado -> ja_cadastrado)
+        mock_busca.assert_not_called()
+        mock_anexos.assert_called_once()
+
+
+class ErrosEProtecoesTests(_Base):
+    @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.obter_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_estoque",
+           side_effect=RuntimeError("Tiny 500"))
+    def test_erro_do_tiny_numa_etapa_nao_impede_as_outras(self, mock_estoque, mock_get, mock_put):
+        # estoque vai falhar; custo deve ser corrigido mesmo assim
+        v = self._cadastrada(
+            "MIX-1", tiny_id="555", estoque=9, estoque_tiny_sincronizado=1,
+            preco=Decimal("20.00"), preco_custo_tiny_sincronizado=Decimal("10.00"),
+        )
+        mock_get.return_value = _get_tiny(555, "MIX-1")
+        mock_put.return_value = _get_tiny(555, "MIX-1")
+
+        self._rodar()  # não levanta
+
+        mock_estoque.assert_called_once()  # tentou
+        v.refresh_from_db()
+        self.assertEqual(v.estoque_tiny_sincronizado, 1)          # não avançou (erro)
+        self.assertEqual(v.preco_custo_tiny_sincronizado, Decimal("20.00"))  # etapa 3 seguiu
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.obter_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_estoque",
+           side_effect=TinyApiError("429 persistente após 12 tentativas"))
+    def test_rate_limit_numa_etapa_e_absorvido(self, mock_estoque, mock_get, mock_put):
+        v = self._cadastrada("RL-1", tiny_id="666", estoque=3, estoque_tiny_sincronizado=1)
+
+        self._rodar()  # não levanta
+
+        v.refresh_from_db()
+        self.assertEqual(v.estoque_tiny_sincronizado, 1)  # tenta de novo na próxima rodada
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku", return_value=None)
+    def test_pula_tudo_se_ha_cadastro_em_massa_aberto_para_o_par(self, _mb, mock_criar):
+        self._variacao("NOVO-BLOQ")
+        Execucao.objects.create(
+            instancia=self.instancia, fornecedor="asia", tipo=TipoExecucao.CADASTRO_TINY,
+            status=StatusExecucao.RODANDO, heartbeat_em=timezone.now(),
+        )
+
+        self._rodar()
+
+        mock_criar.assert_not_called()
+
+    @patch("apps.catalogo.tasks.cliente_redis")
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku", return_value=None)
+    def test_pula_se_a_trava_do_par_ja_esta_tomada(self, _mb, mock_criar, mock_redis):
+        mock_redis.return_value = Mock(set=Mock(return_value=False))  # SET NX falhou
+        self._variacao("NOVO-LOCK")
+
+        self._rodar()
+
+        mock_criar.assert_not_called()
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    def test_instancia_sem_token_nao_faz_nada(self, mock_criar):
+        self.instancia.access_token = ""
+        self.instancia.save(update_fields=["access_token"])
+        self._variacao("SEM-TOKEN")
+
+        self._rodar()
+
+        mock_criar.assert_not_called()

@@ -292,6 +292,7 @@ class CadenciaDetalheSerializer(serializers.Serializer):
     fornecedor = serializers.ChoiceField(choices=Fornecedor.choices)
     intervalo_minutos = serializers.IntegerField()
     ativo = serializers.BooleanField()
+    propagar_tiny = serializers.BooleanField()
     proxima_execucao_em = serializers.DateTimeField(allow_null=True)
 
 
@@ -487,6 +488,7 @@ class CadenciaFornecedorSerializer(serializers.Serializer):
     fornecedor = serializers.ChoiceField(choices=Fornecedor.choices, read_only=True)
     intervalo_minutos = serializers.IntegerField(min_value=1, required=False)
     ativo = serializers.BooleanField(required=False)
+    propagar_tiny = serializers.BooleanField(required=False)
     proxima_execucao_em = serializers.DateTimeField(read_only=True, allow_null=True)
 
 

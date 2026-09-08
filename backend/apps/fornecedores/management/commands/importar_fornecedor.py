@@ -15,6 +15,15 @@ from apps.sincronizacao.models import (
 from ...registry import obter_cliente
 from ...services import checar_limite_diario_xbz, obter_configuracao, obter_credencial_ativa
 
+_CAMPOS_DIMENSAO = ("largura", "altura", "comprimento", "diametro", "peso_liquido", "peso_bruto")
+
+
+def _dimensoes_diferentes(variacao, dimensoes_novas) -> bool:
+    """True se qualquer medida (cm/kg) do espelho difere da normalizada nova."""
+    return any(
+        getattr(variacao, campo) != getattr(dimensoes_novas, campo) for campo in _CAMPOS_DIMENSAO
+    )
+
 
 class Command(BaseCommand):
     help = (
@@ -379,6 +388,13 @@ class Command(BaseCommand):
             codigo_pai=produto_normalizado.codigo_pai,
             defaults={"nome": produto_normalizado.nome},
         )
+        # `descricaoComplementar` no Tiny = `Produto.descricao` (regra
+        # definitiva). Se a descrição mudou no fornecedor e este produto já
+        # tem variações cadastradas, o pacote de dados no Tiny ficou
+        # desatualizado — zera o marcador para o passo de correção de dados
+        # reenviar (só quando a propagação automática está ligada).
+        descricao_mudou = produto.descricao != produto_normalizado.descricao
+
         # Sempre atualiza os campos mutáveis, mesmo se o produto já existia —
         # Produto.save() reaplica a regra do prefixo "P@" (xbz) a cada chamada,
         # o que é seguro rodar de novo (idempotente).
@@ -390,6 +406,12 @@ class Command(BaseCommand):
         produto.atualizado_em_fornecedor = produto_normalizado.atualizado_em_fornecedor
         produto.payload_bruto = produto_normalizado.payload_bruto
         produto.save()
+
+        if descricao_mudou:
+            Variacao.objects.filter(
+                produto=produto, status=StatusVariacao.CADASTRADO
+            ).update(dados_tiny_sincronizados_em=None)
+
         return produto
 
     def _gravar_variacao(self, produto, variacao_normalizada):
@@ -411,6 +433,20 @@ class Command(BaseCommand):
         if variacao is None:
             variacao = Variacao(produto=produto, sku=variacao_normalizada.sku)
 
+        # Drift de um SKU JÁ cadastrado no Tiny: se mudaram campos que o Tiny
+        # já tem, o marcador correspondente é zerado para o passo de
+        # propagação reenviar só o que precisa. Estoque e custo são
+        # detectados por comparação direta (`estoque` != `estoque_tiny_...`),
+        # então não precisam de reset aqui.
+        cadastrada_no_tiny = existia and variacao.status == StatusVariacao.CADASTRADO
+        imagens_mudaram = cadastrada_no_tiny and (variacao.imagens or []) != (
+            variacao_normalizada.imagens or []
+        )
+        dados_mudaram = cadastrada_no_tiny and (
+            variacao.ncm != variacao_normalizada.ncm
+            or _dimensoes_diferentes(variacao, variacao_normalizada.dimensoes)
+        )
+
         variacao.nome = variacao_normalizada.nome
         variacao.ncm = variacao_normalizada.ncm
         variacao.preco = variacao_normalizada.preco  # regra do cliente nº 4: sem margem
@@ -427,6 +463,10 @@ class Command(BaseCommand):
         variacao.imagens = variacao_normalizada.imagens
         variacao.atributos = variacao_normalizada.atributos
         variacao.payload_bruto = variacao_normalizada.payload_bruto
+        if imagens_mudaram:
+            variacao.imagens_tiny_sincronizadas = []
+        if dados_mudaram:
+            variacao.dados_tiny_sincronizados_em = None
         variacao.save()
 
         return ("atualizados" if existia else "novos"), variacao

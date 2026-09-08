@@ -1,14 +1,19 @@
 import logging
 import time
+import uuid
+from contextlib import contextmanager
 from datetime import timedelta
 
 from celery import shared_task
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
 
 from apps.instancias.models import Instancia
 from apps.instancias.tiny_client import TinyApiClient
+from apps.instancias.tiny_throttle import cliente_redis
 from apps.sincronizacao.models import (
     EventoLog,
     Execucao,
@@ -253,6 +258,59 @@ def recomputar_contadores_execucao(execucao: Execucao) -> None:
     execucao.save(update_fields=[
         "total_lidos", "total_novos", "total_cadastrados", "total_erros", "total_ignorados"
     ])
+    consolidar_status_execucao(execucao)
+
+
+def consolidar_status_execucao(execucao: Execucao) -> bool:
+    """
+    Reavalia o `status` de uma Execucao de cadastro no Tiny já FINALIZADA a
+    partir dos contadores consolidados (a mesma regra do `_finalizar`): se não
+    sobrou nenhum erro nem pendência, o desfecho passa a ser `sucesso`; do
+    contrário continua `parcial`. Serve para o caso em que retentativas
+    (individuais ou em lote) posteriores zeraram os erros de uma execução que
+    fechou como `parcial` — o badge no topo da tela precisa refletir o
+    resultado final consolidado.
+
+    Só age sobre execuções de cadastro no Tiny que já terminaram num desfecho
+    `sucesso`/`parcial`; nunca mexe numa execução em andamento, pausada,
+    interrompida ou que falhou, e não toca em `finalizada_em`, `mensagem_erro`
+    nem em nenhum `LogItem` histórico. Quando o status muda de fato, registra
+    um `LogItem` informativo para deixar rastro da reclassificação.
+
+    Retorna `True` se o status foi alterado.
+    """
+    if execucao.tipo != TipoExecucao.CADASTRO_TINY:
+        return False
+    if execucao.status not in (StatusExecucao.SUCESSO, StatusExecucao.PARCIAL):
+        return False
+    if execucao.finalizada_em is None:
+        return False
+
+    concluiu_tudo = execucao.total_erros == 0 and execucao.total_ignorados == 0
+    novo_status = StatusExecucao.SUCESSO if concluiu_tudo else StatusExecucao.PARCIAL
+    if novo_status == execucao.status:
+        return False
+
+    anterior = execucao.status
+    execucao.status = novo_status
+    execucao.save(update_fields=["status"])
+    LogItem.objects.create(
+        execucao=execucao,
+        nivel=NivelLog.INFO,
+        mensagem=(
+            "Status consolidado após retentativas: sucesso"
+            if novo_status == StatusExecucao.SUCESSO
+            else "Status consolidado após retentativas: parcial"
+        ),
+        detalhe={
+            "status_anterior": anterior,
+            "status": novo_status,
+            "cadastrados": execucao.total_cadastrados,
+            "erros": execucao.total_erros,
+            "pendentes": execucao.total_ignorados,
+        },
+    )
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -606,3 +664,147 @@ def reconciliar_retentativas_lote_travadas():
     if reconhecidas:
         logger.warning("%s retentativa(s) em lote reconhecida(s) como interrompida(s)", reconhecidas)
     return reconhecidas
+
+
+# ---------------------------------------------------------------------------
+# Propagação automática fornecedor -> espelho -> Tiny
+# (opt-in por cadência: CadenciaFornecedor.propagar_tiny)
+# ---------------------------------------------------------------------------
+
+PROPAGACAO_LOCK_TTL_SEGUNDOS = 30 * 60
+
+
+@contextmanager
+def _lock_propagacao_tiny(instancia_id, fornecedor):
+    """
+    Trava best-effort (Redis `SET NX EX`) para não rodar duas propagações do
+    mesmo par em paralelo (dois ticks do beat, ou beat + retomada). Se o
+    Redis não responder, segue SEM trava — as três etapas são idempotentes
+    (guiadas por marcador/diff) e o passo de cadastro ainda é protegido por
+    `execucao_cadastro_tiny_aberta`.
+    """
+    chave = f"propagar-tiny:{instancia_id}:{fornecedor}"
+    cliente = None
+    try:
+        cliente = cliente_redis()
+        adquirida = bool(cliente.set(chave, "1", nx=True, ex=PROPAGACAO_LOCK_TTL_SEGUNDOS))
+    except Exception:
+        logger.warning(
+            "propagação Tiny %s/%s: Redis indisponível para a trava, seguindo sem ela",
+            instancia_id, fornecedor,
+        )
+        yield True
+        return
+    if not adquirida:
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        try:
+            cliente.delete(chave)
+        except Exception:
+            pass
+
+
+@shared_task
+def propagar_fornecedor_tiny_task(instancia_id, fornecedor):
+    """
+    Reflete ao Tiny o que ficou fora de sincronia depois de uma importação de
+    espelho — disparada por `sincronizar_fornecedor_task` SÓ quando a cadência
+    do par tem `propagar_tiny` ligado. Reaproveita os serviços já validados,
+    sem duplicar nenhuma regra:
+
+      1. produtos novos elegíveis (+ imagens pendentes) -> fila do cadastro em
+         massa, rodada com Execucao/auditoria/pause-resume
+         (`cadastrar_produtos_tiny_task`). Só cria Execucao se a fila não
+         estiver vazia;
+      2. estoque que mudou no espelho -> `atualizar_estoque_tiny --fornecedor`;
+      3. custo / descrição complementar / dados que mudaram ->
+         `corrigir_dados_produto_tiny --executar`.
+
+    Cada etapa é isolada: uma falha de etapa é registrada e NÃO impede as
+    demais. Nenhuma etapa escreve algo que já esteja em dia — a seleção é
+    sempre por marcador de drift (`estoque_tiny_sincronizado`,
+    `preco_custo_tiny_sincronizado`, `dados_tiny_sincronizados_em`,
+    `imagens_tiny_sincronizadas`).
+    """
+    instancia = Instancia.objects.get(pk=instancia_id)
+    if not instancia.access_token:
+        logger.info(
+            "propagação Tiny %s/%s pulada: instância não conectada ao Tiny",
+            instancia.slug, fornecedor,
+        )
+        return
+
+    with _lock_propagacao_tiny(instancia_id, fornecedor) as adquirida:
+        if not adquirida:
+            logger.info(
+                "propagação Tiny %s/%s pulada: outra propagação do par em andamento",
+                instancia.slug, fornecedor,
+            )
+            return
+        if tiny_sync.execucao_cadastro_tiny_aberta(instancia, fornecedor) is not None:
+            logger.info(
+                "propagação Tiny %s/%s pulada: há um cadastro em massa aberto para o par",
+                instancia.slug, fornecedor,
+            )
+            return
+
+        _propagar_novos_e_imagens(instancia, fornecedor)
+        _propagar_estoque(instancia, fornecedor)
+        _propagar_dados(instancia, fornecedor)
+
+
+def _propagar_novos_e_imagens(instancia, fornecedor):
+    fila = tiny_sync.fila_cadastro_massa(instancia, fornecedor, incluir_imagens_pendentes=True)
+    if not fila:
+        return
+    token = uuid.uuid4().hex
+    execucao = Execucao.objects.create(
+        instancia=instancia,
+        fornecedor=fornecedor,
+        tipo=TipoExecucao.CADASTRO_TINY,
+        status=StatusExecucao.RODANDO,
+        lease_token=token,
+        heartbeat_em=timezone.now(),
+    )
+    logger.info(
+        "propagação Tiny %s/%s: cadastrando %s SKU(s) novos/pendentes (execução #%s)",
+        instancia.slug, fornecedor, len(fila), execucao.id,
+    )
+    try:
+        cadastrar_produtos_tiny_task(execucao.id, token)
+    except Exception:
+        logger.exception(
+            "propagação Tiny %s/%s: etapa de cadastro falhou", instancia.slug, fornecedor
+        )
+        _finalizar(execucao.id, token, motivo_falha="Propagação automática: erro inesperado no cadastro")
+
+
+def _propagar_estoque(instancia, fornecedor):
+    try:
+        call_command("atualizar_estoque_tiny", instancia.slug, fornecedor=fornecedor)
+    except Exception:
+        logger.exception(
+            "propagação Tiny %s/%s: etapa de estoque falhou", instancia.slug, fornecedor
+        )
+
+
+def _propagar_dados(instancia, fornecedor):
+    try:
+        call_command(
+            "corrigir_dados_produto_tiny",
+            instancia=instancia.slug,
+            fornecedor=fornecedor,
+            executar=True,
+        )
+    except CommandError as exc:
+        logger.info(
+            "propagação Tiny %s/%s: correção de dados pulada: %s",
+            instancia.slug, fornecedor, exc,
+        )
+    except Exception:
+        logger.exception(
+            "propagação Tiny %s/%s: etapa de dados falhou", instancia.slug, fornecedor
+        )

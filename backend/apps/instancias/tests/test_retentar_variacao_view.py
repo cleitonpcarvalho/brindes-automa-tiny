@@ -99,6 +99,44 @@ class RetentarVariacaoViewTests(TestCase):
         self.assertEqual(aud["erros"], 0)
         self.assertEqual(aud["cadastrados"], 1)
 
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto", return_value={"id": 55, "sku": "SKU-ERR"})
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku", return_value=None)
+    def test_retry_que_zera_os_erros_consolida_o_status_para_sucesso(self, _mb, _mc):
+        self.client.post(self._url())
+
+        self.execucao.refresh_from_db()
+        self.assertEqual(self.execucao.total_erros, 0)
+        self.assertEqual(self.execucao.total_ignorados, 0)
+        # o badge "Parcial / com erros" some: status final consolidado
+        self.assertEqual(self.execucao.status, StatusExecucao.SUCESSO)
+        # rastro da reclassificação, sem apagar nada do histórico
+        marcador = LogItem.objects.filter(
+            execucao=self.execucao, mensagem__icontains="Status consolidado"
+        ).first()
+        self.assertIsNotNone(marcador)
+        self.assertEqual(marcador.detalhe["status_anterior"], StatusExecucao.PARCIAL)
+        self.assertTrue(LogItem.objects.filter(pk=self.log_original.pk).exists())
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto", return_value={"id": 55, "sku": "SKU-ERR"})
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku", return_value=None)
+    def test_retry_com_outro_erro_pendente_mantem_parcial(self, _mb, _mc):
+        outra = Variacao.objects.create(
+            produto=self.variacao.produto, sku="SKU-ERR-2", nome="SKU-ERR-2",
+            preco=Decimal("10.00"), estoque=5,
+        )
+        Variacao.objects.filter(pk=outra.pk).update(status=StatusVariacao.ERRO, ultimo_erro="x")
+        LogItem.objects.create(
+            execucao=self.execucao, variacao=outra, nivel=NivelLog.ERRO, evento=EventoLog.ERRO,
+            mensagem="Falha ao sincronizar SKU SKU-ERR-2", detalhe={"erro": "x"},
+        )
+        Execucao.objects.filter(pk=self.execucao.pk).update(total_erros=2, total_lidos=3)
+
+        self.client.post(self._url())
+
+        self.execucao.refresh_from_db()
+        self.assertEqual(self.execucao.total_erros, 1)
+        self.assertEqual(self.execucao.status, StatusExecucao.PARCIAL)
+
     def test_retry_bem_sucedido_preserva_o_log_do_erro_original(self):
         antes = LogItem.objects.get(pk=self.log_original.pk)
         with patch(

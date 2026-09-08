@@ -17,7 +17,8 @@ class CadenciaFornecedorAdmin(admin.ModelAdmin):
         "intervalo_minutos",
         "proxima_execucao_em",
         "ativo",
+        "propagar_tiny",
     )
-    list_filter = ("fornecedor", "ativo")
+    list_filter = ("fornecedor", "ativo", "propagar_tiny")
     search_fields = ("instancia__nome", "instancia__slug")
     readonly_fields = ("proxima_execucao_em", "criado_em", "atualizado_em")

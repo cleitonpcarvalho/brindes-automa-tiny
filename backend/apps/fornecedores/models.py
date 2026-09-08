@@ -55,6 +55,15 @@ class CadenciaFornecedor(models.Model):
     # ativar explicitamente a cadência pela interface. Cadências já
     # existentes no banco não são afetadas por esta mudança de default.
     ativo = models.BooleanField(default=False)
+    # Segundo opt-in, também DESLIGADO por padrão: com `ativo` a cadência só
+    # atualiza o ESPELHO local; com `propagar_tiny` ligado, logo após cada
+    # importação de espelho bem-sucedida o sistema também reflete ao Tiny o
+    # que ficou fora de sincronia — cadastra os produtos novos elegíveis,
+    # empurra estoque/custo/descrição que mudaram e reenvia imagens trocadas
+    # (reaproveitando os mesmos serviços do cadastro manual, sem escrever
+    # nada além do necessário). Enquanto desligado, o comportamento é
+    # idêntico ao de hoje: nenhuma escrita automática no Tiny.
+    propagar_tiny = models.BooleanField(default=False)
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 

@@ -370,6 +370,8 @@ class CadenciaFornecedorDetailView(APIView):
             cadencia.intervalo_minutos = entrada.validated_data["intervalo_minutos"]
         if "ativo" in entrada.validated_data:
             cadencia.ativo = entrada.validated_data["ativo"]
+        if "propagar_tiny" in entrada.validated_data:
+            cadencia.propagar_tiny = entrada.validated_data["propagar_tiny"]
 
         try:
             cadencia.full_clean()
@@ -384,6 +386,7 @@ class CadenciaFornecedorDetailView(APIView):
                     "fornecedor": fornecedor,
                     "intervalo_minutos": cadencia.intervalo_minutos,
                     "ativo": cadencia.ativo,
+                    "propagar_tiny": cadencia.propagar_tiny,
                     "proxima_execucao_em": cadencia.proxima_execucao_em,
                 }
             ).data

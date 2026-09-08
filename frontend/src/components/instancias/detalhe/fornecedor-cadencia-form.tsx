@@ -60,6 +60,22 @@ export function FornecedorCadenciaForm({ fornecedor, cadencia, slug }: Props) {
         />
       </div>
 
+      <div className="flex items-center justify-between border-t border-border pt-3">
+        <div className="pr-4">
+          <p className="text-body-medium text-foreground">Refletir no Tiny automaticamente</p>
+          <p className="text-caption-label text-muted-foreground">
+            Após cada sincronização, cadastrar produtos novos e enviar ao Tiny estoque, custo,
+            descrição e imagens que mudaram. Requer a sincronização ativa.
+          </p>
+        </div>
+        <Switch
+          aria-label="Refletir no Tiny automaticamente"
+          checked={cadencia.propagar_tiny ?? false}
+          disabled={!cadencia.ativo}
+          onCheckedChange={(marcado) => atualizar.mutate({ propagar_tiny: marcado })}
+        />
+      </div>
+
       {mensagemErro && <p className="text-caption-label text-error">{mensagemErro}</p>}
     </div>
   )

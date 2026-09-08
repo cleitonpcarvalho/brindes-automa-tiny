@@ -54,14 +54,24 @@ def sincronizar_fornecedor_task(instancia_id, fornecedor):
         )
         return
     try:
-        # A sincronização automática também é espelho-apenas: este comando não
-        # escreve no Tiny em nenhum modo. O passo de cadastro no Tiny é um
-        # comando separado (cadastrar_produtos_tiny), disparado à parte.
+        # A importação de espelho é sempre espelho-apenas: este comando não
+        # escreve no Tiny em nenhum modo.
         call_command(
             "importar_fornecedor", instancia.slug, fornecedor, tipo="incremental", mirror_only=True
         )
     except CommandError as exc:
         logger.info("sincronização de %s/%s pulada: %s", instancia.slug, fornecedor, exc)
+        return
+
+    # Espelho atualizado. Se a cadência do par pediu explicitamente a
+    # propagação ao Tiny (segundo opt-in, desligado por padrão), reflete
+    # agora — numa task separada e isolada — o que ficou fora de sincronia.
+    if CadenciaFornecedor.objects.filter(
+        instancia_id=instancia_id, fornecedor=fornecedor, ativo=True, propagar_tiny=True
+    ).exists():
+        from apps.catalogo.tasks import propagar_fornecedor_tiny_task
+
+        propagar_fornecedor_tiny_task.delay(instancia_id, fornecedor)
 
 
 @shared_task

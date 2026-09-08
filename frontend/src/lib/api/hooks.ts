@@ -628,6 +628,7 @@ export function useCadencias(slug: string) {
 interface DadosCadencia {
   intervalo_minutos?: number;
   ativo?: boolean;
+  propagar_tiny?: boolean;
 }
 
 export function useAtualizarCadencia(slug: string, fornecedor: FornecedorEnum) {

@@ -70,6 +70,7 @@ def listar_cadencias_com_defaults(instancia):
                     "fornecedor": valor,
                     "intervalo_minutos": cadencia.intervalo_minutos,
                     "ativo": cadencia.ativo,
+                    "propagar_tiny": cadencia.propagar_tiny,
                     "proxima_execucao_em": cadencia.proxima_execucao_em,
                 }
             )
@@ -79,6 +80,7 @@ def listar_cadencias_com_defaults(instancia):
                     "fornecedor": valor,
                     "intervalo_minutos": _DEFAULT_INTERVALO_MINUTOS,
                     "ativo": False,
+                    "propagar_tiny": False,
                     "proxima_execucao_em": None,
                 }
             )

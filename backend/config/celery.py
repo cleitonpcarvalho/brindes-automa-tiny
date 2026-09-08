@@ -27,4 +27,9 @@ app.conf.beat_schedule = {
         "task": "apps.catalogo.tasks.reconciliar_execucoes_travadas",
         "schedule": crontab(minute="*/5"),
     },
+    # Idem para jobs de "tentar novamente em lote" cujo worker morreu.
+    "reconciliar-retentativas-lote": {
+        "task": "apps.catalogo.tasks.reconciliar_retentativas_lote_travadas",
+        "schedule": crontab(minute="*/5"),
+    },
 }

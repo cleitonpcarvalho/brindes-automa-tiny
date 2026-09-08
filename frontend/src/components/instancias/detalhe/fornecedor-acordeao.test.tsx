@@ -43,7 +43,7 @@ beforeEach(() => {
   } as never);
 });
 
-const CADENCIA_XBZ: CadenciaFornecedor = { fornecedor: "xbz", intervalo_minutos: 60, ativo: true, proxima_execucao_em: null };
+const CADENCIA_XBZ: CadenciaFornecedor = { fornecedor: "xbz", intervalo_minutos: 60, ativo: true, propagar_tiny: false, proxima_execucao_em: null };
 
 const CREDENCIAL_XBZ: CredencialFornecedorResposta = {
   fornecedor: "xbz",

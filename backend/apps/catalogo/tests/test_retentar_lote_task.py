@@ -103,6 +103,15 @@ class RetentarLoteTaskTests(TestCase):
         self.assertEqual(execucao.total_erros, 0)
         self.assertEqual(execucao.total_cadastrados, 3)
         self.assertEqual(resumo_auditoria(execucao)["erros"], 0)
+        # lote zerou os erros -> status final consolidado (badge deixa de ser "Parcial")
+        self.assertEqual(execucao.status, StatusExecucao.SUCESSO)
+        self.assertTrue(
+            LogItem.objects.filter(
+                execucao=execucao, mensagem__icontains="Status consolidado"
+            ).exists()
+        )
+        for log in originais:
+            self.assertTrue(LogItem.objects.filter(pk=log.pk).exists())
 
     @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku", return_value=None)
     @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
@@ -132,6 +141,8 @@ class RetentarLoteTaskTests(TestCase):
         execucao.refresh_from_db()
         self.assertEqual(execucao.total_erros, 1)
         self.assertEqual(execucao.total_cadastrados, 2)
+        # ainda sobrou 1 erro -> continua parcial
+        self.assertEqual(execucao.status, StatusExecucao.PARCIAL)
 
     @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku", return_value=None)
     @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto", return_value={"id": 5, "sku": "x"})

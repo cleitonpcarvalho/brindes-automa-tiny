@@ -111,6 +111,34 @@ describe("ExecucaoDetalheView", () => {
     expect(screen.getByText("não cadastrados")).toBeInTheDocument()
   })
 
+  it("badge segue o `estado` consolidado: retentativas zeraram os erros -> 'Concluído', sem 'Parcial'", () => {
+    mockResumo({
+      data: resumo({
+        estado: "concluido",
+        status: "sucesso",
+        total_erros: 0,
+        total_ignorados: 0,
+        auditoria: {
+          total: 1240,
+          cadastrados: 1240,
+          vinculados: 0,
+          cadastrados_e_vinculados: 1240,
+          bloqueados: 0,
+          erros: 0,
+        },
+      }),
+    })
+    renderView()
+    expect(screen.getByText("Concluído")).toBeInTheDocument()
+    expect(screen.queryByText("Parcial / com erros")).not.toBeInTheDocument()
+  })
+
+  it("badge continua 'Parcial / com erros' enquanto o `estado` for parcial", () => {
+    mockResumo({ data: resumo({ estado: "parcial", status: "parcial", total_erros: 3 }) })
+    renderView()
+    expect(screen.getByText("Parcial / com erros")).toBeInTheDocument()
+  })
+
   it("filtros de resultado com contagem nos rótulos", () => {
     mockResumo({ data: resumo() })
     renderView()

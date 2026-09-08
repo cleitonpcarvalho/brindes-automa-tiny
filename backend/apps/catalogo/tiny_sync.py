@@ -649,69 +649,150 @@ def executar_sincronizacao_tiny(
             eventos.fim(resultado)
             return resultado
 
-        try:
-            decisao = avaliar_variacao(
-                cliente,
-                instancia,
-                variacao,
-                colisoes,
-                vincular_skus=vincular_skus,
-                tiny_fornecedor_id=tiny_fornecedor_id,
-            )
-        except Exception as exc:  # falha na avaliação (ex.: GET explodiu)
-            resultado.erros += 1
-            if not dry_run:
-                marcar_erro(variacao, str(exc))
-            eventos.variacao_erro(variacao, exc)
-            continue
-
-        eventos.variacao_avaliada(variacao, decisao)
-
-        if decisao.acao == ACAO_BLOQUEADO:
-            resultado.bloqueadas += 1
-            eventos.variacao_bloqueada(variacao, decisao.motivo)
-            continue
-        if decisao.acao == ACAO_JA_CADASTRADO:
-            resultado.ja_cadastradas += 1
-            eventos.variacao_ja_cadastrada(variacao)
-            # SKU já vinculado que voltou à fila só para concluir a etapa de
-            # imagens (envio anterior falhou / nunca rodou). Nada é recriado.
-            _sincronizar_imagens_do_sku(cliente, variacao, resultado, eventos, dry_run=dry_run)
-            continue
-
-        if dry_run:
-            if decisao.acao == ACAO_CRIAR:
-                resultado.criadas += 1
-            elif decisao.acao == ACAO_VINCULAR:
-                resultado.vinculadas += 1
-            continue
-
-        try:
-            if decisao.acao == ACAO_CRIAR:
-                tiny_id = criar_produto_no_tiny(cliente, variacao, decisao.payload)
-                marcar_cadastrada(
-                    variacao, tiny_id, preco_custo_publicado=_preco_custo_publicado(variacao)
-                )
-                resultado.criadas += 1
-                eventos.variacao_criada(variacao, tiny_id)
-            elif decisao.acao == ACAO_VINCULAR:
-                marcar_cadastrada(
-                    variacao, decisao.tiny_existente["id"], preco_custo_publicado=None
-                )
-                resultado.vinculadas += 1
-                eventos.variacao_vinculada(variacao, decisao.tiny_existente["id"])
-        except Exception as exc:  # uma variação ruim não trava o lote
-            resultado.erros += 1
-            marcar_erro(variacao, str(exc))
-            eventos.variacao_erro(variacao, exc)
-            continue
-
-        # Etapa de imagens do MESMO SKU, imediatamente após o cadastro/vínculo
-        # bem-sucedido. Faz parte da unidade de trabalho: uma pausa só é
-        # atendida DEPOIS disto, no `controlador.checar()` do próximo SKU.
-        _sincronizar_imagens_do_sku(cliente, variacao, resultado, eventos, dry_run=dry_run)
+        _processar_variacao(
+            cliente,
+            instancia,
+            variacao,
+            colisoes,
+            tiny_fornecedor_id=tiny_fornecedor_id,
+            vincular_skus=vincular_skus,
+            resultado=resultado,
+            eventos=eventos,
+            dry_run=dry_run,
+        )
 
     eventos.fim(resultado)
+    return resultado
+
+
+def _processar_variacao(
+    cliente,
+    instancia,
+    variacao,
+    colisoes,
+    *,
+    tiny_fornecedor_id,
+    vincular_skus,
+    resultado: "ResultadoSincronizacao",
+    eventos: "EventosSincronizacao",
+    dry_run: bool,
+) -> None:
+    """
+    UMA unidade de trabalho do cadastro no Tiny: avalia (proteções locais +
+    GET por SKU exato) -> cria / vincula / bloqueia / reconhece já cadastrada
+    -> se ficou com `tiny_id`, sincroniza IMEDIATAMENTE as imagens do MESMO
+    SKU. Muta `resultado` e dispara `eventos`; nunca levanta.
+
+    É a MESMA função usada pelo cadastro em massa
+    (`executar_sincronizacao_tiny`, no loop) e pelo cadastro individual
+    (`cadastrar_variacao_individual`) — sem duplicar nenhuma regra.
+    """
+    try:
+        decisao = avaliar_variacao(
+            cliente,
+            instancia,
+            variacao,
+            colisoes,
+            vincular_skus=vincular_skus,
+            tiny_fornecedor_id=tiny_fornecedor_id,
+        )
+    except Exception as exc:  # falha na avaliação (ex.: GET explodiu)
+        resultado.erros += 1
+        if not dry_run:
+            marcar_erro(variacao, str(exc))
+        eventos.variacao_erro(variacao, exc)
+        return
+
+    eventos.variacao_avaliada(variacao, decisao)
+
+    if decisao.acao == ACAO_BLOQUEADO:
+        resultado.bloqueadas += 1
+        eventos.variacao_bloqueada(variacao, decisao.motivo)
+        return
+    if decisao.acao == ACAO_JA_CADASTRADO:
+        resultado.ja_cadastradas += 1
+        eventos.variacao_ja_cadastrada(variacao)
+        # SKU já vinculado que voltou à fila só para concluir a etapa de
+        # imagens (envio anterior falhou / nunca rodou). Nada é recriado.
+        _sincronizar_imagens_do_sku(cliente, variacao, resultado, eventos, dry_run=dry_run)
+        return
+
+    if dry_run:
+        if decisao.acao == ACAO_CRIAR:
+            resultado.criadas += 1
+        elif decisao.acao == ACAO_VINCULAR:
+            resultado.vinculadas += 1
+        return
+
+    try:
+        if decisao.acao == ACAO_CRIAR:
+            tiny_id = criar_produto_no_tiny(cliente, variacao, decisao.payload)
+            marcar_cadastrada(
+                variacao, tiny_id, preco_custo_publicado=_preco_custo_publicado(variacao)
+            )
+            resultado.criadas += 1
+            eventos.variacao_criada(variacao, tiny_id)
+        elif decisao.acao == ACAO_VINCULAR:
+            marcar_cadastrada(
+                variacao, decisao.tiny_existente["id"], preco_custo_publicado=None
+            )
+            resultado.vinculadas += 1
+            eventos.variacao_vinculada(variacao, decisao.tiny_existente["id"])
+    except Exception as exc:  # uma variação ruim não trava o lote
+        resultado.erros += 1
+        marcar_erro(variacao, str(exc))
+        eventos.variacao_erro(variacao, exc)
+        return
+
+    # Etapa de imagens do MESMO SKU, imediatamente após o cadastro/vínculo
+    # bem-sucedido. Faz parte da unidade de trabalho: no cadastro em massa uma
+    # pausa só é atendida DEPOIS disto, no `controlador.checar()` do próximo SKU.
+    _sincronizar_imagens_do_sku(cliente, variacao, resultado, eventos, dry_run=dry_run)
+
+
+def cadastrar_variacao_individual(
+    instancia,
+    variacao,
+    *,
+    cliente: TinyApiClient | None = None,
+    eventos: EventosSincronizacao | None = None,
+) -> ResultadoSincronizacao:
+    """
+    Cadastra UMA variação (SKU) no Tiny pelo MESMO caminho de código do
+    cadastro em massa — `_processar_variacao` — com todas as proteções
+    (SKU exato, estoque<=0, regra P@, colisão cross-fornecedor, SKU já no
+    Tiny), o MESMO payload (venda 0, `precoCusto` = `Variacao.preco`,
+    `descricaoComplementar`, fornecedor) e a MESMA etapa sequencial de
+    imagens logo após criar.
+
+    Diferenças do fluxo em massa: processa só esta variação, NÃO cria
+    `Execucao`, NÃO permite `--vincular-skus` (SKU já existente no Tiny ->
+    bloqueado, nunca vinculado automaticamente) e NÃO tem dry-run (quem
+    chama já decidiu escrever).
+
+    Devolve o `ResultadoSincronizacao` (contadores) — quem chama traduz
+    para a resposta. `eventos` (opcional) capta motivo de bloqueio / erro.
+    """
+    eventos = eventos or EventosSincronizacao()
+    if cliente is None:
+        cliente = TinyApiClient(instancia, somente_leitura=False)
+
+    fornecedor = variacao.produto.fornecedor
+    colisoes = colisoes_cross_fornecedor(instancia)
+    tiny_fornecedor_id = tiny_fornecedor_id_de(instancia, fornecedor)
+    resultado = ResultadoSincronizacao(fila=1)
+
+    _processar_variacao(
+        cliente,
+        instancia,
+        variacao,
+        colisoes,
+        tiny_fornecedor_id=tiny_fornecedor_id,
+        vincular_skus=set(),
+        resultado=resultado,
+        eventos=eventos,
+        dry_run=False,
+    )
     return resultado
 
 

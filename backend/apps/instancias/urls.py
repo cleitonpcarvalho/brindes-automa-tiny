@@ -4,6 +4,7 @@ from rest_framework.routers import DefaultRouter
 from .auth_views import LoginView, LogoutView, MeView
 from .views import (
     CadastrarProdutosTinyView,
+    CadastrarVariacaoTinyView,
     CadastroTinyPreviewView,
     PausarCadastroTinyView,
     RetomarCadastroTinyView,
@@ -98,6 +99,11 @@ urlpatterns = router.urls + [
         "instancias/<slug:slug>/produtos/<int:variacao_id>/",
         VariacaoDetalheView.as_view(),
         name="instancia-produto-detalhe",
+    ),
+    path(
+        "instancias/<slug:slug>/produtos/<int:variacao_id>/cadastro-tiny/",
+        CadastrarVariacaoTinyView.as_view(),
+        name="instancia-produto-cadastro-tiny",
     ),
     path(
         "instancias/<slug:slug>/execucoes/",

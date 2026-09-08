@@ -26,6 +26,8 @@ from apps.fornecedores.services import (
 )
 from apps.catalogo.tasks import cadastrar_produtos_tiny_task
 from apps.catalogo.tiny_sync import (
+    EventosSincronizacao,
+    cadastrar_variacao_individual,
     cadastro_tiny_bloqueia_espelho,
     estado_cadastro_tiny,
     estimar_cadastro,
@@ -785,6 +787,93 @@ class VariacaoDetalheView(generics.RetrieveAPIView):
             Variacao.objects.select_related("produto", "produto__instancia"),
             id=self.kwargs["variacao_id"],
             produto__instancia__slug=self.kwargs["slug"],
+        )
+
+
+class _ColetorResultadoVariacao(EventosSincronizacao):
+    """Capta o motivo do bloqueio / a mensagem de erro do cadastro de UMA variação."""
+
+    def __init__(self):
+        self.motivo_bloqueio = None
+        self.erro = None
+
+    def variacao_bloqueada(self, variacao, motivo):
+        self.motivo_bloqueio = motivo
+
+    def variacao_erro(self, variacao, exc):
+        self.erro = str(exc)
+
+
+class CadastrarVariacaoTinyView(APIView):
+    """
+    POST /api/instancias/<slug>/produtos/<variacao_id>/cadastro-tiny/ — cadastra
+    SÓ esta variação (SKU) no Tiny.
+
+    Usa EXATAMENTE o caminho validado do cadastro em massa
+    (`apps.catalogo.tiny_sync.cadastrar_variacao_individual` ->
+    `_processar_variacao`): mesmas proteções (SKU exato, estoque<=0, regra P@,
+    colisão cross-fornecedor, SKU já existente no Tiny -> bloqueado, nunca
+    vinculado), mesmo payload (venda 0, `precoCusto` = `Variacao.preco`,
+    `descricaoComplementar` = `Produto.descricao`, fornecedor Tiny + código +
+    `padrao=true`) e a MESMA etapa sequencial de imagens logo após criar.
+
+    NÃO cria `Execucao` e NÃO interfere no fluxo em massa. Isolamento
+    multi-tenant: a variação é resolvida por (id E produto__instancia).
+    Concorrência / clique duplo: `select_for_update` na linha da Variacao —
+    um 2º pedido do MESMO SKU espera o 1º e então vê `cadastrado` (409).
+    """
+
+    @extend_schema(request=None, responses=VariacaoEspelhoSerializer)
+    def post(self, request, slug, variacao_id):
+        instancia = _obter_instancia_ou_404(slug)
+        variacao = get_object_or_404(
+            Variacao.objects.select_related("produto"),
+            pk=variacao_id,
+            produto__instancia=instancia,
+        )
+        fornecedor = variacao.produto.fornecedor
+
+        pronta, motivo = _pronta_para_cadastro_tiny(instancia, fornecedor)
+        if not pronta:
+            return Response({"detail": motivo}, status=status.HTTP_400_BAD_REQUEST)
+
+        if cadastro_tiny_bloqueia_espelho(instancia, fornecedor):
+            return Response(
+                {"detail": "Há uma sincronização em massa deste fornecedor com o Tiny em "
+                 "andamento — aguarde ela terminar para enviar SKUs avulsos."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        with transaction.atomic():
+            travada = (
+                Variacao.objects.select_for_update()
+                .select_related("produto")
+                .get(pk=variacao.pk)
+            )
+            if (travada.tiny_id or "").strip() or travada.status == StatusVariacao.CADASTRADO:
+                return Response(
+                    {"detail": f"O SKU {travada.sku} já está cadastrado no Tiny "
+                     f"(tiny_id={travada.tiny_id})."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+            coletor = _ColetorResultadoVariacao()
+            resultado = cadastrar_variacao_individual(instancia, travada, eventos=coletor)
+            travada.refresh_from_db()
+
+        if resultado.criadas or resultado.vinculadas:
+            # Sucesso — a linha volta com status/tiny_id/ultimo_erro atualizados
+            # (se as imagens falharam, `ultimo_erro` carrega o aviso e o produto
+            # continua cadastrado, igual ao fluxo em massa).
+            return Response(VariacaoEspelhoSerializer(travada).data, status=status.HTTP_200_OK)
+        if resultado.bloqueadas:
+            return Response(
+                {"detail": coletor.motivo_bloqueio or "Cadastro bloqueado pelas regras de negócio."},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+        return Response(
+            {"detail": coletor.erro or travada.ultimo_erro or "Falha ao cadastrar o SKU no Tiny."},
+            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
 
 

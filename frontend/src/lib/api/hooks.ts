@@ -29,6 +29,7 @@ import type {
   StatusInstancia,
   StatusVariacao,
   VariacaoDetalhe,
+  VariacaoEspelho,
 } from "./types";
 
 /** Sessão do operador — também serve para confirmar que o token ainda é válido. */
@@ -205,6 +206,43 @@ export function useVariacaoInstancia(slug: string, variacaoId: string | number) 
       apiClient.get<VariacaoDetalhe>(`/instancias/${slug}/produtos/${variacaoId}`),
     enabled: Boolean(slug && variacaoId),
     retry: false,
+  });
+}
+
+/**
+ * Cadastro INDIVIDUAL de uma variação (SKU) no Tiny — ação "Enviar ao Tiny" da
+ * tabela de Produtos. Chama o endpoint que reusa o mesmo fluxo validado do
+ * cadastro em massa (`tiny_sync._processar_variacao`). Em sucesso devolve a
+ * linha atualizada e a espalha nas páginas já em cache, sem recarregar tudo.
+ * NÃO tem retry — 429/erro do Tiny já é tratado no backend; um POST repetido
+ * daqui poderia duplicar tentativa.
+ */
+export function useCadastrarVariacaoTiny(slug: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    retry: false,
+    mutationFn: (variacaoId: number) =>
+      apiClient.post<VariacaoEspelho>(
+        `/instancias/${slug}/produtos/${variacaoId}/cadastro-tiny/`,
+      ),
+    onSuccess: (linha) => {
+      queryClient.setQueriesData<PaginatedVariacaoEspelhoList>(
+        { queryKey: ["instancias", "produtos", slug] },
+        (dados) =>
+          dados?.results
+            ? { ...dados, results: dados.results.map((it) => (it.id === linha.id ? linha : it)) }
+            : dados,
+      );
+      queryClient.invalidateQueries({
+        queryKey: ["instancias", "produtos", "detalhe", slug, String(linha.id)],
+      });
+      queryClient.invalidateQueries({ queryKey: ["instancias", "detalhe", slug] });
+    },
+    onError: () => {
+      // 409 (corrida: outro pedido já cadastrou) / 422 — reconcilia a lista
+      // com a verdade do servidor.
+      queryClient.invalidateQueries({ queryKey: ["instancias", "produtos", slug] });
+    },
   });
 }
 

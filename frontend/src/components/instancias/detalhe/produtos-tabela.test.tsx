@@ -1,12 +1,20 @@
 import type { ComponentProps } from "react"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
+import { ToastProvider } from "@/components/ui/toast"
 import { ProdutosTabela } from "./produtos-tabela"
 import type { VariacaoEspelho } from "@/lib/api/types"
 
 const push = vi.fn()
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
+}))
+
+// A ação "Enviar ao Tiny" tem teste próprio (enviar-ao-tiny-botao.test.tsx);
+// aqui só interessa que a tabela a renderiza para linhas `pendente`.
+const mutate = vi.fn()
+vi.mock("@/lib/api/hooks", () => ({
+  useCadastrarVariacaoTiny: () => ({ mutate, isPending: false }),
 }))
 
 function variacao(overrides: Partial<VariacaoEspelho> = {}): VariacaoEspelho {
@@ -36,15 +44,17 @@ function variacao(overrides: Partial<VariacaoEspelho> = {}): VariacaoEspelho {
 
 function renderTabela(props: Partial<ComponentProps<typeof ProdutosTabela>> = {}) {
   return render(
-    <ProdutosTabela
-      slug="loja-x"
-      itens={[]}
-      isLoading={false}
-      isError={false}
-      onRetry={vi.fn()}
-      temFiltros={false}
-      {...props}
-    />,
+    <ToastProvider>
+      <ProdutosTabela
+        slug="loja-x"
+        itens={[]}
+        isLoading={false}
+        isError={false}
+        onRetry={vi.fn()}
+        temFiltros={false}
+        {...props}
+      />
+    </ToastProvider>,
   )
 }
 
@@ -95,5 +105,31 @@ describe("ProdutosTabela", () => {
     push.mockClear()
     fireEvent.keyDown(linha, { key: "Enter" })
     expect(push).toHaveBeenCalledWith("/instancias/loja-x/produtos/42")
+  })
+
+  it("mostra 'Enviar ao Tiny' só nas linhas pendentes", () => {
+    renderTabela({
+      itens: [
+        variacao({ id: 1, sku: "PEND-1", status: "pendente", status_rotulo: "Pendente" }),
+        variacao({ id: 2, sku: "FEITO-2", status: "cadastrado" }),
+        variacao({ id: 3, sku: "AGU-3", status: "aguardando" }),
+      ],
+    })
+    const botoes = screen.getAllByRole("button", { name: /Enviar o SKU/ })
+    expect(botoes).toHaveLength(1)
+    expect(screen.getByRole("button", { name: "Enviar o SKU PEND-1 ao Tiny" })).toBeInTheDocument()
+  })
+
+  it("clicar em 'Enviar ao Tiny' dispara a mutation e NÃO navega para o detalhe", () => {
+    push.mockClear()
+    mutate.mockClear()
+    renderTabela({
+      itens: [variacao({ id: 9, sku: "PEND-9", status: "pendente", status_rotulo: "Pendente" })],
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "Enviar o SKU PEND-9 ao Tiny" }))
+
+    expect(mutate).toHaveBeenCalledWith(9, expect.anything())
+    expect(push).not.toHaveBeenCalled()
   })
 })

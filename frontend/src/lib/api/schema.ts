@@ -638,6 +638,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/instancias/{slug}/produtos/{variacao_id}/cadastro-tiny/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description POST /api/instancias/<slug>/produtos/<variacao_id>/cadastro-tiny/ — cadastra
+         *     SÓ esta variação (SKU) no Tiny.
+         *
+         *     Usa EXATAMENTE o caminho validado do cadastro em massa
+         *     (`apps.catalogo.tiny_sync.cadastrar_variacao_individual` ->
+         *     `_processar_variacao`): mesmas proteções (SKU exato, estoque<=0, regra P@,
+         *     colisão cross-fornecedor, SKU já existente no Tiny -> bloqueado, nunca
+         *     vinculado), mesmo payload (venda 0, `precoCusto` = `Variacao.preco`,
+         *     `descricaoComplementar` = `Produto.descricao`, fornecedor Tiny + código +
+         *     `padrao=true`) e a MESMA etapa sequencial de imagens logo após criar.
+         *
+         *     NÃO cria `Execucao` e NÃO interfere no fluxo em massa. Isolamento
+         *     multi-tenant: a variação é resolvida por (id E produto__instancia).
+         *     Concorrência / clique duplo: `select_for_update` na linha da Variacao —
+         *     um 2º pedido do MESMO SKU espera o 1º e então vê `cadastrado` (409).
+         */
+        post: operations["instancias_produtos_cadastro_tiny_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/schema/": {
         parameters: {
             query?: never;
@@ -2358,6 +2391,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VariacaoDetalhe"];
+                };
+            };
+        };
+    };
+    instancias_produtos_cadastro_tiny_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                variacao_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VariacaoEspelho"];
                 };
             };
         };

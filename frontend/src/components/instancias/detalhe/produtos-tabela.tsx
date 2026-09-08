@@ -7,10 +7,11 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { formatarNumero } from "@/lib/format"
 import { ROTULO_FORNECEDOR } from "../cor-fornecedor"
+import { EnviarAoTinyBotao } from "./enviar-ao-tiny-botao"
 import { varianteBadgeStatus } from "./variacao-status"
 import type { VariacaoEspelho } from "@/lib/api/types"
 
-const COLUNAS = 7
+const COLUNAS = 8
 
 const formatadorMoeda = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
 
@@ -52,6 +53,7 @@ export function ProdutosTabela({ slug, itens, isLoading, isError, onRetry, temFi
             <TableHead className="text-right">Estoque</TableHead>
             <TableHead className="text-right">Preço fornecedor</TableHead>
             <TableHead>Situação no Tiny</TableHead>
+            <TableHead className="sr-only">Ações</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -105,7 +107,12 @@ export function ProdutosTabela({ slug, itens, isLoading, isError, onRetry, temFi
                 className="cursor-pointer"
                 onClick={() => abrir(item.id)}
                 onKeyDown={(evento) => {
-                  if (evento.key === "Enter" || evento.key === " ") {
+                  // Só navega quando a LINHA está focada — não quando o foco
+                  // está num controle dentro dela (ex.: "Enviar ao Tiny").
+                  if (
+                    evento.target === evento.currentTarget &&
+                    (evento.key === "Enter" || evento.key === " ")
+                  ) {
                     evento.preventDefault()
                     abrir(item.id)
                   }
@@ -143,6 +150,9 @@ export function ProdutosTabela({ slug, itens, isLoading, isError, onRetry, temFi
                 </TableCell>
                 <TableCell>
                   <Badge variant={varianteBadgeStatus(item.status)}>{item.status_rotulo}</Badge>
+                </TableCell>
+                <TableCell className="text-right">
+                  <EnviarAoTinyBotao slug={slug} variacao={item} />
                 </TableCell>
               </TableRow>
             ))}

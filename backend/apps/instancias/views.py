@@ -24,7 +24,11 @@ from apps.fornecedores.services import (
     listar_cadencias_com_defaults,
     obter_credencial_ativa,
 )
-from apps.catalogo.tasks import cadastrar_produtos_tiny_task
+from apps.catalogo.tasks import (
+    EventosExecucao,
+    cadastrar_produtos_tiny_task,
+    recomputar_contadores_execucao,
+)
 from apps.catalogo.tiny_sync import (
     EventosSincronizacao,
     cadastrar_variacao_individual,
@@ -37,8 +41,11 @@ from apps.catalogo.tiny_sync import (
 from apps.fornecedores.tasks import executar_sincronizacao_manual_task
 from apps.sincronizacao import auditoria
 from apps.sincronizacao.models import (
+    EVENTOS_DESFECHO,
     STATUS_EXECUCAO_ABERTOS,
+    EventoLog,
     Execucao,
+    LogItem,
     NivelLog,
     StatusExecucao,
     TipoExecucao,
@@ -1079,8 +1086,7 @@ class ExecucaoProdutoLogsView(generics.ListAPIView):
     """
     GET /api/instancias/<slug>/execucoes/<execucao_id>/produtos/<variacao_id>/
     — todos os logs (técnicos, com detalhe/JSON) de UM SKU nesta execução.
-    Usado pelo "ver mensagem técnica completa" da linha. Ponto natural para
-    um POST "tentar novamente" no futuro, sem redesenhar a tela.
+    Usado pelo "ver mensagem técnica completa" da linha.
     """
 
     serializer_class = LogItemSerializer
@@ -1089,6 +1095,151 @@ class ExecucaoProdutoLogsView(generics.ListAPIView):
     def get_queryset(self):
         execucao = _obter_execucao_ou_404(self.kwargs["slug"], self.kwargs["execucao_id"])
         return auditoria.logs_da_variacao(execucao, self.kwargs["variacao_id"])
+
+
+class _EventosRetentativa(EventosExecucao):
+    """
+    Grava os `LogItem`s da tentativa NA `Execucao` original (append — nunca
+    sobrescreve o log do erro original) e capta o desfecho para a resposta.
+
+    Um BLOQUEIO NÃO vira `LogItem`: não deve reclassificar o desfecho do SKU
+    (ele continua contando na aba "Erros"); o motivo volta só na resposta.
+    Um ERRO vira `LogItem` ERRO com a MENSAGEM NOVA (o SKU segue como erro,
+    agora com o texto real da 2ª falha).
+    """
+
+    def __init__(self, execucao):
+        super().__init__(execucao)
+        self.motivo_bloqueio = None
+        self.erro = None
+
+    def variacao_bloqueada(self, variacao, motivo):
+        self.motivo_bloqueio = motivo
+
+    def variacao_erro(self, variacao, exc):
+        super().variacao_erro(variacao, exc)
+        self.erro = str(exc)
+
+
+class RetentarVariacaoExecucaoView(APIView):
+    """
+    POST /api/instancias/<slug>/execucoes/<execucao_id>/produtos/<variacao_id>/retentar/
+    — "Tentar novamente" um SKU que ficou com ERRO numa execução de cadastro
+    no Tiny.
+
+    Reusa EXATAMENTE `cadastrar_variacao_individual` -> `_processar_variacao`
+    (SKU exato, estoque<=0, regra P@, colisão, SKU já no Tiny, payload da
+    regra definitiva, etapa de imagens) — NENHUMA segunda lógica de Tiny.
+
+    Histórico: os `LogItem`s da tentativa são APPENDADOS na `Execucao`
+    original; o log do erro original fica intacto. A tabela de auditoria
+    (último desfecho por SKU) e o `resumo_auditoria` se ajustam sozinhos; em
+    sucesso, os `Execucao.total_*` são recomputados da verdade do banco.
+
+    Isolamento: execução por (id E instancia__slug); variação por
+    (id E produto__instancia == execucao.instancia). Concorrência: 409 se há
+    sincronização em massa ATIVA do fornecedor; `select_for_update` na linha
+    da Variacao serializa cliques simultâneos do MESMO SKU.
+    """
+
+    @extend_schema(request=None, responses=ExecucaoProdutoSerializer)
+    def post(self, request, slug, execucao_id, variacao_id):
+        execucao = _obter_execucao_ou_404(slug, execucao_id)
+        if execucao.tipo != TipoExecucao.CADASTRO_TINY:
+            return Response(
+                {"detail": "Só execuções de cadastro no Tiny têm 'tentar novamente'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        instancia = execucao.instancia
+        variacao = get_object_or_404(
+            Variacao.objects.select_related("produto"),
+            pk=variacao_id,
+            produto__instancia=instancia,
+        )
+        fornecedor = variacao.produto.fornecedor
+
+        if (variacao.tiny_id or "").strip() or variacao.status == StatusVariacao.CADASTRADO:
+            return Response(
+                {"detail": f"O SKU {variacao.sku} já está cadastrado no Tiny "
+                 f"(tiny_id={variacao.tiny_id})."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        ultimo_desfecho = (
+            LogItem.objects.filter(
+                execucao=execucao, variacao=variacao, evento__in=EVENTOS_DESFECHO
+            )
+            .order_by("-criado_em", "-id")
+            .values_list("evento", flat=True)
+            .first()
+        )
+        if ultimo_desfecho != EventoLog.ERRO:
+            return Response(
+                {"detail": "Este SKU não está com erro nesta execução."},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+
+        pronta, motivo = _pronta_para_cadastro_tiny(instancia, fornecedor)
+        if not pronta:
+            return Response({"detail": motivo}, status=status.HTTP_400_BAD_REQUEST)
+
+        if cadastro_tiny_bloqueia_espelho(instancia, fornecedor):
+            return Response(
+                {"detail": "Há uma sincronização em massa deste fornecedor com o Tiny em "
+                 "andamento — aguarde ela terminar para tentar SKUs avulsos."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        with transaction.atomic():
+            travada = (
+                Variacao.objects.select_for_update()
+                .select_related("produto")
+                .get(pk=variacao.pk)
+            )
+            if (travada.tiny_id or "").strip() or travada.status == StatusVariacao.CADASTRADO:
+                return Response(
+                    {"detail": f"O SKU {travada.sku} já está cadastrado no Tiny "
+                     f"(tiny_id={travada.tiny_id})."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+            LogItem.objects.create(
+                execucao=execucao,
+                nivel=NivelLog.INFO,
+                evento=EventoLog.GERAL,
+                mensagem=(f"Nova tentativa de cadastro do SKU {travada.sku} "
+                          "(individual, a partir da tela de execução)")[:500],
+                variacao=travada,
+                detalhe={"origem": "retentativa_individual"},
+            )
+            eventos = _EventosRetentativa(execucao)
+            resultado = cadastrar_variacao_individual(instancia, travada, eventos=eventos)
+            travada.refresh_from_db()
+
+            if resultado.criadas or resultado.vinculadas:
+                recomputar_contadores_execucao(execucao)
+
+        if resultado.criadas or resultado.vinculadas:
+            desfecho = (
+                LogItem.objects.filter(
+                    execucao=execucao, variacao=travada, evento__in=EVENTOS_DESFECHO
+                )
+                .select_related("variacao", "variacao__produto")
+                .order_by("-criado_em", "-id")
+                .first()
+            )
+            linha = auditoria.montar_linhas(execucao, [desfecho])[0]
+            return Response(ExecucaoProdutoSerializer(linha).data, status=status.HTTP_200_OK)
+
+        if resultado.bloqueadas:
+            return Response(
+                {"detail": eventos.motivo_bloqueio or "Cadastro bloqueado pelas regras de negócio."},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+        return Response(
+            {"detail": eventos.erro or travada.ultimo_erro or "Falha ao recadastrar o SKU no Tiny."},
+            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
 
 
 class ConfiguracoesInstanciaView(generics.RetrieveUpdateAPIView):

@@ -2,12 +2,18 @@ import type { ComponentProps } from "react"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import * as hooks from "@/lib/api/hooks"
+import { ToastProvider } from "@/components/ui/toast"
 import { ExecucaoProdutosTabela } from "./execucao-produtos-tabela"
 import type { ExecucaoProduto } from "@/lib/api/types"
 
 const push = vi.fn()
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }))
-vi.mock("@/lib/api/hooks", () => ({ useExecucaoProdutoLogs: vi.fn() }))
+vi.mock("@/lib/api/hooks", () => ({
+  useExecucaoProdutoLogs: vi.fn(),
+  useRetentarVariacaoExecucao: vi.fn(),
+}))
+
+const retentarMutate = vi.fn()
 
 function linha(over: Partial<ExecucaoProduto> = {}): ExecucaoProduto {
   return {
@@ -27,16 +33,18 @@ function linha(over: Partial<ExecucaoProduto> = {}): ExecucaoProduto {
 
 function renderTabela(props: Partial<ComponentProps<typeof ExecucaoProdutosTabela>> = {}) {
   return render(
-    <ExecucaoProdutosTabela
-      slug="loja-x"
-      execucaoId="7"
-      itens={[]}
-      isLoading={false}
-      isError={false}
-      onRetry={vi.fn()}
-      temFiltros={false}
-      {...props}
-    />,
+    <ToastProvider>
+      <ExecucaoProdutosTabela
+        slug="loja-x"
+        execucaoId="7"
+        itens={[]}
+        isLoading={false}
+        isError={false}
+        onRetry={vi.fn()}
+        temFiltros={false}
+        {...props}
+      />
+    </ToastProvider>,
   )
 }
 
@@ -47,6 +55,10 @@ describe("ExecucaoProdutosTabela", () => {
       data: { results: [] },
       isLoading: false,
       isError: false,
+    } as never)
+    vi.mocked(hooks.useRetentarVariacaoExecucao).mockReturnValue({
+      mutate: retentarMutate,
+      isPending: false,
     } as never)
   })
 
@@ -122,5 +134,47 @@ describe("ExecucaoProdutosTabela", () => {
   it("estado vazio com filtro", () => {
     renderTabela({ itens: [], temFiltros: true })
     expect(screen.getByText("Nenhum SKU com esse filtro.")).toBeInTheDocument()
+  })
+
+  // ---- "Tentar novamente" ----
+
+  it("mostra 'Tentar novamente' só nas linhas com erro (e com variacao_id)", () => {
+    renderTabela({
+      itens: [
+        linha({ log_id: 1, sku: "ERR-1", resultado: "erro", tiny_id: "" }),
+        linha({ log_id: 2, sku: "OK-2", resultado: "criado" }),
+        linha({ log_id: 3, sku: "BLK-3", resultado: "bloqueado" }),
+        linha({ log_id: 4, sku: "SEM-VAR", resultado: "erro", variacao_id: null }),
+      ],
+    })
+    const botoes = screen.getAllByRole("button", { name: /Tentar cadastrar o SKU/ })
+    expect(botoes).toHaveLength(1)
+    expect(
+      screen.getByRole("button", { name: "Tentar cadastrar o SKU ERR-1 novamente" }),
+    ).toBeInTheDocument()
+  })
+
+  it("clicar em 'Tentar novamente' chama a mutation com o variacao_id da linha", () => {
+    renderTabela({ itens: [linha({ variacao_id: 77, sku: "ERR-77", resultado: "erro", tiny_id: "" })] })
+
+    fireEvent.click(screen.getByRole("button", { name: "Tentar cadastrar o SKU ERR-77 novamente" }))
+
+    expect(retentarMutate).toHaveBeenCalledWith(77, expect.anything())
+    expect(push).not.toHaveBeenCalled()
+    expect(hooks.useRetentarVariacaoExecucao).toHaveBeenCalledWith("loja-x", "7")
+  })
+
+  it("enquanto a tentativa está em voo o botão vira 'Tentando…' e fica desabilitado", () => {
+    vi.mocked(hooks.useRetentarVariacaoExecucao).mockReturnValue({
+      mutate: retentarMutate,
+      isPending: true,
+    } as never)
+    renderTabela({ itens: [linha({ variacao_id: 5, sku: "ERR-5", resultado: "erro", tiny_id: "" })] })
+
+    const botao = screen.getByRole("button", { name: "Tentar cadastrar o SKU ERR-5 novamente" })
+    expect(botao).toBeDisabled()
+    expect(screen.getByText("Tentando…")).toBeInTheDocument()
+    fireEvent.click(botao)
+    expect(retentarMutate).not.toHaveBeenCalled()
   })
 })

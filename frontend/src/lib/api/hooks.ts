@@ -9,6 +9,7 @@ import type {
   ConfiguracoesInstancia,
   CredencialFornecedorResposta,
   ExecucaoAtividade,
+  ExecucaoProduto,
   FornecedorEnum,
   Instancia,
   InstanciaDetalhe,
@@ -356,6 +357,52 @@ export function useExecucaoProdutoLogs(
         `/instancias/${slug}/execucoes/${execucaoId}/produtos/${variacaoId}`,
       ),
     enabled: Boolean(slug && execucaoId && variacaoId),
+  });
+}
+
+/**
+ * "Tentar novamente" um SKU com erro na tela de detalhe de Execução. Reusa o
+ * MESMO fluxo do cadastro individual (`cadastrar_variacao_individual`); os
+ * LogItems da tentativa são appendados na execução original (histórico
+ * preservado). Em sucesso devolve a linha de auditoria atualizada e a espalha
+ * no cache; invalida o resumo (contadores) e o expand técnico do SKU. Sem
+ * retry automático.
+ */
+export function useRetentarVariacaoExecucao(slug: string, execucaoId: string | number) {
+  const queryClient = useQueryClient();
+  const id = String(execucaoId);
+  return useMutation({
+    retry: false,
+    mutationFn: (variacaoId: number) =>
+      apiClient.post<ExecucaoProduto>(
+        `/instancias/${slug}/execucoes/${execucaoId}/produtos/${variacaoId}/retentar/`,
+      ),
+    onSuccess: (linha) => {
+      queryClient.setQueriesData<PaginatedExecucaoProdutoList>(
+        { queryKey: ["instancias", "execucoes", "produtos", slug, id] },
+        (dados) =>
+          dados?.results
+            ? {
+                ...dados,
+                results: dados.results.map((it) =>
+                  it.variacao_id === linha.variacao_id ? linha : it,
+                ),
+              }
+            : dados,
+      );
+      queryClient.invalidateQueries({
+        queryKey: ["instancias", "execucoes", "detalhe", slug, id],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["instancias", "execucoes", "produto-logs", slug, id, linha.variacao_id],
+      });
+      queryClient.invalidateQueries({ queryKey: ["instancias", "detalhe", slug] });
+    },
+    onError: () => {
+      // 409 (corrida) / 422 — reconcilia a lista e o resumo com o servidor.
+      queryClient.invalidateQueries({ queryKey: ["instancias", "execucoes", "produtos", slug, id] });
+      queryClient.invalidateQueries({ queryKey: ["instancias", "execucoes", "detalhe", slug, id] });
+    },
   });
 }
 

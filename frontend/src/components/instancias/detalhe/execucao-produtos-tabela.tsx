@@ -10,6 +10,7 @@ import { useExecucaoProdutoLogs } from "@/lib/api/hooks"
 import { formatarTempoRelativo } from "@/lib/format"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { ROTULO_RESULTADO, VARIANTE_RESULTADO } from "./execucao-resultado"
+import { RetentarBotao } from "./retentar-botao"
 import type { ExecucaoProduto } from "@/lib/api/types"
 
 const COLUNAS = 6
@@ -46,7 +47,7 @@ export function ExecucaoProdutosTabela({
             <TableHead>Resultado</TableHead>
             <TableHead>Tiny ID</TableHead>
             <TableHead>Detalhe / erro</TableHead>
-            <TableHead className="w-28 text-right">Ações</TableHead>
+            <TableHead className="w-44 text-right">Ações</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -135,14 +136,17 @@ export function ExecucaoProdutosTabela({
                       {linha.detalhe_curto || "—"}
                     </TableCell>
                     <TableCell className="align-top text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={irParaProduto}
-                        disabled={linha.variacao_id == null}
-                      >
-                        Ver produto
-                      </Button>
+                      <div className="flex flex-col items-end gap-1">
+                        <RetentarBotao slug={slug} execucaoId={execucaoId} linha={linha} />
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={irParaProduto}
+                          disabled={linha.variacao_id == null}
+                        >
+                          Ver produto
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                   {aberto && (

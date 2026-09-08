@@ -425,12 +425,46 @@ export interface paths {
         /**
          * @description GET /api/instancias/<slug>/execucoes/<execucao_id>/produtos/<variacao_id>/
          *     — todos os logs (técnicos, com detalhe/JSON) de UM SKU nesta execução.
-         *     Usado pelo "ver mensagem técnica completa" da linha. Ponto natural para
-         *     um POST "tentar novamente" no futuro, sem redesenhar a tela.
+         *     Usado pelo "ver mensagem técnica completa" da linha.
          */
         get: operations["instancias_execucoes_produtos_list_2"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/instancias/{slug}/execucoes/{execucao_id}/produtos/{variacao_id}/retentar/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description POST /api/instancias/<slug>/execucoes/<execucao_id>/produtos/<variacao_id>/retentar/
+         *     — "Tentar novamente" um SKU que ficou com ERRO numa execução de cadastro
+         *     no Tiny.
+         *
+         *     Reusa EXATAMENTE `cadastrar_variacao_individual` -> `_processar_variacao`
+         *     (SKU exato, estoque<=0, regra P@, colisão, SKU já no Tiny, payload da
+         *     regra definitiva, etapa de imagens) — NENHUMA segunda lógica de Tiny.
+         *
+         *     Histórico: os `LogItem`s da tentativa são APPENDADOS na `Execucao`
+         *     original; o log do erro original fica intacto. A tabela de auditoria
+         *     (último desfecho por SKU) e o `resumo_auditoria` se ajustam sozinhos; em
+         *     sucesso, os `Execucao.total_*` são recomputados da verdade do banco.
+         *
+         *     Isolamento: execução por (id E instancia__slug); variação por
+         *     (id E produto__instancia == execucao.instancia). Concorrência: 409 se há
+         *     sincronização em massa ATIVA do fornecedor; `select_for_update` na linha
+         *     da Variacao serializa cliques simultâneos do MESMO SKU.
+         */
+        post: operations["instancias_execucoes_produtos_retentar_create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2199,6 +2233,29 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PaginatedLogItemList"];
+                };
+            };
+        };
+    };
+    instancias_execucoes_produtos_retentar_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                execucao_id: number;
+                slug: string;
+                variacao_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecucaoProduto"];
                 };
             };
         };

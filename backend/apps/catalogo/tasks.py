@@ -137,7 +137,15 @@ class _ControladorLease(ControladorSincronizacao):
 # ---------------------------------------------------------------------------
 
 
-class _EventosExecucao(EventosSincronizacao):
+class EventosExecucao(EventosSincronizacao):
+    """
+    Sink de eventos que grava o histórico de UMA `Execucao` como `LogItem`s
+    (o que a tela de auditoria lê). Usado pela task de cadastro em massa e,
+    para uma tentativa individual a partir da tela de execução, pela view
+    `RetentarVariacaoExecucaoView` — os MESMOS `LogItem`s, na MESMA `Execucao`,
+    só que APPEND (nunca sobrescreve o log do erro original).
+    """
+
     def __init__(self, execucao: Execucao):
         self.execucao = execucao
 
@@ -228,6 +236,21 @@ def _atualizar_contadores(execucao: Execucao) -> None:
         setattr(execucao, campo, valor)
 
 
+def recomputar_contadores_execucao(execucao: Execucao) -> None:
+    """
+    Recomputa e PERSISTE os contadores (`total_*`) de uma Execucao a partir da
+    verdade do banco — a MESMA fonte (`_contadores_da_fila`) usada na
+    finalização do cadastro em massa. Usado quando uma tentativa individual
+    bem-sucedida muda o estado de um SKU (ERRO -> CADASTRADO) e o resumo da
+    execução no topo da tela precisa acompanhar. NÃO toca em nenhum `LogItem`
+    (o histórico do erro original continua intacto).
+    """
+    _atualizar_contadores(execucao)
+    execucao.save(update_fields=[
+        "total_lidos", "total_novos", "total_cadastrados", "total_erros", "total_ignorados"
+    ])
+
+
 # ---------------------------------------------------------------------------
 # Task principal
 # ---------------------------------------------------------------------------
@@ -280,7 +303,7 @@ def cadastrar_produtos_tiny_task(execucao_id, lease_token=None):
             instancia,
             execucao.fornecedor,
             cliente=cliente,
-            eventos=_EventosExecucao(execucao),
+            eventos=EventosExecucao(execucao),
             controlador=_ControladorLease(execucao_id, token),
         )
     except Exception as exc:

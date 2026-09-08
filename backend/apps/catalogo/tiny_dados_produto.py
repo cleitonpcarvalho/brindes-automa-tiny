@@ -69,20 +69,31 @@ class DadosProdutoError(RuntimeError):
 
 def montar_fornecedores(atuais, *, tiny_fornecedor_id, codigo_produto_no_fornecedor):
     """
-    Preserva TODOS os fornecedores atuais e acrescenta o nosso apenas se ele
-    ainda não estiver na lista (nunca duplica). O nosso entra `padrao=true`
-    só quando nenhum outro já é padrão; senão `padrao=false`. Lista vazia ->
-    o nosso entra `padrao=true`.
+    Preserva TODOS os fornecedores já associados ao produto e garante o nosso
+    (`tiny_fornecedor_id`) na lista, sem duplicar.
 
-    Cada item vira o formato do REQUEST (`FornecedorProdutoRequestModel`:
-    id, codigoProdutoNoFornecedor, padrao). Um fornecedor existente sem `id`
-    utilizável levanta `DadosProdutoError` — não dá para round-tripá-lo e não
-    se pode removê-lo silenciosamente.
+    Sobre `padrao` — o `GET /produtos/{id}` v3 NÃO devolve `padrao` por
+    fornecedor (`FornecedorProdutoResponseModel` = id, nome,
+    codigoProdutoNoFornecedor). Regras:
+      - o NOSSO fornecedor é SEMPRE reenviado com `padrao=true` — quer já
+        esteja na lista, quer seja novo em produto sem fornecedores. Antes
+        `bool(item.get("padrao"))` virava `False` (o GET não traz o campo) e
+        um PUT podia DESMARCAR o fornecedor padrão;
+      - um fornecedor DIFERENTE já existente é preservado como veio; seu
+        `padrao` só vale `true` se o GET tiver afirmado isso explicitamente
+        (não se assume nada que o GET não forneceu);
+      - o nosso, quando NOVO, só entra `padrao=false` se o GET afirmou que
+        outro fornecedor já é o padrão — aí o padrão existente é preservado.
+
+    Formato de saída = `FornecedorProdutoRequestModel` (id,
+    codigoProdutoNoFornecedor, padrao). Um fornecedor existente sem `id`
+    utilizável levanta `DadosProdutoError` (não dá para round-tripá-lo e não
+    se pode removê-lo silenciosamente).
     """
     alvo = int(tiny_fornecedor_id)
     preservados = []
-    ja_existe = False
-    ha_padrao = False
+    nosso_ja_na_lista = False
+    outro_e_padrao_confirmado = False
     for item in atuais or []:
         if not isinstance(item, dict):
             continue
@@ -92,23 +103,36 @@ def montar_fornecedores(atuais, *, tiny_fornecedor_id, codigo_produto_no_fornece
                 f"Fornecedor já associado ao produto sem 'id' utilizável no GET ({item!r}) — "
                 "abortado para não removê-lo sem querer no PUT."
             )
-        normalizado = {
-            "id": int(bruto_id),
-            "codigoProdutoNoFornecedor": item.get("codigoProdutoNoFornecedor") or "",
-            "padrao": bool(item.get("padrao")),
-        }
-        preservados.append(normalizado)
-        if normalizado["id"] == alvo:
-            ja_existe = True
-        if normalizado["padrao"]:
-            ha_padrao = True
+        fid = int(bruto_id)
+        if fid == alvo:
+            nosso_ja_na_lista = True
+            preservados.append(
+                {
+                    "id": alvo,
+                    "codigoProdutoNoFornecedor": (
+                        item.get("codigoProdutoNoFornecedor") or codigo_produto_no_fornecedor
+                    ),
+                    "padrao": True,  # nunca desmarca o nosso
+                }
+            )
+        else:
+            padrao_bruto = item.get("padrao")
+            preservados.append(
+                {
+                    "id": fid,
+                    "codigoProdutoNoFornecedor": item.get("codigoProdutoNoFornecedor") or "",
+                    "padrao": padrao_bruto is True,
+                }
+            )
+            if padrao_bruto is True:
+                outro_e_padrao_confirmado = True
 
-    if not ja_existe:
+    if not nosso_ja_na_lista:
         preservados.append(
             {
                 "id": alvo,
                 "codigoProdutoNoFornecedor": codigo_produto_no_fornecedor,
-                "padrao": not ha_padrao,
+                "padrao": not outro_e_padrao_confirmado,
             }
         )
     return preservados

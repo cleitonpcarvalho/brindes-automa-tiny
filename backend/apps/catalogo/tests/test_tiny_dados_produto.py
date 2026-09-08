@@ -80,6 +80,42 @@ class MontarFornecedoresTests(TestCase):
         )
         self.assertEqual(len(resultado), 1)
         self.assertEqual(resultado[0]["codigoProdutoNoFornecedor"], "X-1")
+        self.assertTrue(resultado[0]["padrao"])  # nosso é sempre padrao=true
+
+    def test_get_real_sem_campo_padrao_nao_desmarca_o_nosso(self):
+        """
+        Reprodução EXATA do GET /produtos/924267500 (dry-run real): o v3 não
+        devolve `padrao` por fornecedor. O nosso fornecedor, que já está
+        associado (e é o padrão no Tiny), tem que voltar com padrao=true —
+        antes virava padrao=false e o PUT o desmarcaria.
+        """
+        atuais = [
+            {
+                "id": 752133514,
+                "nome": "ASIA IMPORT COMERCIO DE BRINDES LTDA",
+                "codigoProdutoNoFornecedor": "BL026-BG",
+            }
+        ]
+        resultado = montar_fornecedores(
+            atuais, tiny_fornecedor_id=752133514, codigo_produto_no_fornecedor="BL026-BG"
+        )
+        self.assertEqual(
+            resultado,
+            [{"id": 752133514, "codigoProdutoNoFornecedor": "BL026-BG", "padrao": True}],
+        )
+
+    def test_nosso_ja_existente_com_outro_fornecedor_junto(self):
+        atuais = [
+            {"id": 999, "nome": "Outro"},  # GET sem `padrao`
+            {"id": 752133514, "nome": "Asia", "codigoProdutoNoFornecedor": "BL026-BG"},
+        ]
+        resultado = montar_fornecedores(
+            atuais, tiny_fornecedor_id=752133514, codigo_produto_no_fornecedor="BL026-BG"
+        )
+        self.assertEqual(resultado, [
+            {"id": 999, "codigoProdutoNoFornecedor": "", "padrao": False},
+            {"id": 752133514, "codigoProdutoNoFornecedor": "BL026-BG", "padrao": True},
+        ])
 
     def test_outro_fornecedor_padrao_o_nosso_entra_nao_padrao(self):
         resultado = montar_fornecedores(

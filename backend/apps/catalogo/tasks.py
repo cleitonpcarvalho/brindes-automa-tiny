@@ -4,6 +4,7 @@ from datetime import timedelta
 
 from celery import shared_task
 from django.db import transaction
+from django.db.models import F
 from django.utils import timezone
 
 from apps.instancias.models import Instancia
@@ -13,7 +14,9 @@ from apps.sincronizacao.models import (
     Execucao,
     LogItem,
     NivelLog,
+    RetentativaLote,
     StatusExecucao,
+    StatusRetentativaLote,
     TipoExecucao,
 )
 
@@ -26,6 +29,7 @@ from .tiny_sync import (
     ControladorSincronizacao,
     EventosSincronizacao,
     ResultadoSincronizacao,
+    cadastrar_variacao_individual,
     executar_sincronizacao_tiny,
 )
 
@@ -418,4 +422,187 @@ def reconciliar_execucoes_travadas():
             )
     if reconhecidas:
         logger.warning("%s execução(ões) de cadastro Tiny reconhecidas como interrompidas", reconhecidas)
+    return reconhecidas
+
+
+# ---------------------------------------------------------------------------
+# Retentativa em LOTE dos SKUs com erro de uma Execucao
+# ---------------------------------------------------------------------------
+
+
+class EventosRetentativa(EventosExecucao):
+    """
+    Sink das tentativas (individual OU em lote): grava os `LogItem` na
+    `Execucao` ORIGINAL — APPEND, nunca sobrescreve o log do erro original.
+
+    Um BLOQUEIO NÃO vira `LogItem`: não deve reclassificar o desfecho do SKU
+    (ele continua contando na aba "Erros"); o motivo volta só na resposta.
+    Um ERRO vira `LogItem` ERRO com a MENSAGEM NOVA.
+    """
+
+    def __init__(self, execucao):
+        super().__init__(execucao)
+        self.motivo_bloqueio = None
+        self.erro = None
+
+    def variacao_bloqueada(self, variacao, motivo):
+        self.motivo_bloqueio = motivo
+
+    def variacao_erro(self, variacao, exc):
+        super().variacao_erro(variacao, exc)
+        self.erro = str(exc)
+
+
+@shared_task
+def retentar_lote_task(retentativa_id, lease_token=None):
+    """
+    Processa um `RetentativaLote`: para cada `variacao_id` da fila (snapshot),
+    SEQUENCIALMENTE, passa pelo MESMO fluxo do retry individual
+    (`cadastrar_variacao_individual` -> `_processar_variacao`), gravando os
+    `LogItem` na `Execucao` original. Um SKU que já está cadastrado é PULADO
+    (idempotência). Erro num SKU NÃO interrompe os demais. Bate heartbeat e
+    checa o lease antes de cada SKU (retomada: se o worker morre, o reaper
+    marca `interrompido` e rodar de novo continua de onde parou).
+    """
+    lote = (
+        RetentativaLote.objects.select_related("execucao", "execucao__instancia")
+        .get(pk=retentativa_id)
+    )
+    token = lease_token or lote.lease_token
+
+    with transaction.atomic():
+        atual = RetentativaLote.objects.select_for_update().get(pk=retentativa_id)
+        if atual.status != StatusRetentativaLote.RODANDO or (token and atual.lease_token != token):
+            logger.info("retentar_lote_task %s abortada no claim (status=%s)", retentativa_id, atual.status)
+            return
+        token = atual.lease_token
+        RetentativaLote.objects.filter(pk=retentativa_id).update(heartbeat_em=timezone.now())
+
+    execucao = lote.execucao
+    instancia = execucao.instancia
+    if not instancia.access_token:
+        _finalizar_lote(retentativa_id, token, aviso="instância não está conectada ao Tiny")
+        return
+
+    # Um cliente para todo o lote: o RateLimiterCompartilhado e o teto visto na
+    # sessão (x-limit-api) valem entre SKUs; teto conservador de partida.
+    cliente = TinyApiClient(instancia, somente_leitura=False, rate_limit_fallback=60)
+    eventos = EventosRetentativa(execucao)
+
+    for variacao_id in list(lote.variacao_ids):
+        linha = (
+            RetentativaLote.objects.filter(pk=retentativa_id)
+            .values("lease_token", "status")
+            .first()
+        )
+        if linha is None or linha["lease_token"] != token:
+            logger.info("retentar_lote_task %s: lease perdido, encerrando sem tocar no estado", retentativa_id)
+            return
+        RetentativaLote.objects.filter(pk=retentativa_id, lease_token=token).update(
+            heartbeat_em=timezone.now()
+        )
+
+        try:
+            _retentar_um_do_lote(retentativa_id, execucao, instancia, variacao_id, cliente, eventos)
+        except Exception:  # nunca deixa um SKU derrubar o lote inteiro
+            logger.exception("retentar_lote_task %s: SKU %s explodiu fora do fluxo", retentativa_id, variacao_id)
+            RetentativaLote.objects.filter(pk=retentativa_id).update(
+                processados=F("processados") + 1, erros=F("erros") + 1
+            )
+
+    _finalizar_lote(retentativa_id, token)
+
+
+def _retentar_um_do_lote(retentativa_id, execucao, instancia, variacao_id, cliente, eventos):
+    with transaction.atomic():
+        variacao = (
+            Variacao.objects.select_for_update()
+            .select_related("produto")
+            .filter(pk=variacao_id, produto__instancia=instancia)
+            .first()
+        )
+        if variacao is None:  # removida do espelho / de outra instância
+            RetentativaLote.objects.filter(pk=retentativa_id).update(
+                processados=F("processados") + 1, ignorados=F("ignorados") + 1
+            )
+            return
+
+        if (variacao.tiny_id or "").strip() or variacao.status == StatusVariacao.CADASTRADO:
+            # idempotência: já foi cadastrado (retry individual, rodada anterior…)
+            RetentativaLote.objects.filter(pk=retentativa_id).update(
+                processados=F("processados") + 1, ignorados=F("ignorados") + 1
+            )
+            return
+
+        LogItem.objects.create(
+            execucao=execucao,
+            nivel=NivelLog.INFO,
+            evento=EventoLog.GERAL,
+            mensagem=(f"Nova tentativa de cadastro do SKU {variacao.sku} "
+                      f"(retentativa em lote #{retentativa_id})")[:500],
+            variacao=variacao,
+            detalhe={"origem": "retentativa_lote", "retentativa_id": retentativa_id},
+        )
+        resultado = cadastrar_variacao_individual(
+            instancia, variacao, cliente=cliente, eventos=eventos
+        )
+
+    campos = {"processados": F("processados") + 1}
+    if resultado.criadas or resultado.vinculadas:
+        campos["sucessos"] = F("sucessos") + 1
+        recomputar_contadores_execucao(execucao)  # mantém o resumo do topo em dia
+    else:  # bloqueado ou erro -> continua como erro
+        campos["erros"] = F("erros") + 1
+    RetentativaLote.objects.filter(pk=retentativa_id).update(**campos)
+
+
+def _finalizar_lote(retentativa_id, token, *, aviso=None):
+    with transaction.atomic():
+        lote = RetentativaLote.objects.select_for_update().select_related("execucao").get(pk=retentativa_id)
+        if token and lote.lease_token != token:
+            logger.info("retentar_lote_task %s: lease trocou antes do fechamento", retentativa_id)
+            return
+        recomputar_contadores_execucao(lote.execucao)
+        lote.status = StatusRetentativaLote.CONCLUIDO
+        lote.heartbeat_em = timezone.now()
+        lote.finalizado_em = timezone.now()
+        lote.save(update_fields=["status", "heartbeat_em", "finalizado_em"])
+        LogItem.objects.create(
+            execucao=lote.execucao,
+            nivel=NivelLog.INFO,
+            evento=EventoLog.GERAL,
+            mensagem=(f"Retentativa em lote #{retentativa_id} concluída: {lote.sucessos} "
+                      f"cadastrado(s), {lote.erros} com erro, {lote.ignorados} já cadastrado(s)")[:500],
+            detalhe={
+                "origem": "retentativa_lote",
+                "retentativa_id": retentativa_id,
+                "sucessos": lote.sucessos,
+                "erros": lote.erros,
+                "ignorados": lote.ignorados,
+                **({"aviso": aviso} if aviso else {}),
+            },
+        )
+
+
+@shared_task
+def reconciliar_retentativas_lote_travadas():
+    """
+    Tick do Celery Beat: um `RetentativaLote` `rodando` sem heartbeat recente é
+    um job cujo worker morreu. Marca como `interrompido` (retomável — rodar de
+    novo é idempotente). Condicional (não pisa num job que voltou a bater
+    heartbeat no meio do tick).
+    """
+    limite = timezone.now() - timedelta(seconds=HEARTBEAT_TIMEOUT_SEGUNDOS)
+    reconhecidas = 0
+    for pk in list(
+        RetentativaLote.objects.filter(
+            status=StatusRetentativaLote.RODANDO, heartbeat_em__lt=limite
+        ).values_list("pk", flat=True)
+    ):
+        if RetentativaLote.objects.filter(
+            pk=pk, status=StatusRetentativaLote.RODANDO, heartbeat_em__lt=limite
+        ).update(status=StatusRetentativaLote.INTERROMPIDO):
+            reconhecidas += 1
+    if reconhecidas:
+        logger.warning("%s retentativa(s) em lote reconhecida(s) como interrompida(s)", reconhecidas)
     return reconhecidas

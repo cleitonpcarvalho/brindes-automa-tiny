@@ -1,7 +1,8 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
+import { useQueryClient } from "@tanstack/react-query"
 import { ArrowLeft, ChevronDown, Search } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -9,11 +10,14 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ErrorState } from "@/components/ui/empty-error-state"
+import { useToast } from "@/components/ui/toast"
 import { ApiError } from "@/lib/api/client"
 import {
   useExecucaoDetalhe,
   useExecucaoLogsGerais,
   useExecucaoProdutos,
+  useRetentarLote,
+  useRetentarLoteProgresso,
 } from "@/lib/api/hooks"
 import { formatarDuracao, formatarNumero, formatarTempoRelativo } from "@/lib/format"
 import { PaginationFooter } from "@/components/instancias/pagination-footer"
@@ -25,6 +29,7 @@ import {
   rotuloRestantes,
 } from "./cadastro-tiny-estado"
 import { ExecucaoProdutosTabela } from "./execucao-produtos-tabela"
+import { RetentarLoteBarra } from "./retentar-lote-barra"
 import type { CadastroTinyEstadoEnum, ExecucaoDetalhe } from "@/lib/api/types"
 
 const TAMANHO_PAGINA = 25
@@ -189,6 +194,9 @@ export function ExecucaoDetalheView({ slug, execucaoId }: { slug: string; execuc
     setPagina(1)
   }, [busca, resultado])
 
+  const queryClient = useQueryClient()
+  const toast = useToast()
+
   const resumo = useExecucaoDetalhe(slug, execucaoId)
   const produtos = useExecucaoProdutos(slug, execucaoId, {
     busca,
@@ -196,6 +204,40 @@ export function ExecucaoDetalheView({ slug, execucaoId }: { slug: string; execuc
     page: pagina,
     pageSize: TAMANHO_PAGINA,
   })
+
+  // ---- retentativa em lote (só no filtro "Erros") ----
+  const noFiltroErros = resultado === "erros"
+  const [selecionados, setSelecionados] = useState<Set<number>>(new Set())
+  const [selecaoTodos, setSelecaoTodos] = useState(false)
+  useEffect(() => {
+    setSelecionados(new Set())
+    setSelecaoTodos(false)
+  }, [resultado, busca])
+
+  const loteProgresso = useRetentarLoteProgresso(slug, execucaoId, { enabled: noFiltroErros })
+  const loteRodando = loteProgresso.data?.status === "rodando"
+  const retentarLote = useRetentarLote(slug, execucaoId)
+
+  const statusLoteAnterior = useRef<string | null | undefined>(undefined)
+  useEffect(() => {
+    const st = loteProgresso.data?.status
+    if (statusLoteAnterior.current === "rodando" && st === "concluido") {
+      const d = loteProgresso.data
+      queryClient.invalidateQueries({
+        queryKey: ["instancias", "execucoes", "detalhe", slug, String(execucaoId)],
+      })
+      queryClient.invalidateQueries({
+        queryKey: ["instancias", "execucoes", "produtos", slug, String(execucaoId)],
+      })
+      queryClient.invalidateQueries({ queryKey: ["instancias", "detalhe", slug] })
+      toast.sucesso(
+        `Retentativa em lote concluída: ${d?.sucessos ?? 0} cadastrado(s), ${d?.erros ?? 0} com erro.`,
+      )
+      setSelecionados(new Set())
+      setSelecaoTodos(false)
+    }
+    statusLoteAnterior.current = st
+  }, [loteProgresso.data, queryClient, slug, execucaoId, toast])
 
   const voltar = (
     <Link
@@ -289,6 +331,38 @@ export function ExecucaoDetalheView({ slug, execucaoId }: { slug: string; execuc
           </div>
         </div>
 
+        {noFiltroErros && aud.erros > 0 && (
+          <RetentarLoteBarra
+            qtdErrosTotal={aud.erros}
+            qtdSelecionada={selecionados.size}
+            selecaoTodos={selecaoTodos}
+            progresso={loteProgresso.data}
+            disparando={retentarLote.isPending}
+            onSelecionarTodos={() => {
+              setSelecaoTodos(true)
+              setSelecionados(new Set())
+            }}
+            onLimpar={() => {
+              setSelecaoTodos(false)
+              setSelecionados(new Set())
+            }}
+            onDisparar={() =>
+              retentarLote.mutate(
+                selecaoTodos ? { todos: true, busca } : { variacao_ids: [...selecionados] },
+                {
+                  onSuccess: () => toast.sucesso("Retentativa em lote iniciada."),
+                  onError: (erro) =>
+                    toast.erro(
+                      erro instanceof ApiError
+                        ? erro.message
+                        : "Não foi possível iniciar a retentativa em lote.",
+                    ),
+                },
+              )
+            }
+          />
+        )}
+
         <ExecucaoProdutosTabela
           slug={slug}
           execucaoId={execucaoId}
@@ -297,6 +371,28 @@ export function ExecucaoDetalheView({ slug, execucaoId }: { slug: string; execuc
           isError={produtos.isError}
           onRetry={() => produtos.refetch()}
           temFiltros={temFiltros}
+          retryBloqueado={loteRodando}
+          selecao={
+            noFiltroErros
+              ? {
+                  selecionados,
+                  selecaoTodos,
+                  onToggle: (id) =>
+                    setSelecionados((s) => {
+                      const n = new Set(s)
+                      if (n.has(id)) n.delete(id)
+                      else n.add(id)
+                      return n
+                    }),
+                  onTogglePagina: (ids, marcar) =>
+                    setSelecionados((s) => {
+                      const n = new Set(s)
+                      ids.forEach((id) => (marcar ? n.add(id) : n.delete(id)))
+                      return n
+                    }),
+                }
+              : undefined
+          }
         />
 
         {!produtos.isLoading && !produtos.isError && produtos.data && (

@@ -35,6 +35,7 @@ export type PaginatedLogItemList = components["schemas"]["PaginatedLogItemList"]
 export type NivelLog = components["schemas"]["NivelLogEnum"];
 export type ExecucaoDetalhe = components["schemas"]["ExecucaoDetalhe"];
 export type ExecucaoProduto = components["schemas"]["ExecucaoProduto"];
+export type RetentativaLote = components["schemas"]["RetentativaLote"];
 export type PaginatedExecucaoProdutoList = components["schemas"]["PaginatedExecucaoProdutoList"];
 export type EventoLog = components["schemas"]["EventoLogEnum"];
 

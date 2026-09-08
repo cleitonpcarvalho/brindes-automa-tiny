@@ -1,7 +1,9 @@
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import * as hooks from "@/lib/api/hooks"
 import { ApiError } from "@/lib/api/client"
+import { ToastProvider } from "@/components/ui/toast"
 import { ExecucaoDetalheView } from "./execucao-detalhe-view"
 import type { ExecucaoDetalhe, PaginatedExecucaoProdutoList } from "@/lib/api/types"
 
@@ -11,7 +13,20 @@ vi.mock("@/lib/api/hooks", () => ({
   useExecucaoProdutos: vi.fn(),
   useExecucaoProdutoLogs: vi.fn(),
   useExecucaoLogsGerais: vi.fn(),
+  useRetentarLote: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+  useRetentarLoteProgresso: vi.fn(() => ({ data: null, isLoading: false, isError: false })),
+  useRetentarVariacaoExecucao: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
 }))
+
+function renderView(execucaoId = "12") {
+  return render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ToastProvider>
+        <ExecucaoDetalheView slug="loja-x" execucaoId={execucaoId} />
+      </ToastProvider>
+    </QueryClientProvider>,
+  )
+}
 
 function resumo(over: Partial<ExecucaoDetalhe> = {}): ExecucaoDetalhe {
   return {
@@ -80,7 +95,7 @@ describe("ExecucaoDetalheView", () => {
 
   it("resumo: fornecedor, estado, fila, cadastrados, erros, 'a fazer' e barra", () => {
     mockResumo({ data: resumo() })
-    render(<ExecucaoDetalheView slug="loja-x" execucaoId="12" />)
+    renderView()
 
     expect(screen.getByText("Pausado")).toBeInTheDocument()
     expect(screen.getByText("1.137")).toBeInTheDocument() // fila
@@ -92,13 +107,13 @@ describe("ExecucaoDetalheView", () => {
 
   it("execução concluída rotula o 3º número como 'não cadastrados'", () => {
     mockResumo({ data: resumo({ estado: "concluido", status: "sucesso" }) })
-    render(<ExecucaoDetalheView slug="loja-x" execucaoId="12" />)
+    renderView()
     expect(screen.getByText("não cadastrados")).toBeInTheDocument()
   })
 
   it("filtros de resultado com contagem nos rótulos", () => {
     mockResumo({ data: resumo() })
-    render(<ExecucaoDetalheView slug="loja-x" execucaoId="12" />)
+    renderView()
     expect(screen.getByRole("button", { name: "Todos" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: /Erros/ })).toHaveTextContent("6")
     expect(screen.getByRole("button", { name: /Cadastrados/ })).toHaveTextContent("421")
@@ -106,19 +121,19 @@ describe("ExecucaoDetalheView", () => {
 
   it("mostra a seção 'Logs técnicos' com a contagem", () => {
     mockResumo({ data: resumo({ logs_gerais_total: 3 }) })
-    render(<ExecucaoDetalheView slug="loja-x" execucaoId="12" />)
+    renderView()
     expect(screen.getByText("Logs técnicos (3)")).toBeInTheDocument()
   })
 
   it("404 -> 'Execução não encontrada'", () => {
     mockResumo({ isError: true, error: new ApiError(404, "não encontrado") })
-    render(<ExecucaoDetalheView slug="loja-x" execucaoId="999" />)
+    renderView("999")
     expect(screen.getByText("Execução não encontrada")).toBeInTheDocument()
   })
 
   it("link de voltar aponta para a aba Execuções", () => {
     mockResumo({ data: resumo() })
-    render(<ExecucaoDetalheView slug="loja-x" execucaoId="12" />)
+    renderView()
     expect(screen.getByRole("link", { name: /Voltar para Execuções/ })).toHaveAttribute(
       "href",
       "/instancias/loja-x?tab=execucoes",
@@ -129,7 +144,84 @@ describe("ExecucaoDetalheView", () => {
     mockResumo({
       data: resumo({ tipo: "incremental", estado: "sucesso", status: "sucesso" }),
     })
-    render(<ExecucaoDetalheView slug="loja-x" execucaoId="12" />)
+    renderView()
     expect(screen.getByText("Sucesso")).toBeInTheDocument()
+  })
+
+  // ---- retentativa em lote ----
+
+  it("a barra de lote só aparece no filtro 'Erros' e 'selecionar todos' dispara o lote", () => {
+    const mutate = vi.fn()
+    vi.mocked(hooks.useRetentarLote).mockReturnValue({ mutate, isPending: false } as never)
+    mockResumo({ data: resumo() })
+    renderView()
+
+    // sem filtro: sem barra
+    expect(screen.queryByText(/SKUs? com erro/)).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: /Erros/ }))
+    expect(screen.getByText("6 SKUs com erro")).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: /Selecionar todos os 6 erros da execução/ }))
+    fireEvent.click(screen.getByRole("button", { name: "Tentar novamente selecionados (6)" }))
+
+    expect(mutate).toHaveBeenCalledWith(
+      { todos: true, busca: "" },
+      expect.objectContaining({ onSuccess: expect.any(Function), onError: expect.any(Function) }),
+    )
+  })
+
+  it("com o lote rodando: mostra o progresso e some o botão de disparo", () => {
+    vi.mocked(hooks.useRetentarLoteProgresso).mockReturnValue({
+      data: {
+        id: 1, status: "rodando", selecao_todos: true, total: 6, processados: 2,
+        sucessos: 2, erros: 0, ignorados: 0, criado_em: "x", finalizado_em: null,
+      },
+      isLoading: false,
+      isError: false,
+    } as never)
+    mockResumo({ data: resumo() })
+    renderView()
+    fireEvent.click(screen.getByRole("button", { name: /Erros/ }))
+
+    expect(screen.getByText("Retentativa em lote em andamento")).toBeInTheDocument()
+    expect(screen.getByText(/2\/6/)).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /Tentar novamente selecionados/ })).not.toBeInTheDocument()
+  })
+
+  it("quando o lote conclui: toast de resumo e a barra de progresso some", async () => {
+    const client = new QueryClient()
+    vi.mocked(hooks.useRetentarLoteProgresso).mockReturnValue({
+      data: {
+        id: 1, status: "rodando", selecao_todos: true, total: 3, processados: 1,
+        sucessos: 1, erros: 0, ignorados: 0, criado_em: "x", finalizado_em: null,
+      },
+      isLoading: false, isError: false,
+    } as never)
+    mockResumo({ data: resumo() })
+    const tree = () => (
+      <QueryClientProvider client={client}>
+        <ToastProvider>
+          <ExecucaoDetalheView slug="loja-x" execucaoId="12" />
+        </ToastProvider>
+      </QueryClientProvider>
+    )
+    const { rerender } = render(tree())
+    fireEvent.click(screen.getByRole("button", { name: /Erros/ }))
+    expect(screen.getByText("Retentativa em lote em andamento")).toBeInTheDocument()
+
+    vi.mocked(hooks.useRetentarLoteProgresso).mockReturnValue({
+      data: {
+        id: 1, status: "concluido", selecao_todos: true, total: 3, processados: 3,
+        sucessos: 3, erros: 0, ignorados: 0, criado_em: "x", finalizado_em: "y",
+      },
+      isLoading: false, isError: false,
+    } as never)
+    rerender(tree())
+
+    await waitFor(() =>
+      expect(screen.getByText(/Retentativa em lote concluída: 3 cadastrado/)).toBeInTheDocument(),
+    )
+    expect(screen.queryByText("Retentativa em lote em andamento")).not.toBeInTheDocument()
   })
 })

@@ -18,10 +18,12 @@ export function RetentarBotao({
   slug,
   execucaoId,
   linha,
+  disabled,
 }: {
   slug: string
   execucaoId: string
   linha: ExecucaoProduto
+  disabled?: boolean
 }) {
   const toast = useToast()
   const retentar = useRetentarVariacaoExecucao(slug, execucaoId)
@@ -29,7 +31,7 @@ export function RetentarBotao({
   if (linha.resultado !== "erro" || linha.variacao_id == null) return null
 
   function tentar() {
-    if (retentar.isPending || linha.variacao_id == null) return
+    if (retentar.isPending || disabled || linha.variacao_id == null) return
     retentar.mutate(linha.variacao_id, {
       onSuccess: (nova) => toast.sucesso(`SKU ${nova.sku} cadastrado no Tiny.`),
       onError: (erro) =>
@@ -46,7 +48,7 @@ export function RetentarBotao({
       variant="secondary"
       size="sm"
       aria-label={`Tentar cadastrar o SKU ${linha.sku} novamente`}
-      disabled={retentar.isPending}
+      disabled={retentar.isPending || disabled}
       onClick={tentar}
     >
       {retentar.isPending ? (

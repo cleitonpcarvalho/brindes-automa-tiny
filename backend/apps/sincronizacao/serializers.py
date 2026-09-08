@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import EventoLog, Execucao, LogItem
+from .models import EventoLog, Execucao, LogItem, RetentativaLote
 
 
 class ExecucaoSerializer(serializers.ModelSerializer):
@@ -84,6 +84,28 @@ class ExecucaoDetalheSerializer(serializers.Serializer):
     mensagem_erro = serializers.CharField(allow_blank=True)
     auditoria = AuditoriaResumoSerializer()
     logs_gerais_total = serializers.IntegerField()
+
+
+class RetentativaLoteSerializer(serializers.ModelSerializer):
+    """
+    Estado de um job de retentativa em lote — usado pelo polling de progresso
+    da UI. Só leitura; `variacao_ids` não é exposto (pode ter centenas de ids).
+    """
+
+    class Meta:
+        model = RetentativaLote
+        fields = [
+            "id",
+            "status",
+            "selecao_todos",
+            "total",
+            "processados",
+            "sucessos",
+            "erros",
+            "ignorados",
+            "criado_em",
+            "finalizado_em",
+        ]
 
 
 class ExecucaoProdutoSerializer(serializers.Serializer):

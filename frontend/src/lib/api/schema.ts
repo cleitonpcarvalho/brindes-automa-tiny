@@ -471,6 +471,68 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/instancias/{slug}/execucoes/{execucao_id}/retentar-lote/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description Retentativa EM LOTE dos SKUs com erro de uma execução de cadastro no Tiny.
+         *
+         *     POST .../execucoes/<execucao_id>/retentar-lote/ — enfileira UM job Celery
+         *     (`retentar_lote_task`). Corpo:
+         *       `{"variacao_ids": [1,2,3]}`  -> exatamente esses (só os que de fato são
+         *                                      erro nesta execução são aceitos);
+         *       `{"todos": true}`            -> TODOS os SKUs com erro da execução,
+         *                                      resolvidos no servidor (opcional `busca`
+         *                                      para casar o filtro visível na UI).
+         *     O navegador faz UMA requisição; o job processa os SKUs sequencialmente.
+         *
+         *     GET .../execucoes/<execucao_id>/retentar-lote/ — estado do job MAIS RECENTE
+         *     (polling de progresso): status/total/processados/sucessos/erros/ignorados.
+         *
+         *     Cada SKU passa pelo MESMO fluxo do retry individual
+         *     (`cadastrar_variacao_individual` -> `_processar_variacao`); os `LogItem`s
+         *     vão para a `Execucao` original; o log do erro original nunca é tocado.
+         *
+         *     Segurança: execução por (id E instancia__slug); só SKUs da instância da
+         *     execução entram na fila; 409 se há sincronização em massa ATIVA do
+         *     fornecedor OU um job de lote já `rodando` para a execução.
+         */
+        get: operations["instancias_execucoes_retentar_lote_retrieve"];
+        put?: never;
+        /**
+         * @description Retentativa EM LOTE dos SKUs com erro de uma execução de cadastro no Tiny.
+         *
+         *     POST .../execucoes/<execucao_id>/retentar-lote/ — enfileira UM job Celery
+         *     (`retentar_lote_task`). Corpo:
+         *       `{"variacao_ids": [1,2,3]}`  -> exatamente esses (só os que de fato são
+         *                                      erro nesta execução são aceitos);
+         *       `{"todos": true}`            -> TODOS os SKUs com erro da execução,
+         *                                      resolvidos no servidor (opcional `busca`
+         *                                      para casar o filtro visível na UI).
+         *     O navegador faz UMA requisição; o job processa os SKUs sequencialmente.
+         *
+         *     GET .../execucoes/<execucao_id>/retentar-lote/ — estado do job MAIS RECENTE
+         *     (polling de progresso): status/total/processados/sucessos/erros/ignorados.
+         *
+         *     Cada SKU passa pelo MESMO fluxo do retry individual
+         *     (`cadastrar_variacao_individual` -> `_processar_variacao`); os `LogItem`s
+         *     vão para a `Execucao` original; o log do erro original nunca é tocado.
+         *
+         *     Segurança: execução por (id E instancia__slug); só SKUs da instância da
+         *     execução entram na fila; 409 se há sincronização em massa ATIVA do
+         *     fornecedor OU um job de lote já `rodando` para a execução.
+         */
+        post: operations["instancias_execucoes_retentar_lote_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/instancias/{slug}/fornecedores/{fornecedor}/cadastro-tiny/": {
         parameters: {
             query?: never;
@@ -1411,6 +1473,33 @@ export interface components {
             alertas: components["schemas"]["AlertasContagem"];
         };
         /**
+         * @description Estado de um job de retentativa em lote — usado pelo polling de progresso
+         *     da UI. Só leitura; `variacao_ids` não é exposto (pode ter centenas de ids).
+         */
+        RetentativaLote: {
+            readonly id: number;
+            status?: components["schemas"]["RetentativaLoteStatusEnum"];
+            /** @description True = o operador pediu 'todos os erros da execução'. */
+            selecao_todos?: boolean;
+            total?: number;
+            processados?: number;
+            sucessos?: number;
+            erros?: number;
+            /** @description SKU que já estava cadastrado quando o lote chegou nele. */
+            ignorados?: number;
+            /** Format: date-time */
+            readonly criado_em: string;
+            /** Format: date-time */
+            finalizado_em?: string | null;
+        };
+        /**
+         * @description * `rodando` - Rodando
+         *     * `concluido` - Concluído
+         *     * `interrompido` - Interrompido
+         * @enum {string}
+         */
+        RetentativaLoteStatusEnum: "rodando" | "concluido" | "interrompido";
+        /**
          * @description * `critica` - critica
          *     * `atencao` - atencao
          * @enum {string}
@@ -2256,6 +2345,50 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExecucaoProduto"];
+                };
+            };
+        };
+    };
+    instancias_execucoes_retentar_lote_retrieve: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                execucao_id: number;
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetentativaLote"];
+                };
+            };
+        };
+    };
+    instancias_execucoes_retentar_lote_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                execucao_id: number;
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetentativaLote"];
                 };
             };
         };

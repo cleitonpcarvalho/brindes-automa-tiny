@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiClient } from "./client";
+import { ApiError, apiClient } from "./client";
 import type {
   Alerta,
   AutorizarResposta,
@@ -10,6 +10,7 @@ import type {
   CredencialFornecedorResposta,
   ExecucaoAtividade,
   ExecucaoProduto,
+  RetentativaLote,
   FornecedorEnum,
   Instancia,
   InstanciaDetalhe,
@@ -403,6 +404,64 @@ export function useRetentarVariacaoExecucao(slug: string, execucaoId: string | n
       queryClient.invalidateQueries({ queryKey: ["instancias", "execucoes", "produtos", slug, id] });
       queryClient.invalidateQueries({ queryKey: ["instancias", "execucoes", "detalhe", slug, id] });
     },
+  });
+}
+
+export interface SelecaoRetentativaLote {
+  /** Ids específicos (seleção manual, inclusive de páginas diferentes). */
+  variacao_ids?: number[];
+  /** true = TODOS os erros da execução (resolvido no servidor). */
+  todos?: boolean;
+  /** Filtro de busca visível na UI, para o "todos" casar com o que se vê. */
+  busca?: string;
+}
+
+/**
+ * Dispara o job Celery de retentativa EM LOTE dos SKUs com erro. O navegador
+ * faz UMA requisição; o progresso vem por `useRetentarLoteProgresso`.
+ */
+export function useRetentarLote(slug: string, execucaoId: string | number) {
+  const queryClient = useQueryClient();
+  const id = String(execucaoId);
+  return useMutation({
+    retry: false,
+    mutationFn: (selecao: SelecaoRetentativaLote) =>
+      apiClient.post<RetentativaLote>(
+        `/instancias/${slug}/execucoes/${execucaoId}/retentar-lote/`,
+        selecao,
+      ),
+    onSuccess: (lote) => {
+      // já mostra o job na tela; o polling assume daqui.
+      queryClient.setQueryData(["instancias", "execucoes", "retentar-lote", slug, id], lote);
+    },
+  });
+}
+
+/**
+ * Progresso do job de retentativa em lote mais recente da execução. Faz
+ * polling enquanto `status === "rodando"`; quando conclui, quem consome
+ * invalida a tabela/o resumo. 404 (nenhum job) vira `data: null`.
+ */
+export function useRetentarLoteProgresso(
+  slug: string,
+  execucaoId: string | number,
+  { enabled = true } = {},
+) {
+  return useQuery<RetentativaLote | null>({
+    queryKey: ["instancias", "execucoes", "retentar-lote", slug, String(execucaoId)],
+    queryFn: async () => {
+      try {
+        return await apiClient.get<RetentativaLote>(
+          `/instancias/${slug}/execucoes/${execucaoId}/retentar-lote/`,
+        );
+      } catch (erro) {
+        if (erro instanceof ApiError && erro.status === 404) return null;
+        throw erro;
+      }
+    },
+    enabled: Boolean(slug && execucaoId) && enabled,
+    refetchInterval: (query) =>
+      query.state.data?.status === "rodando" ? 2000 : false,
   });
 }
 

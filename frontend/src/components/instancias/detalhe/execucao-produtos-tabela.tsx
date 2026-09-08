@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import { ChevronDown, ChevronRight, ImageOff, Images } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useExecucaoProdutoLogs } from "@/lib/api/hooks"
 import { formatarTempoRelativo } from "@/lib/format"
@@ -13,7 +14,13 @@ import { ROTULO_RESULTADO, VARIANTE_RESULTADO } from "./execucao-resultado"
 import { RetentarBotao } from "./retentar-botao"
 import type { ExecucaoProduto } from "@/lib/api/types"
 
-const COLUNAS = 6
+export interface SelecaoErros {
+  selecionados: Set<number>
+  selecaoTodos: boolean
+  onToggle: (variacaoId: number) => void
+  /** marcar/desmarcar todos os SKUs COM ERRO da página atual */
+  onTogglePagina: (variacaoIdsDaPagina: number[], marcar: boolean) => void
+}
 
 interface Props {
   slug: string
@@ -23,6 +30,14 @@ interface Props {
   isError: boolean
   onRetry: () => void
   temFiltros: boolean
+  /** presente só quando o filtro "Erros" está ativo — habilita os checkboxes */
+  selecao?: SelecaoErros
+  /** desabilita "Tentar novamente" individual enquanto um lote está rodando */
+  retryBloqueado?: boolean
+}
+
+function ehErroSelecionavel(l: ExecucaoProduto) {
+  return l.resultado === "erro" && l.variacao_id != null
 }
 
 export function ExecucaoProdutosTabela({
@@ -33,15 +48,33 @@ export function ExecucaoProdutosTabela({
   isError,
   onRetry,
   temFiltros,
+  selecao,
+  retryBloqueado,
 }: Props) {
   const router = useRouter()
   const [expandido, setExpandido] = useState<number | null>(null)
+
+  const idsErroPagina = itens.filter(ehErroSelecionavel).map((l) => l.variacao_id as number)
+  const todosDaPaginaMarcados =
+    idsErroPagina.length > 0 &&
+    (selecao?.selecaoTodos || idsErroPagina.every((id) => selecao?.selecionados.has(id)))
+  const COLUNAS = 6 + (selecao ? 1 : 0)
 
   return (
     <div className="overflow-hidden rounded-xl border border-border">
       <Table>
         <TableHeader>
           <TableRow>
+            {selecao && (
+              <TableHead className="w-8">
+                <Checkbox
+                  aria-label="Selecionar todos os erros desta página"
+                  checked={todosDaPaginaMarcados}
+                  disabled={idsErroPagina.length === 0 || selecao.selecaoTodos}
+                  onCheckedChange={(v) => selecao.onTogglePagina(idsErroPagina, v === true)}
+                />
+              </TableHead>
+            )}
             <TableHead className="w-8" />
             <TableHead>SKU / Produto</TableHead>
             <TableHead>Resultado</TableHead>
@@ -95,6 +128,21 @@ export function ExecucaoProdutosTabela({
               return (
                 <Fragment key={linha.log_id}>
                   <TableRow className={linha.resultado === "erro" ? "bg-error-subtle/30" : ""}>
+                    {selecao && (
+                      <TableCell className="align-top">
+                        {ehErroSelecionavel(linha) && (
+                          <Checkbox
+                            aria-label={`Selecionar o SKU ${linha.sku}`}
+                            checked={
+                              selecao.selecaoTodos ||
+                              selecao.selecionados.has(linha.variacao_id as number)
+                            }
+                            disabled={selecao.selecaoTodos}
+                            onCheckedChange={() => selecao.onToggle(linha.variacao_id as number)}
+                          />
+                        )}
+                      </TableCell>
+                    )}
                     <TableCell className="align-top">
                       <button
                         type="button"
@@ -137,7 +185,12 @@ export function ExecucaoProdutosTabela({
                     </TableCell>
                     <TableCell className="align-top text-right">
                       <div className="flex flex-col items-end gap-1">
-                        <RetentarBotao slug={slug} execucaoId={execucaoId} linha={linha} />
+                        <RetentarBotao
+                          slug={slug}
+                          execucaoId={execucaoId}
+                          linha={linha}
+                          disabled={retryBloqueado}
+                        />
                         <Button
                           variant="ghost"
                           size="sm"

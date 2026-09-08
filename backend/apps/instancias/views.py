@@ -25,9 +25,10 @@ from apps.fornecedores.services import (
     obter_credencial_ativa,
 )
 from apps.catalogo.tasks import (
-    EventosExecucao,
+    EventosRetentativa,
     cadastrar_produtos_tiny_task,
     recomputar_contadores_execucao,
+    retentar_lote_task,
 )
 from apps.catalogo.tiny_sync import (
     EventosSincronizacao,
@@ -47,7 +48,9 @@ from apps.sincronizacao.models import (
     Execucao,
     LogItem,
     NivelLog,
+    RetentativaLote,
     StatusExecucao,
+    StatusRetentativaLote,
     TipoExecucao,
 )
 from apps.sincronizacao.serializers import (
@@ -55,6 +58,7 @@ from apps.sincronizacao.serializers import (
     ExecucaoProdutoSerializer,
     ExecucaoSerializer,
     LogItemSerializer,
+    RetentativaLoteSerializer,
 )
 
 from .constants import CAMPOS_POR_FORNECEDOR, Fornecedor
@@ -1097,30 +1101,6 @@ class ExecucaoProdutoLogsView(generics.ListAPIView):
         return auditoria.logs_da_variacao(execucao, self.kwargs["variacao_id"])
 
 
-class _EventosRetentativa(EventosExecucao):
-    """
-    Grava os `LogItem`s da tentativa NA `Execucao` original (append — nunca
-    sobrescreve o log do erro original) e capta o desfecho para a resposta.
-
-    Um BLOQUEIO NÃO vira `LogItem`: não deve reclassificar o desfecho do SKU
-    (ele continua contando na aba "Erros"); o motivo volta só na resposta.
-    Um ERRO vira `LogItem` ERRO com a MENSAGEM NOVA (o SKU segue como erro,
-    agora com o texto real da 2ª falha).
-    """
-
-    def __init__(self, execucao):
-        super().__init__(execucao)
-        self.motivo_bloqueio = None
-        self.erro = None
-
-    def variacao_bloqueada(self, variacao, motivo):
-        self.motivo_bloqueio = motivo
-
-    def variacao_erro(self, variacao, exc):
-        super().variacao_erro(variacao, exc)
-        self.erro = str(exc)
-
-
 class RetentarVariacaoExecucaoView(APIView):
     """
     POST /api/instancias/<slug>/execucoes/<execucao_id>/produtos/<variacao_id>/retentar/
@@ -1212,7 +1192,7 @@ class RetentarVariacaoExecucaoView(APIView):
                 variacao=travada,
                 detalhe={"origem": "retentativa_individual"},
             )
-            eventos = _EventosRetentativa(execucao)
+            eventos = EventosRetentativa(execucao)
             resultado = cadastrar_variacao_individual(instancia, travada, eventos=eventos)
             travada.refresh_from_db()
 
@@ -1240,6 +1220,118 @@ class RetentarVariacaoExecucaoView(APIView):
             {"detail": eventos.erro or travada.ultimo_erro or "Falha ao recadastrar o SKU no Tiny."},
             status=status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
+
+
+def _variacao_ids_com_erro(execucao, *, busca=""):
+    """variacao_id dos SKUs cujo ÚLTIMO desfecho nesta execução é ERRO (mesma
+    fonte da aba 'Erros' da tela)."""
+    return list(
+        auditoria.linhas_de_auditoria(execucao, busca=busca, resultado="erros")
+        .values_list("variacao_id", flat=True)
+    )
+
+
+class RetentarLoteExecucaoView(APIView):
+    """
+    Retentativa EM LOTE dos SKUs com erro de uma execução de cadastro no Tiny.
+
+    POST .../execucoes/<execucao_id>/retentar-lote/ — enfileira UM job Celery
+    (`retentar_lote_task`). Corpo:
+      `{"variacao_ids": [1,2,3]}`  -> exatamente esses (só os que de fato são
+                                     erro nesta execução são aceitos);
+      `{"todos": true}`            -> TODOS os SKUs com erro da execução,
+                                     resolvidos no servidor (opcional `busca`
+                                     para casar o filtro visível na UI).
+    O navegador faz UMA requisição; o job processa os SKUs sequencialmente.
+
+    GET .../execucoes/<execucao_id>/retentar-lote/ — estado do job MAIS RECENTE
+    (polling de progresso): status/total/processados/sucessos/erros/ignorados.
+
+    Cada SKU passa pelo MESMO fluxo do retry individual
+    (`cadastrar_variacao_individual` -> `_processar_variacao`); os `LogItem`s
+    vão para a `Execucao` original; o log do erro original nunca é tocado.
+
+    Segurança: execução por (id E instancia__slug); só SKUs da instância da
+    execução entram na fila; 409 se há sincronização em massa ATIVA do
+    fornecedor OU um job de lote já `rodando` para a execução.
+    """
+
+    @extend_schema(responses=RetentativaLoteSerializer)
+    def get(self, request, slug, execucao_id):
+        execucao = _obter_execucao_ou_404(slug, execucao_id)
+        lote = execucao.retentativas_lote.order_by("-criado_em").first()
+        if lote is None:
+            return Response(
+                {"detail": "Nenhuma retentativa em lote para esta execução."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response(RetentativaLoteSerializer(lote).data)
+
+    @extend_schema(request=None, responses=RetentativaLoteSerializer)
+    def post(self, request, slug, execucao_id):
+        execucao = _obter_execucao_ou_404(slug, execucao_id)
+        if execucao.tipo != TipoExecucao.CADASTRO_TINY:
+            return Response(
+                {"detail": "Só execuções de cadastro no Tiny têm retentativa em lote."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        instancia = execucao.instancia
+        fornecedor = execucao.fornecedor
+
+        pronta, motivo = _pronta_para_cadastro_tiny(instancia, fornecedor)
+        if not pronta:
+            return Response({"detail": motivo}, status=status.HTTP_400_BAD_REQUEST)
+        if cadastro_tiny_bloqueia_espelho(instancia, fornecedor):
+            return Response(
+                {"detail": "Há uma sincronização em massa deste fornecedor com o Tiny em "
+                 "andamento — aguarde ela terminar."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        erro_ids = _variacao_ids_com_erro(execucao, busca=str(request.data.get("busca") or ""))
+        todos = bool(request.data.get("todos"))
+        if todos:
+            alvos = erro_ids
+        else:
+            pedidos = request.data.get("variacao_ids")
+            if not isinstance(pedidos, list) or not all(isinstance(x, int) for x in pedidos):
+                return Response(
+                    {"detail": "Informe `variacao_ids` (lista de inteiros) ou `todos: true`."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            # só os que REALMENTE são erro nesta execução (isolamento + coerência)
+            erro_set = set(erro_ids)
+            alvos = [vid for vid in pedidos if vid in erro_set]
+        if not alvos:
+            return Response(
+                {"detail": "Nenhum SKU com erro válido selecionado."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            _travar_instancia(instancia)
+            ativo = (
+                execucao.retentativas_lote.filter(status=StatusRetentativaLote.RODANDO)
+                .order_by("-criado_em")
+                .first()
+            )
+            if ativo and not heartbeat_expirado(ativo.heartbeat_em, timezone.now()):
+                return Response(
+                    {"detail": "Já existe uma retentativa em lote em andamento para esta execução."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            token = uuid.uuid4().hex
+            lote = RetentativaLote.objects.create(
+                execucao=execucao,
+                variacao_ids=list(alvos),
+                selecao_todos=todos,
+                total=len(alvos),
+                lease_token=token,
+                heartbeat_em=timezone.now(),
+            )
+
+        retentar_lote_task.delay(lote.id, token)
+        return Response(RetentativaLoteSerializer(lote).data, status=status.HTTP_202_ACCEPTED)
 
 
 class ConfiguracoesInstanciaView(generics.RetrieveUpdateAPIView):

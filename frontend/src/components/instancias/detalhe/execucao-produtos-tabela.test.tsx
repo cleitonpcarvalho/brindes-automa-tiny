@@ -177,4 +177,61 @@ describe("ExecucaoProdutosTabela", () => {
     fireEvent.click(botao)
     expect(retentarMutate).not.toHaveBeenCalled()
   })
+
+  it("retryBloqueado (lote rodando) desabilita o 'Tentar novamente' individual", () => {
+    renderTabela({
+      itens: [linha({ variacao_id: 5, sku: "ERR-5", resultado: "erro", tiny_id: "" })],
+      retryBloqueado: true,
+    })
+    expect(
+      screen.getByRole("button", { name: "Tentar cadastrar o SKU ERR-5 novamente" }),
+    ).toBeDisabled()
+  })
+
+  // ---- seleção para retentativa em lote ----
+
+  function selecao(over: Partial<import("./execucao-produtos-tabela").SelecaoErros> = {}) {
+    return {
+      selecionados: new Set<number>(),
+      selecaoTodos: false,
+      onToggle: vi.fn(),
+      onTogglePagina: vi.fn(),
+      ...over,
+    }
+  }
+
+  it("sem prop `selecao` não há checkboxes", () => {
+    renderTabela({ itens: [linha({ resultado: "erro", variacao_id: 1, tiny_id: "" })] })
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument()
+  })
+
+  it("com `selecao`: checkbox só nas linhas de erro; o do cabeçalho marca a página", () => {
+    const s = selecao()
+    renderTabela({
+      selecao: s,
+      itens: [
+        linha({ log_id: 1, variacao_id: 10, sku: "E-1", resultado: "erro", tiny_id: "" }),
+        linha({ log_id: 2, variacao_id: 11, sku: "E-2", resultado: "erro", tiny_id: "" }),
+        linha({ log_id: 3, variacao_id: 12, sku: "OK", resultado: "criado" }),
+      ],
+    })
+    // 1 (cabeçalho) + 2 (linhas de erro) — a linha "criado" não tem checkbox
+    expect(screen.getAllByRole("checkbox")).toHaveLength(3)
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Selecionar todos os erros desta página" }))
+    expect(s.onTogglePagina).toHaveBeenCalledWith([10, 11], true)
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Selecionar o SKU E-1" }))
+    expect(s.onToggle).toHaveBeenCalledWith(10)
+  })
+
+  it("com `selecaoTodos`: os checkboxes aparecem marcados e desabilitados", () => {
+    renderTabela({
+      selecao: selecao({ selecaoTodos: true }),
+      itens: [linha({ variacao_id: 10, sku: "E-1", resultado: "erro", tiny_id: "" })],
+    })
+    const cb = screen.getByRole("checkbox", { name: "Selecionar o SKU E-1" })
+    expect(cb).toBeDisabled()
+    expect(cb).toBeChecked()
+  })
 })

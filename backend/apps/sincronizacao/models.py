@@ -153,3 +153,73 @@ class LogItem(models.Model):
 
     def __str__(self):
         return f"[{self.nivel}] {self.mensagem}"
+
+
+class StatusRetentativaLote(models.TextChoices):
+    RODANDO = "rodando", "Rodando"
+    CONCLUIDO = "concluido", "Concluído"
+    # Worker morreu (sem heartbeat) — não é falha definitiva: rodar de novo é
+    # idempotente (pula os SKUs já cadastrados) e continua de onde parou.
+    INTERROMPIDO = "interrompido", "Interrompido"
+
+
+class RetentativaLote(models.Model):
+    """
+    Um job de "tentar novamente em lote" os SKUs com ERRO de UMA `Execucao` de
+    cadastro no Tiny.
+
+    RASTREIA só progresso + lease/heartbeat. As NOVAS tentativas de cada SKU
+    são gravadas como `LogItem` na `Execucao` ORIGINAL (mesmo padrão do retry
+    individual — histórico preservado, nada é apagado). O job processa os SKUs
+    SEQUENCIALMENTE, cada um por `cadastrar_variacao_individual` ->
+    `_processar_variacao` (a MESMA regra do cadastro em massa e do retry
+    individual — nenhuma regra copiada).
+
+    Concorrência: no máximo um job `rodando` por `Execucao` (checado no start,
+    sob `select_for_update` da Instancia); `select_for_update` por `Variacao`
+    dentro do job serializa contra o retry individual do mesmo SKU.
+
+    Idempotência: `variacao_ids` é a fila fixa (snapshot do start); ao chegar
+    num SKU que já está `cadastrado` (retry individual, rodada anterior), o job
+    PULA (`ignorados`), não recadastra.
+    """
+
+    execucao = models.ForeignKey(
+        Execucao, on_delete=models.CASCADE, related_name="retentativas_lote"
+    )
+    variacao_ids = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="variacao_id dos SKUs a retentar — snapshot resolvido no start. Fila fixa.",
+    )
+    selecao_todos = models.BooleanField(
+        default=False, help_text="True = o operador pediu 'todos os erros da execução'."
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=StatusRetentativaLote.choices,
+        default=StatusRetentativaLote.RODANDO,
+    )
+    lease_token = models.CharField(max_length=36, blank=True, default="")
+    heartbeat_em = models.DateTimeField(null=True, blank=True)
+
+    total = models.PositiveIntegerField(default=0)
+    processados = models.PositiveIntegerField(default=0)
+    sucessos = models.PositiveIntegerField(default=0)
+    erros = models.PositiveIntegerField(default=0)
+    ignorados = models.PositiveIntegerField(
+        default=0, help_text="SKU que já estava cadastrado quando o lote chegou nele."
+    )
+
+    criado_em = models.DateTimeField(auto_now_add=True)
+    finalizado_em = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Retentativa em lote"
+        verbose_name_plural = "Retentativas em lote"
+        ordering = ["-criado_em"]
+        indexes = [models.Index(fields=["execucao", "-criado_em"])]
+
+    def __str__(self):
+        return f"Retentativa em lote #{self.pk} · execução {self.execucao_id} · {self.status}"

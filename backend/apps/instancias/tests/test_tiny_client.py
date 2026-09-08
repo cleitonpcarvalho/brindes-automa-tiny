@@ -98,6 +98,55 @@ class TodaChamadaPassaPeloLimiterTests(TestCase):
         self.assertEqual(limiter.chamadas, [42, 42])
 
 
+class RitmoDeMassaTests(TestCase):
+    """Throttling seguro para execução longa em massa (backfill)."""
+
+    @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.requests.request")
+    def test_somente_leitura_passa_a_respeitar_o_x_limit_api_visto_na_sessao(self, mock_request):
+        # dry-run (somente_leitura) NÃO persiste no banco, mas a partir da 2ª
+        # chamada o limiter já usa o teto que a 1ª resposta revelou.
+        instancia = _instancia()  # sem rate_limit_por_minuto conhecido
+        mock_request.return_value = _resposta(200, {"x-limit-api": "120"})
+        limiter = LimiterFalso()
+
+        cliente = TinyApiClient(
+            instancia, sleep_fn=lambda s: None, limiter=limiter, somente_leitura=True
+        )
+        cliente.get("/produtos")  # 1ª: teto ainda desconhecido
+        cliente.get("/produtos")  # 2ª: já com o teto da 1ª resposta
+
+        self.assertEqual(limiter.chamadas, [None, 120])
+        instancia.refresh_from_db()
+        self.assertIsNone(instancia.rate_limit_por_minuto)  # nada gravado no banco
+
+    @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.requests.request")
+    def test_rate_limit_fallback_segura_ja_a_primeira_chamada(self, mock_request):
+        instancia = _instancia()
+        mock_request.return_value = _resposta(200, {})  # sem header
+        limiter = LimiterFalso()
+
+        cliente = TinyApiClient(
+            instancia, sleep_fn=lambda s: None, limiter=limiter,
+            somente_leitura=True, rate_limit_fallback=60,
+        )
+        cliente.get("/produtos")
+
+        self.assertEqual(limiter.chamadas, [60])  # freio conservador desde o início
+
+    @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.requests.request")
+    def test_sem_fallback_a_primeira_chamada_continua_sem_teto(self, mock_request):
+        instancia = _instancia()
+        mock_request.return_value = _resposta(200, {})
+        limiter = LimiterFalso()
+
+        TinyApiClient(instancia, sleep_fn=lambda s: None, limiter=limiter).get("/produtos")
+
+        self.assertEqual(limiter.chamadas, [None])  # comportamento antigo preservado
+
+
 class Trata429Tests(TestCase):
     @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
     @patch("apps.instancias.tiny_client.requests.request")
@@ -116,20 +165,47 @@ class Trata429Tests(TestCase):
         self.assertEqual(esperas, [5.0])
 
     @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.random.uniform", side_effect=lambda a, b: b)
     @patch("apps.instancias.tiny_client.requests.request")
-    def test_backoff_exponencial_sem_retry_after(self, mock_request):
+    def test_backoff_exponencial_com_jitter_sem_retry_after(self, mock_request, mock_uniform):
         instancia = _instancia()
-        mock_request.side_effect = [
-            _resposta(429, {}),
-            _resposta(429, {}),
-            _resposta(200, {}),
-        ]
+        mock_request.side_effect = [_resposta(429, {}), _resposta(429, {}), _resposta(200, {})]
 
         esperas = []
         cliente = TinyApiClient(instancia, sleep_fn=lambda s: esperas.append(s), limiter=LimiterFalso())
         cliente.get("/produtos")
 
-        self.assertEqual(esperas, [1.0, 2.0])  # dobra a cada tentativa
+        # jitter "equal": espera aleatória em [teto/2, teto]; o teto dobra a cada
+        # tentativa (1s, 2s). Com uniform mockado para o topo, as esperas são os tetos.
+        self.assertEqual(esperas, [1.0, 2.0])
+        self.assertEqual(
+            [call.args for call in mock_uniform.call_args_list], [(0.5, 1.0), (1.0, 2.0)]
+        )
+
+    @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.requests.request")
+    def test_jitter_mantem_a_espera_dentro_da_faixa_do_teto(self, mock_request):
+        instancia = _instancia()
+        mock_request.side_effect = [_resposta(429, {}), _resposta(429, {}), _resposta(200, {})]
+
+        esperas = []
+        cliente = TinyApiClient(instancia, sleep_fn=lambda s: esperas.append(s), limiter=LimiterFalso())
+        cliente.get("/produtos")
+
+        self.assertTrue(0.5 <= esperas[0] <= 1.0)
+        self.assertTrue(1.0 <= esperas[1] <= 2.0)
+
+    @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.requests.request")
+    def test_retry_after_absurdo_e_limitado(self, mock_request):
+        instancia = _instancia()
+        mock_request.side_effect = [_resposta(429, {"Retry-After": "99999"}), _resposta(200, {})]
+
+        esperas = []
+        cliente = TinyApiClient(instancia, sleep_fn=lambda s: esperas.append(s), limiter=LimiterFalso())
+        cliente.get("/produtos")
+
+        self.assertEqual(esperas, [TinyApiClient.RETRY_AFTER_MAXIMO_SEGUNDOS])
 
     @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
     @patch("apps.instancias.tiny_client.requests.request")
@@ -140,6 +216,33 @@ class Trata429Tests(TestCase):
         cliente = TinyApiClient(instancia, sleep_fn=lambda s: None, limiter=LimiterFalso())
         with self.assertRaises(TinyApiError):
             cliente.get("/produtos")
+        self.assertEqual(mock_request.call_count, TinyApiClient.MAX_TENTATIVAS_429 + 1)
+
+    @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.requests.request")
+    def test_max_tentativas_429_configuravel_para_execucao_longa(self, mock_request):
+        instancia = _instancia()
+        mock_request.side_effect = [_resposta(429, {})] * 8 + [_resposta(200, {})]
+
+        cliente = TinyApiClient(
+            instancia, sleep_fn=lambda s: None, limiter=LimiterFalso(), max_tentativas_429=12
+        )
+        resposta = cliente.get("/produtos")
+
+        self.assertEqual(resposta.status_code, 200)  # recuperou após 8 retentativas
+        self.assertEqual(mock_request.call_count, 9)
+
+    @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.requests.request")
+    def test_processamento_continua_normal_apos_recuperar_do_429(self, mock_request):
+        instancia = _instancia()
+        mock_request.side_effect = [
+            _resposta(429, {"Retry-After": "1"}),
+            _resposta(200, {}, {"sku": "X-1", "id": 5}),
+        ]
+
+        cliente = TinyApiClient(instancia, sleep_fn=lambda s: None, limiter=LimiterFalso())
+        self.assertEqual(cliente.obter_produto(5)["sku"], "X-1")
 
 
 class DominioProdutosTests(TestCase):

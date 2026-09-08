@@ -27,12 +27,16 @@ Proteções:
     (+ `preco_custo_tiny_sincronizado`): reexecução pega só o que falta ou o
     custo que mudou depois;
   - erro num produto NÃO para o lote;
-  - respeita o rate limiter compartilhado (via TinyApiClient).
+  - respeita o rate limiter compartilhado (via TinyApiClient), com um teto
+    conservador de partida (`rate_limit_fallback`) e mais retentativas de 429
+    (`max_tentativas_429`) — próprio para execução longa em massa.
 
 `--dry-run` (padrão): GET + monta o payload, NÃO faz PUT.
 `--executar`: aplica o PUT e avança os marcadores.
 `--sku`: processa exatamente esse SKU (ignora os marcadores — retry manual).
 `--verificar` (só com --executar): GET depois de cada PUT e imprime o diff.
+`--mostrar-payload`: imprime o payload completo de cada produto (só para
+   inspeção pontual — NÃO usar na execução em massa; use com --sku).
 """
 
 import json
@@ -72,6 +76,18 @@ class Command(BaseCommand):
             action="store_true",
             help="só com --executar: GET depois de cada PUT e imprime o diff campo a campo",
         )
+        parser.add_argument(
+            "--mostrar-payload",
+            action="store_true",
+            help="imprime o payload completo por produto (inspeção pontual; use com --sku)",
+        )
+
+    # Ritmo de partida do limiter (antes de ver o x-limit-api da conta) e teto
+    # de retentativas de 429 — execução longa em massa (ver docstring / 429 no
+    # dry-run do backfill Asia).
+    RATE_LIMIT_FALLBACK = 60
+    MAX_TENTATIVAS_429 = 12
+    PROGRESSO_A_CADA = 50
 
     def handle(self, *args, **options):
         w = self.stdout.write
@@ -97,10 +113,17 @@ class Command(BaseCommand):
             w(self.style.SUCCESS("Nada a corrigir — fila vazia."))
             return
 
-        cliente = TinyApiClient(instancia, somente_leitura=not executar)
+        cliente = TinyApiClient(
+            instancia,
+            somente_leitura=not executar,
+            max_tentativas_429=self.MAX_TENTATIVAS_429,
+            rate_limit_fallback=self.RATE_LIMIT_FALLBACK,
+        )
+        total = len(fila)
         if not executar:
-            w(self.style.WARNING(f"DRY-RUN — {len(fila)} produto(s) na fila, nenhum PUT será feito."))
+            w(self.style.WARNING(f"DRY-RUN — {total} produto(s) na fila, nenhum PUT será feito."))
 
+        verboso = options["mostrar_payload"] or options["verbosity"] >= 2
         processados = atualizados = ignorados = erros = 0
         for variacao in fila:
             processados += 1
@@ -109,6 +132,7 @@ class Command(BaseCommand):
             if not (variacao.tiny_id or "").strip():
                 ignorados += 1
                 w(self.style.WARNING(f"{rotulo}: IGNORADO — sem tiny_id confirmado."))
+                self._progresso(processados, total, atualizados, ignorados, erros)
                 continue
 
             try:
@@ -117,6 +141,7 @@ class Command(BaseCommand):
                 erros += 1
                 self._registrar_erro(variacao, f"GET falhou: {exc}")
                 self.stderr.write(f"{rotulo}: ERRO no GET — {exc}")
+                self._progresso(processados, total, atualizados, ignorados, erros)
                 continue
 
             sku_no_tiny = str(antes.get("sku") or "")
@@ -125,6 +150,7 @@ class Command(BaseCommand):
                 w(self.style.WARNING(
                     f"{rotulo}: IGNORADO — o produto no Tiny tem sku={sku_no_tiny!r} (sem fuzzy)."
                 ))
+                self._progresso(processados, total, atualizados, ignorados, erros)
                 continue
 
             try:
@@ -135,12 +161,18 @@ class Command(BaseCommand):
                 erros += 1
                 self._registrar_erro(variacao, str(exc))
                 self.stderr.write(f"{rotulo}: ERRO ao montar payload — {exc}")
+                self._progresso(processados, total, atualizados, ignorados, erros)
                 continue
+
+            if options["mostrar_payload"]:
+                w(f"{rotulo}:")
+                w("  " + json.dumps(payload, ensure_ascii=False, indent=2).replace("\n", "\n  "))
 
             if not executar:
                 atualizados += 1  # "seria atualizado"
-                w(f"{rotulo}: SERIA ATUALIZADO")
-                w("  " + json.dumps(payload, ensure_ascii=False, indent=2).replace("\n", "\n  "))
+                if verboso:
+                    w(f"{rotulo}: SERIA ATUALIZADO")
+                self._progresso(processados, total, atualizados, ignorados, erros)
                 continue
 
             try:
@@ -149,6 +181,7 @@ class Command(BaseCommand):
                 erros += 1
                 self._registrar_erro(variacao, f"PUT falhou: {exc}")
                 self.stderr.write(f"{rotulo}: ERRO no PUT — {exc}")
+                self._progresso(processados, total, atualizados, ignorados, erros)
                 continue
 
             variacao.preco_custo_tiny_sincronizado = variacao.preco
@@ -161,10 +194,13 @@ class Command(BaseCommand):
                 "atualizado_em",
             ])
             atualizados += 1
-            w(self.style.SUCCESS(f"{rotulo}: ATUALIZADO"))
+            if verboso:
+                w(self.style.SUCCESS(f"{rotulo}: ATUALIZADO"))
 
             if options["verificar"]:
                 self._imprimir_diff(cliente.obter_produto(int(variacao.tiny_id)), antes)
+
+            self._progresso(processados, total, atualizados, ignorados, erros)
 
         w("")
         w(self.style.SUCCESS(
@@ -172,6 +208,12 @@ class Command(BaseCommand):
             f"processados: {processados} | atualizados: {atualizados} | "
             f"ignorados: {ignorados} | erros: {erros}"
         ))
+        if erros:
+            w(self.style.WARNING(
+                f"{erros} produto(s) com erro — reveja `Variacao.ultimo_erro` "
+                "(ex.: filtre por status/erro na tela de produtos). Rodar de novo retenta "
+                "só os que não concluíram."
+            ))
 
     # -- fila ----------------------------------------------------------
 
@@ -201,6 +243,13 @@ class Command(BaseCommand):
         return list(fila)
 
     # -- saída -------------------------------------------------------
+
+    def _progresso(self, processados, total, atualizados, ignorados, erros):
+        if processados % self.PROGRESSO_A_CADA == 0 or processados == total:
+            self.stdout.write(
+                f"  … {processados}/{total} "
+                f"(atualizados={atualizados} ignorados={ignorados} erros={erros})"
+            )
 
     def _imprimir_diff(self, depois, antes):
         w = self.stdout.write

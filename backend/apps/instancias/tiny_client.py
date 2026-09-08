@@ -10,9 +10,11 @@ Regras respeitadas aqui:
     janela deslizante em si vive no Redis (tiny_throttle.py), compartilhada
     entre o servidor Django e os workers do Celery;
   - 429 é tratado com respeito a `Retry-After` quando presente, e backoff
-    exponencial quando não.
+    exponencial COM JITTER quando não; o teto de retentativas é configurável
+    (execução longa em massa passa um valor maior — ainda finito).
 """
 
+import random
 import time
 
 import requests
@@ -55,6 +57,9 @@ class TinyApiClient:
     MAX_TENTATIVAS_429 = 5
     BACKOFF_BASE_SEGUNDOS = 1.0
     BACKOFF_MAXIMO_SEGUNDOS = 60.0
+    # Guarda contra um `Retry-After` patológico (ou malformado com número enorme):
+    # ainda respeitamos o header, só não dormimos mais que isto de uma vez.
+    RETRY_AFTER_MAXIMO_SEGUNDOS = 300.0
 
     # `buscar_produto_por_sku` traz uma página pequena (não `limit=1`) porque
     # o filtro `codigo` da API do Tiny não é garantidamente igualdade exata
@@ -64,7 +69,16 @@ class TinyApiClient:
     # reconfirmada aqui, no nosso código, sobre o campo `sku` do item.
     LIMITE_BUSCA_SKU = 20
 
-    def __init__(self, instancia, base_url=None, sleep_fn=time.sleep, limiter=None, somente_leitura=False):
+    def __init__(
+        self,
+        instancia,
+        base_url=None,
+        sleep_fn=time.sleep,
+        limiter=None,
+        somente_leitura=False,
+        max_tentativas_429=None,
+        rate_limit_fallback=None,
+    ):
         self.instancia = instancia
         self.base_url = base_url if base_url is not None else _base_url_padrao()
         self._sleep = sleep_fn
@@ -73,6 +87,16 @@ class TinyApiClient:
         # da máquina. Também não persiste `rate_limit_por_minuto` (o dry-run
         # não deve alterar NENHUM dado local).
         self.somente_leitura = somente_leitura
+        # Teto de retentativas por 429. Execução longa em massa (backfill) passa
+        # um valor maior — continua FINITO (não trava para sempre num produto).
+        self._max_tentativas_429 = max_tentativas_429 or self.MAX_TENTATIVAS_429
+        # Teto conservador para o limiter enquanto o `x-limit-api` da conta ainda
+        # não foi visto NESTA sessão. `None` = comportamento antigo (sem freio até
+        # a 1ª resposta). Útil no dry-run em massa, que não persiste o header.
+        self._rate_limit_fallback = rate_limit_fallback
+        # Último `x-limit-api` visto nesta sessão — usado pelo limiter mesmo em
+        # `somente_leitura` (que não grava no banco).
+        self._rate_limit_visto = None
 
     # -- API pública de baixo nível ----------------------------------------
 
@@ -264,7 +288,7 @@ class TinyApiClient:
 
         tentativa = 0
         while True:
-            self._limiter.aguardar_vaga(self.instancia.rate_limit_por_minuto)
+            self._limiter.aguardar_vaga(self._limite_para_o_limiter())
 
             headers = {"Authorization": f"Bearer {self.instancia.access_token}"}
             headers.update(kwargs.pop("headers", {}) or {})
@@ -276,18 +300,24 @@ class TinyApiClient:
 
             if resposta.status_code == 429:
                 tentativa += 1
-                if tentativa > self.MAX_TENTATIVAS_429:
+                if tentativa > self._max_tentativas_429:
                     raise TinyApiError(
-                        f"429 persistente após {self.MAX_TENTATIVAS_429} tentativas em {caminho!r}."
+                        f"429 persistente após {self._max_tentativas_429} tentativas em {caminho!r}."
                     )
                 self._aguardar_backoff(resposta, tentativa)
                 continue
 
             return resposta
 
+    def _limite_para_o_limiter(self):
+        """
+        Teto por minuto que o limiter compartilhado deve usar: o `x-limit-api`
+        já visto NESTA sessão (funciona mesmo em `somente_leitura`), senão o
+        valor persistido na Instancia, senão o fallback conservador (se houver).
+        """
+        return self._rate_limit_visto or self.instancia.rate_limit_por_minuto or self._rate_limit_fallback
+
     def _atualizar_limite_da_conta(self, resposta: requests.Response):
-        if self.somente_leitura:
-            return  # dry-run não grava nada local, nem esse cache
         valor = resposta.headers.get("x-limit-api")
         if not valor:
             return
@@ -301,6 +331,11 @@ class TinyApiClient:
         # oposto do que queremos quando o Tiny já está reclamando.
         if valor_int <= 0:
             return
+        # SEMPRE lembra o valor da sessão — inclusive em somente_leitura — para
+        # o limiter segurar o ritmo já a partir da 2ª chamada de um dry-run.
+        self._rate_limit_visto = valor_int
+        if self.somente_leitura:
+            return  # dry-run não grava nada no banco
         if valor_int != self.instancia.rate_limit_por_minuto:
             self.instancia.rate_limit_por_minuto = valor_int
             self.instancia.save(update_fields=["rate_limit_por_minuto", "atualizado_em"])
@@ -309,12 +344,15 @@ class TinyApiClient:
         retry_after = resposta.headers.get("Retry-After")
         if retry_after:
             try:
-                self._sleep(float(retry_after))
+                self._sleep(min(float(retry_after), self.RETRY_AFTER_MAXIMO_SEGUNDOS))
                 return
             except ValueError:
                 pass
-        espera = min(self.BACKOFF_BASE_SEGUNDOS * (2 ** (tentativa - 1)), self.BACKOFF_MAXIMO_SEGUNDOS)
-        self._sleep(espera)
+        # Backoff exponencial COM JITTER (equal jitter): espera aleatória em
+        # [teto/2, teto]. O jitter dessincroniza o servidor Django e os workers
+        # do Celery que levaram 429 ao mesmo tempo (mesma conta do Tiny).
+        teto = min(self.BACKOFF_BASE_SEGUNDOS * (2 ** (tentativa - 1)), self.BACKOFF_MAXIMO_SEGUNDOS)
+        self._sleep(random.uniform(teto / 2, teto))
 
 
 def _corpo_anexos(urls) -> list[dict]:

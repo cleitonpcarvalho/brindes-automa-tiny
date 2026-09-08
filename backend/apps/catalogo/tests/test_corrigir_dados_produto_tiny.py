@@ -5,17 +5,29 @@ cadastrados no Tiny. NÃO cria produto, NÃO toca anexos/saldo, idempotente.
 
 from decimal import Decimal
 from io import StringIO
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from apps.instancias.models import CredencialFornecedor, Instancia
 
 from ..models import Produto, StatusVariacao, Variacao
 
 TINY_FORN_ID = 752133514
+
+
+def _resp(status, body=None, *, headers=None, sem_corpo=False):
+    r = Mock()
+    r.status_code = status
+    r.headers = headers or {}
+    r.text = ""
+    if sem_corpo:
+        r.json.side_effect = ValueError("no body")
+    else:
+        r.json.return_value = body if body is not None else {}
+    return r
 
 
 def _get(tiny_id, sku, *, fornecedores=None):
@@ -231,3 +243,120 @@ class ExecutarTests(_Base):
 
         self.assertEqual(mock_put.call_count, 1)
         self.assertEqual(mock_put.call_args[0][0], 901)
+
+
+@override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+@patch("apps.instancias.tiny_client.random.uniform", return_value=0.0)  # backoff sem dormir
+@patch("apps.instancias.tiny_client.RateLimiterCompartilhado")           # sem Redis no teste
+@patch("apps.instancias.tiny_client.requests.request")
+class Retry429NoLoteTests(_Base):
+    """
+    Backfill seguro para a API do Tiny em massa: 429 transitório recupera e o
+    lote continua; 429 persistente vira erro isolado (não marca) e o produto
+    volta na retomada. Exercita o TinyApiClient REAL (retry/backoff/limiter).
+    """
+
+    def _sem_throttle(self, mock_lim):
+        mock_lim.return_value.aguardar_vaga = lambda *a, **k: None
+
+    def test_429_transitorio_no_get_recupera_e_produto_e_atualizado(self, mock_req, mock_lim, _u):
+        self._sem_throttle(mock_lim)
+        v = self._variacao("A-1", tiny_id="901")
+        mock_req.side_effect = [
+            _resp(429), _resp(429),                     # 2 x 429 no GET
+            _resp(200, _get(901, "A-1")),               # GET recupera
+            _resp(204, sem_corpo=True),                 # PUT ok
+        ]
+
+        saida = self._rodar("--executar")
+
+        self.assertIn("atualizados: 1", saida)
+        self.assertIn("erros: 0", saida)
+        v.refresh_from_db()
+        self.assertEqual(v.preco_custo_tiny_sincronizado, Decimal("3.60"))
+        self.assertIsNotNone(v.dados_tiny_sincronizados_em)
+
+    def test_429_persistente_no_get_vira_erro_isolado_e_retoma_depois(self, mock_req, mock_lim, _u):
+        self._sem_throttle(mock_lim)
+        v = self._variacao("A-1", tiny_id="901")
+
+        # 1ª rodada: 429 sem parar — o comando usa max_tentativas_429=12; 429
+        # persistente esgota e vira TinyApiError -> erro isolado, marcador NULO.
+        mock_req.side_effect = [_resp(429)] * 40
+        saida1 = self._rodar("--executar")
+
+        self.assertIn("erros: 1", saida1)
+        self.assertIn("atualizados: 0", saida1)
+        v.refresh_from_db()
+        self.assertIsNone(v.dados_tiny_sincronizados_em)
+        self.assertIn("429 persistente", v.ultimo_erro)
+
+        # 2ª rodada: rate limit passou -> o MESMO produto é retentado e concluído.
+        mock_req.reset_mock(side_effect=True)
+        mock_req.side_effect = [_resp(200, _get(901, "A-1")), _resp(204, sem_corpo=True)]
+        saida2 = self._rodar("--executar")
+
+        self.assertIn("atualizados: 1", saida2)
+        v.refresh_from_db()
+        self.assertIsNotNone(v.dados_tiny_sincronizados_em)
+
+    def test_erro_de_um_produto_nao_para_os_demais_do_lote(self, mock_req, mock_lim, _u):
+        self._sem_throttle(mock_lim)
+        self._variacao("A-1", tiny_id="901")
+        ruim = self._variacao("A-2", tiny_id="902")
+        self._variacao("A-3", tiny_id="903")
+
+        def resp(metodo, url, **kw):
+            if "/902" in url:
+                return _resp(429)  # esgota nas retentativas -> erro isolado
+            if metodo == "GET":
+                pid = int(url.rsplit("/", 1)[1])
+                return _resp(200, _get(pid, {901: "A-1", 903: "A-3"}[pid]))
+            return _resp(204, sem_corpo=True)
+
+        mock_req.side_effect = resp
+        saida = self._rodar("--executar")
+
+        self.assertIn("atualizados: 2", saida)
+        self.assertIn("erros: 1", saida)
+        ruim.refresh_from_db()
+        self.assertIsNone(ruim.dados_tiny_sincronizados_em)
+
+    def test_dry_run_nunca_faz_put_mesmo_com_o_client_real(self, mock_req, mock_lim, _u):
+        self._sem_throttle(mock_lim)
+        self._variacao("A-1", tiny_id="901")
+        metodos = []
+
+        def resp(metodo, url, **kw):
+            metodos.append(metodo)
+            return _resp(200, _get(901, "A-1"))
+
+        mock_req.side_effect = resp
+        self._rodar("--dry-run")
+
+        self.assertEqual(set(metodos), {"GET"})  # só leitura, nenhum PUT
+
+
+class SaidaCompactaTests(_Base):
+    @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_produto", return_value={})
+    @patch("apps.instancias.tiny_client.TinyApiClient.obter_produto")
+    def test_execucao_em_massa_nao_despeja_o_payload_de_cada_produto(self, mock_get, mock_put):
+        for i in range(3):
+            self._variacao(f"A-{i}", tiny_id=f"90{i}")
+        mock_get.side_effect = lambda pid: _get(pid, {900: "A-0", 901: "A-1", 902: "A-2"}[pid])
+
+        saida = self._rodar("--executar")
+
+        self.assertNotIn('"precoCusto"', saida)   # payload NÃO é impresso
+        self.assertNotIn("SERIA ATUALIZADO", saida)
+        self.assertIn("processados: 3 | atualizados: 3", saida)  # resumo final
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.obter_produto")
+    def test_mostrar_payload_imprime_os_detalhes_quando_pedido(self, mock_get):
+        self._variacao("A-1", tiny_id="901")
+        mock_get.return_value = _get(901, "A-1")
+
+        saida = self._rodar("--dry-run", "--mostrar-payload")
+
+        self.assertIn('"precoCusto"', saida)
+        self.assertIn('"descricaoComplementar"', saida)

@@ -20,6 +20,7 @@ from .views import (
     InstanciaViewSet,
     ProdutosEspelhoView,
     SincronizarFornecedorView,
+    TinyFornecedorIdView,
     TinyOAuthCallbackView,
     VariacaoDetalheView,
 )
@@ -47,6 +48,11 @@ urlpatterns = router.urls + [
         "instancias/<slug:slug>/configuracoes/",
         ConfiguracoesInstanciaView.as_view(),
         name="instancia-configuracoes",
+    ),
+    path(
+        "instancias/<slug:slug>/fornecedores/<str:fornecedor>/tiny-fornecedor-id/",
+        TinyFornecedorIdView.as_view(),
+        name="instancia-fornecedor-tiny-id",
     ),
     path(
         "instancias/<slug:slug>/cadencias/",

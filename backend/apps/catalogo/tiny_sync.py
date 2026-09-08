@@ -36,6 +36,7 @@ from decimal import Decimal
 from django.db.models import Count, Q
 from django.utils import timezone
 
+from apps.instancias.models import CredencialFornecedor
 from apps.instancias.tiny_client import TinyApiClient
 from apps.sincronizacao.models import (
     STATUS_EXECUCAO_ABERTOS,
@@ -149,6 +150,29 @@ ACAO_CRIAR = "criar"
 ACAO_VINCULAR = "vincular"
 ACAO_BLOQUEADO = "bloqueado"
 ACAO_JA_CADASTRADO = "ja_cadastrado"
+
+# Motivo do bloqueio quando o par (instância, fornecedor) não tem o id do
+# contato-fornecedor no Tiny configurado. Mensagem única — a UI/preview e a
+# auditoria por SKU mostram exatamente este texto.
+MOTIVO_SEM_TINY_FORNECEDOR_ID = (
+    "Fornecedor no Tiny não configurado para este fornecedor nesta instância — "
+    "informe o \"ID do fornecedor no Tiny\" em Instância › Fornecedores antes de cadastrar."
+)
+
+
+def tiny_fornecedor_id_de(instancia, fornecedor) -> int | None:
+    """
+    Id do contato-fornecedor no Tiny para o par (instância, fornecedor), ou
+    None se não houver `CredencialFornecedor` ou o campo estiver vazio.
+
+    Chamado UMA vez por rodada/execução (nunca por SKU) — ver
+    `executar_sincronizacao_tiny` e o command `cadastrar_produtos_tiny`.
+    """
+    return (
+        CredencialFornecedor.objects.filter(instancia=instancia, fornecedor=fornecedor)
+        .values_list("tiny_fornecedor_id", flat=True)
+        .first()
+    )
 
 
 class TinySyncError(RuntimeError):
@@ -303,10 +327,17 @@ def bloqueio_local(variacao, colisoes_por_sku) -> str | None:
     return None
 
 
-def avaliar_variacao(cliente, instancia, variacao, colisoes_por_sku, *, vincular_skus=()) -> Decisao:
+def avaliar_variacao(
+    cliente, instancia, variacao, colisoes_por_sku, *, vincular_skus=(), tiny_fornecedor_id=None
+) -> Decisao:
     """
     Decisão completa (inclui o GET por SKU exato no Tiny). Chamada tanto pelo
     command quanto pela task — mesma implementação, mesmas proteções.
+
+    `tiny_fornecedor_id`: id do contato-fornecedor no Tiny para o par
+    (instância, fornecedor), resolvido UMA vez pelo chamador. Sem ele, criar
+    um produto novo fica BLOQUEADO (uma variação já `cadastrado` não é
+    afetada — só segue para a etapa de imagens).
     """
     vincular_skus = set(vincular_skus or ())
     sku = (variacao.sku or "").strip()
@@ -317,6 +348,9 @@ def avaliar_variacao(cliente, instancia, variacao, colisoes_por_sku, *, vincular
 
     if variacao.status == StatusVariacao.CADASTRADO and (variacao.tiny_id or "").strip():
         return Decisao(ACAO_JA_CADASTRADO, f"já vinculada (tiny_id={variacao.tiny_id})")
+
+    if not tiny_fornecedor_id:
+        return Decisao(ACAO_BLOQUEADO, MOTIVO_SEM_TINY_FORNECEDOR_ID)
 
     existente = cliente.buscar_produto_por_sku(sku)  # GET — permitido no dry-run
     if existente:
@@ -334,7 +368,9 @@ def avaliar_variacao(cliente, instancia, variacao, colisoes_por_sku, *, vincular
         )
 
     return Decisao(
-        ACAO_CRIAR, "SKU não existe no Tiny", payload=montar_payload_produto(variacao, instancia)
+        ACAO_CRIAR,
+        "SKU não existe no Tiny",
+        payload=montar_payload_produto(variacao, instancia, tiny_fornecedor_id=tiny_fornecedor_id),
     )
 
 
@@ -599,6 +635,9 @@ def executar_sincronizacao_tiny(
         cliente = TinyApiClient(instancia, somente_leitura=dry_run)
 
     colisoes = colisoes_cross_fornecedor(instancia)
+    # Resolvido UMA vez por rodada (nunca por SKU). Sem ele, `avaliar_variacao`
+    # bloqueia toda criação nova deste fornecedor.
+    tiny_fornecedor_id = tiny_fornecedor_id_de(instancia, fornecedor)
     fila = fila_cadastro_massa(instancia, fornecedor, limite=limite)
     resultado = ResultadoSincronizacao(fila=len(fila))
     eventos.inicio(total_fila=len(fila))
@@ -612,7 +651,12 @@ def executar_sincronizacao_tiny(
 
         try:
             decisao = avaliar_variacao(
-                cliente, instancia, variacao, colisoes, vincular_skus=vincular_skus
+                cliente,
+                instancia,
+                variacao,
+                colisoes,
+                vincular_skus=vincular_skus,
+                tiny_fornecedor_id=tiny_fornecedor_id,
             )
         except Exception as exc:  # falha na avaliação (ex.: GET explodiu)
             resultado.erros += 1
@@ -704,7 +748,7 @@ def _preco_publicado(variacao) -> Decimal:
 # ---------------------------------------------------------------------------
 
 
-def montar_payload_produto(variacao, instancia) -> dict:
+def montar_payload_produto(variacao, instancia, *, tiny_fornecedor_id=None) -> dict:
     payload = {
         "sku": variacao.sku,
         "descricao": variacao.nome,
@@ -721,6 +765,17 @@ def montar_payload_produto(variacao, instancia) -> dict:
     garantia = (variacao.atributos or {}).get("garantia_do_produto")
     if garantia:
         payload["garantia"] = garantia
+    if tiny_fornecedor_id is not None:
+        # Vínculo com o contato-fornecedor no Tiny desta instância. O código
+        # do produto no fornecedor é sempre o SKU EXATO da variação (a chave
+        # operacional única de todo o fluxo), nunca o código do produto-pai.
+        payload["fornecedores"] = [
+            {
+                "id": int(tiny_fornecedor_id),
+                "padrao": True,
+                "codigoProdutoNoFornecedor": variacao.sku,
+            }
+        ]
     return payload
 
 

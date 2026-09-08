@@ -6,10 +6,11 @@ from .models import CredencialFornecedor, Instancia
 class CredencialFornecedorInline(admin.TabularInline):
     model = CredencialFornecedor
     extra = 0
-    fields = ("fornecedor", "ativo", "criado_em")
+    fields = ("fornecedor", "ativo", "tiny_fornecedor_id", "criado_em")
     readonly_fields = ("criado_em",)
     # `credenciais` fica de fora do inline de propósito: é criptografado e
-    # não deve aparecer em texto plano numa listagem lateral.
+    # não deve aparecer em texto plano numa listagem lateral. `tiny_fornecedor_id`
+    # entra: não é segredo e é o caminho de configuração manual mais rápido.
 
 
 @admin.register(Instancia)
@@ -71,7 +72,7 @@ class InstanciaAdmin(admin.ModelAdmin):
 
 @admin.register(CredencialFornecedor)
 class CredencialFornecedorAdmin(admin.ModelAdmin):
-    list_display = ("instancia", "fornecedor", "ativo", "criado_em")
+    list_display = ("instancia", "fornecedor", "ativo", "tiny_fornecedor_id", "criado_em")
     list_filter = ("fornecedor", "ativo")
     search_fields = ("instancia__nome", "instancia__slug")
     readonly_fields = ("criado_em",)

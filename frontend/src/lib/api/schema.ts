@@ -561,6 +561,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/instancias/{slug}/fornecedores/{fornecedor}/tiny-fornecedor-id/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * @description PUT .../fornecedores/<fornecedor>/tiny-fornecedor-id/ — define ou limpa
+         *     (`null`) o id do contato-fornecedor correspondente no Tiny desta
+         *     instância. Separado do endpoint de credenciais de propósito: não é
+         *     segredo e um PUT de credenciais nunca deve tocá-lo (e vice-versa).
+         */
+        put: operations["instancias_fornecedores_tiny_fornecedor_id_update"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/instancias/{slug}/produtos/": {
         parameters: {
             query?: never;
@@ -819,6 +841,7 @@ export interface components {
             campos_mascarados: {
                 [key: string]: unknown;
             };
+            tiny_fornecedor_id: number | null;
             /** Format: date-time */
             criado_em: string | null;
         };
@@ -1357,6 +1380,15 @@ export interface components {
          * @enum {string}
          */
         StatusVariacaoEnum: "pendente" | "aguardando" | "cadastrado" | "descontinuado" | "erro";
+        /**
+         * @description Corpo do PUT .../fornecedores/<fornecedor>/tiny-fornecedor-id/ — define ou
+         *     limpa (enviando `null`) o id do contato-fornecedor no Tiny desta
+         *     instância. Endpoint separado das credenciais de propósito: não é segredo,
+         *     não passa por mascaramento, e um PUT de credenciais nunca o toca.
+         */
+        TinyFornecedorIdEntrada: {
+            tiny_fornecedor_id: number | null;
+        };
         /**
          * @description * `carga_inicial` - Carga inicial
          *     * `incremental` - Incremental
@@ -2239,6 +2271,34 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SincronizarResposta"];
+                };
+            };
+        };
+    };
+    instancias_fornecedores_tiny_fornecedor_id_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fornecedor: string;
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TinyFornecedorIdEntrada"];
+                "application/x-www-form-urlencoded": components["schemas"]["TinyFornecedorIdEntrada"];
+                "multipart/form-data": components["schemas"]["TinyFornecedorIdEntrada"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredencialFornecedorResposta"];
                 };
             };
         };

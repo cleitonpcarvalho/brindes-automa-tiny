@@ -8,6 +8,7 @@ import type { CadenciaFornecedor, CredencialFornecedorResposta, FornecedorDetalh
 vi.mock("@/lib/api/hooks", () => ({
   useSincronizarFornecedor: vi.fn(),
   useAtualizarCredencial: vi.fn(),
+  useAtualizarTinyFornecedorId: vi.fn(),
   useAtualizarCadencia: vi.fn(),
   useCadastroTinyPreview: vi.fn(),
   useCadastrarProdutosTiny: vi.fn(),
@@ -30,6 +31,7 @@ function mutacaoParada(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.mocked(hooks.useSincronizarFornecedor).mockReturnValue(mutacaoParada());
   vi.mocked(hooks.useAtualizarCredencial).mockReturnValue(mutacaoParada());
+  vi.mocked(hooks.useAtualizarTinyFornecedorId).mockReturnValue(mutacaoParada());
   vi.mocked(hooks.useAtualizarCadencia).mockReturnValue(mutacaoParada());
   vi.mocked(hooks.useCadastrarProdutosTiny).mockReturnValue(mutacaoParada());
   vi.mocked(hooks.usePausarCadastroTiny).mockReturnValue(mutacaoParada());
@@ -48,6 +50,7 @@ const CREDENCIAL_XBZ: CredencialFornecedorResposta = {
   ativo: true,
   configurado: true,
   campos_mascarados: { cnpj: "23948964000161", token: "••••••••BF9" },
+  tiny_fornecedor_id: 752131325,
   criado_em: "2026-01-01T00:00:00Z",
 };
 
@@ -148,6 +151,7 @@ describe("FornecedorAcordeao", () => {
       ativo: false,
       configurado: false,
       campos_mascarados: Object.fromEntries(campos.map((campo) => [campo.chave, null])),
+      tiny_fornecedor_id: null,
       criado_em: null,
     });
 
@@ -180,6 +184,7 @@ describe("FornecedorAcordeao", () => {
       ativo: true,
       configurado: true,
       campos_mascarados: Object.fromEntries(campos.map((campo) => [campo.chave, campo.sensivel ? "••••••••123" : campo.valor])),
+      tiny_fornecedor_id: null,
       criado_em: "2026-01-01T00:00:00Z",
     };
     renderFornecedor(credencial);
@@ -210,7 +215,8 @@ describe("FornecedorAcordeao", () => {
     renderFornecedor(CREDENCIAL_XBZ);
     renderFornecedor({
       fornecedor: "spot", ativo: true, configurado: true,
-      campos_mascarados: { access_key: "••••••••123" }, criado_em: "2026-01-01T00:00:00Z",
+      campos_mascarados: { access_key: "••••••••123" }, tiny_fornecedor_id: null,
+      criado_em: "2026-01-01T00:00:00Z",
     });
     const [xbz, spot] = screen.getAllByRole("article");
     fireEvent.click(within(xbz).getByRole("button", { name: "Editar" }));
@@ -554,6 +560,82 @@ describe("FornecedorAcordeao", () => {
 
     expect(cadenciaMutate).not.toHaveBeenCalled();
   });
+
+  // ---- "ID do fornecedor no Tiny" (separado das credenciais) ----
+
+  it("sem id configurado: mostra 'Não configurado' e avisa que o cadastro fica bloqueado", () => {
+    renderFornecedor({ ...CREDENCIAL_XBZ, tiny_fornecedor_id: null });
+    const campo = screen.getByLabelText("ID do fornecedor no Tiny");
+    expect(campo).toHaveValue("Não configurado");
+    expect(campo).toHaveAttribute("readonly");
+    expect(screen.getByText(/o cadastro no Tiny fica bloqueado/i)).toBeInTheDocument();
+  });
+
+  it("com id configurado: mostra o número em texto pleno", () => {
+    renderFornecedor({ ...CREDENCIAL_XBZ, tiny_fornecedor_id: 752131325 });
+    expect(screen.getByLabelText("ID do fornecedor no Tiny")).toHaveValue("752131325");
+  });
+
+  it("Editar → digitar → Salvar envia o id como número", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(hooks.useAtualizarTinyFornecedorId).mockReturnValue(mutacaoParada({ mutateAsync }));
+    renderFornecedor({ ...CREDENCIAL_XBZ, tiny_fornecedor_id: null });
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar ID do fornecedor no Tiny" }));
+    fireEvent.change(screen.getByLabelText("ID do fornecedor no Tiny"), { target: { value: "752131325" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar ID do fornecedor no Tiny" }));
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledWith(752131325));
+    // volta ao modo leitura depois de salvar
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Editar ID do fornecedor no Tiny" })).toBeInTheDocument(),
+    );
+    expect(hooks.useAtualizarTinyFornecedorId).toHaveBeenCalledWith("loja-x", "xbz");
+  });
+
+  it("Editar → limpar o campo → Salvar envia null", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(hooks.useAtualizarTinyFornecedorId).mockReturnValue(mutacaoParada({ mutateAsync }));
+    renderFornecedor({ ...CREDENCIAL_XBZ, tiny_fornecedor_id: 752131325 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar ID do fornecedor no Tiny" }));
+    fireEvent.change(screen.getByLabelText("ID do fornecedor no Tiny"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar ID do fornecedor no Tiny" }));
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledWith(null));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Editar ID do fornecedor no Tiny" })).toBeInTheDocument(),
+    );
+  });
+
+  it("valor não numérico não dispara a mutation e mostra erro", () => {
+    const mutateAsync = vi.fn();
+    vi.mocked(hooks.useAtualizarTinyFornecedorId).mockReturnValue(mutacaoParada({ mutateAsync }));
+    renderFornecedor({ ...CREDENCIAL_XBZ, tiny_fornecedor_id: null });
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar ID do fornecedor no Tiny" }));
+    fireEvent.change(screen.getByLabelText("ID do fornecedor no Tiny"), { target: { value: "abc" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar ID do fornecedor no Tiny" }));
+
+    expect(mutateAsync).not.toHaveBeenCalled();
+    const form = screen.getByLabelText("ID do fornecedor no Tiny").closest("form")!;
+    expect(within(form).getByRole("alert")).toHaveTextContent(/apenas números/i);
+  });
+
+  it("o form do id é independente do form de credenciais (não altera credenciais)", async () => {
+    const credencialMutateAsync = vi.fn();
+    const idMutateAsync = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(hooks.useAtualizarCredencial).mockReturnValue(mutacaoParada({ mutateAsync: credencialMutateAsync }));
+    vi.mocked(hooks.useAtualizarTinyFornecedorId).mockReturnValue(mutacaoParada({ mutateAsync: idMutateAsync }));
+    renderFornecedor({ ...CREDENCIAL_XBZ, tiny_fornecedor_id: null });
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar ID do fornecedor no Tiny" }));
+    fireEvent.change(screen.getByLabelText("ID do fornecedor no Tiny"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar ID do fornecedor no Tiny" }));
+
+    await waitFor(() => expect(idMutateAsync).toHaveBeenCalledWith(1));
+    expect(credencialMutateAsync).not.toHaveBeenCalled();
+  });
 });
 
 describe("carga inicial dispara a sincronização de verdade (hook real + fetch mockado)", () => {
@@ -660,11 +742,12 @@ describe("persistência das credenciais pelo BFF", () => {
 
   const credencialAusente: CredencialFornecedorResposta = {
     fornecedor: "xbz", ativo: false, configurado: false,
-    campos_mascarados: { cnpj: null, token: null }, criado_em: null,
+    campos_mascarados: { cnpj: null, token: null }, tiny_fornecedor_id: null, criado_em: null,
   };
   const credencialOutroFornecedor: CredencialFornecedorResposta = {
     fornecedor: "asia", ativo: true, configurado: true,
     campos_mascarados: { api_key: "••••••••111", secret_key: "••••••••222" },
+    tiny_fornecedor_id: null,
     criado_em: "2026-01-01T00:00:00Z",
   };
   const respostaMascarada: CredencialFornecedorResposta = {

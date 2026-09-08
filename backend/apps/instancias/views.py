@@ -74,6 +74,7 @@ from .serializers import (
     InstanciaListagemSerializer,
     InstanciaSerializer,
     SincronizarRespostaSerializer,
+    TinyFornecedorIdEntradaSerializer,
 )
 from .tiny_oauth import TinyOAuthError, montar_url_autorizacao, montar_url_callback, trocar_code_por_token
 
@@ -290,6 +291,39 @@ class CredencialFornecedorDetailView(APIView):
         return Response(CredencialFornecedorRespostaSerializer(dados).data)
 
 
+class TinyFornecedorIdView(APIView):
+    """
+    PUT .../fornecedores/<fornecedor>/tiny-fornecedor-id/ — define ou limpa
+    (`null`) o id do contato-fornecedor correspondente no Tiny desta
+    instância. Separado do endpoint de credenciais de propósito: não é
+    segredo e um PUT de credenciais nunca deve tocá-lo (e vice-versa).
+    """
+
+    @extend_schema(
+        request=TinyFornecedorIdEntradaSerializer, responses=CredencialFornecedorRespostaSerializer
+    )
+    def put(self, request, slug, fornecedor):
+        instancia = _obter_instancia_ou_404(slug)
+        if fornecedor not in CAMPOS_POR_FORNECEDOR:
+            return Response(
+                {"detail": f"Fornecedor '{fornecedor}' desconhecido."}, status=status.HTTP_404_NOT_FOUND
+            )
+
+        entrada = TinyFornecedorIdEntradaSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+
+        # `defaults` só toca `tiny_fornecedor_id` — `credenciais`/`ativo` de uma
+        # linha já existente ficam intactos.
+        credencial, _criada = CredencialFornecedor.objects.update_or_create(
+            instancia=instancia,
+            fornecedor=fornecedor,
+            defaults={"tiny_fornecedor_id": entrada.validated_data["tiny_fornecedor_id"]},
+        )
+
+        dados = CredencialFornecedorRespostaSerializer.montar(fornecedor, credencial)
+        return Response(CredencialFornecedorRespostaSerializer(dados).data)
+
+
 class CadenciasFornecedorView(APIView):
     """GET .../cadencias/ — lista as 4, com defaults quando ainda não configurada."""
 
@@ -400,7 +434,7 @@ class SincronizarFornecedorView(APIView):
         )
 
 
-def _pronta_para_cadastro_tiny(instancia):
+def _pronta_para_cadastro_tiny(instancia, fornecedor):
     """(pronta, motivo) — mesmas checagens do management command, sem tocar no Tiny."""
     if not instancia.access_token:
         return False, "A instância não está conectada ao Tiny."
@@ -411,6 +445,16 @@ def _pronta_para_cadastro_tiny(instancia):
         faltando.append("unidade de medida padrão")
     if faltando:
         return False, f"Configure a {' e a '.join(faltando)} do Tiny antes de cadastrar."
+    tem_id = (
+        CredencialFornecedor.objects.filter(instancia=instancia, fornecedor=fornecedor)
+        .exclude(tiny_fornecedor_id__isnull=True)
+        .exists()
+    )
+    if not tem_id:
+        return False, (
+            f"Configure o \"ID do fornecedor no Tiny\" de {dict(Fornecedor.choices).get(fornecedor, fornecedor)} "
+            "em Instância › Fornecedores antes de cadastrar."
+        )
     return True, ""
 
 
@@ -430,7 +474,7 @@ class CadastroTinyPreviewView(APIView):
             )
 
         estimativa = estimar_cadastro(instancia, fornecedor)
-        pronta, motivo = _pronta_para_cadastro_tiny(instancia)
+        pronta, motivo = _pronta_para_cadastro_tiny(instancia, fornecedor)
         aberta = execucao_cadastro_tiny_aberta(instancia, fornecedor)
         return Response(
             CadastroTinyPreviewSerializer(
@@ -484,7 +528,7 @@ class CadastrarProdutosTinyView(APIView):
                 {"detail": f"Fornecedor '{fornecedor}' desconhecido."}, status=status.HTTP_404_NOT_FOUND
             )
 
-        pronta, motivo = _pronta_para_cadastro_tiny(instancia)
+        pronta, motivo = _pronta_para_cadastro_tiny(instancia, fornecedor)
         if not pronta:
             return Response({"detail": motivo}, status=status.HTTP_400_BAD_REQUEST)
 

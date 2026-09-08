@@ -219,9 +219,14 @@ STATUS_INSTANCIA_CHOICES = Instancia.Status.choices
 
 class CredencialFornecedor(models.Model):
     """
-    Credenciais de um fornecedor para uma instância. Cada fornecedor tem um
-    conjunto de chaves diferente (ver samples/RELATORIO.md), por isso
-    `credenciais` é um JSON livre em vez de colunas fixas.
+    Credenciais e identificadores de um fornecedor para uma instância. Cada
+    fornecedor tem um conjunto de chaves diferente (ver samples/RELATORIO.md),
+    por isso `credenciais` é um JSON livre em vez de colunas fixas.
+
+    `tiny_fornecedor_id` NÃO é credencial (não é segredo, não é mascarado): é
+    o id do contato/fornecedor correspondente NO Tiny **desta instância** —
+    cada instância é uma conta Tiny diferente, então esse id é sempre
+    específico do par (instância, fornecedor) e nunca fixo no código.
     """
 
     instancia = models.ForeignKey(
@@ -233,6 +238,14 @@ class CredencialFornecedor(models.Model):
         blank=True,
         help_text="Ex.: xbz={cnpj, token}; asia={api_key, secret_key}; "
         "somarcas={usuario, senha, estado}; spot={access_key}.",
+    )
+    tiny_fornecedor_id = models.BigIntegerField(
+        null=True,
+        blank=True,
+        help_text="Id do contato/fornecedor correspondente no Tiny desta instância "
+        "(payload de criação de produto: fornecedores[].id). Específico por "
+        "(instância, fornecedor) — nunca fixo no código. Enquanto nulo, o cadastro "
+        "de novos produtos desse fornecedor no Tiny fica bloqueado.",
     )
     ativo = models.BooleanField(default=True)
     criado_em = models.DateTimeField(auto_now_add=True)

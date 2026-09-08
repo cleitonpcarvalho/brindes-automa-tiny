@@ -21,6 +21,7 @@ from ...tiny_sync import (
     marcar_cadastrada,
     marcar_erro,
     montar_payload_produto,
+    tiny_fornecedor_id_de,
 )
 
 # Rótulos de UI das ações — o comando imprime estes; a lógica de decisão
@@ -127,10 +128,23 @@ class Command(BaseCommand):
 
         contagem = {ACAO_CRIAR: 0, ACAO_VINCULAR: 0, ACAO_BLOQUEADO: 0, ACAO_JA_CADASTRADO: 0, "erro": 0}
         sem_ncm = 0
+        # Id do contato-fornecedor no Tiny, resolvido UMA vez por fornecedor
+        # (a fila vem ordenada por fornecedor) — nunca uma consulta por SKU.
+        tiny_fornecedor_ids: dict[str, int | None] = {}
 
         for variacao in variacoes:
+            fornecedor_da_variacao = variacao.produto.fornecedor if variacao.produto_id else None
+            if fornecedor_da_variacao not in tiny_fornecedor_ids:
+                tiny_fornecedor_ids[fornecedor_da_variacao] = tiny_fornecedor_id_de(
+                    instancia, fornecedor_da_variacao
+                )
             decisao = avaliar_variacao(
-                cliente, instancia, variacao, colisoes, vincular_skus=vincular_skus
+                cliente,
+                instancia,
+                variacao,
+                colisoes,
+                vincular_skus=vincular_skus,
+                tiny_fornecedor_id=tiny_fornecedor_ids[fornecedor_da_variacao],
             )
             self._imprimir_decisao(variacao, decisao, dry_run)
             if decisao.acao == ACAO_CRIAR and not (variacao.ncm or "").strip():

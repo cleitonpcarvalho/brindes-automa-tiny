@@ -420,6 +420,9 @@ class CredencialFornecedorRespostaSerializer(serializers.Serializer):
     ativo = serializers.BooleanField()
     configurado = serializers.BooleanField()
     campos_mascarados = serializers.DictField()
+    # Não é credencial nem segredo: id do contato-fornecedor no Tiny desta
+    # instância. Volta em texto pleno; nulo enquanto não configurado.
+    tiny_fornecedor_id = serializers.IntegerField(allow_null=True)
     criado_em = serializers.DateTimeField(allow_null=True)
 
     @staticmethod
@@ -430,8 +433,20 @@ class CredencialFornecedorRespostaSerializer(serializers.Serializer):
             "ativo": bool(credencial and credencial.ativo),
             "configurado": bool(credencial and credencial.credenciais),
             "campos_mascarados": mascarar_credenciais(fornecedor, credenciais),
+            "tiny_fornecedor_id": credencial.tiny_fornecedor_id if credencial else None,
             "criado_em": credencial.criado_em if credencial else None,
         }
+
+
+class TinyFornecedorIdEntradaSerializer(serializers.Serializer):
+    """
+    Corpo do PUT .../fornecedores/<fornecedor>/tiny-fornecedor-id/ — define ou
+    limpa (enviando `null`) o id do contato-fornecedor no Tiny desta
+    instância. Endpoint separado das credenciais de propósito: não é segredo,
+    não passa por mascaramento, e um PUT de credenciais nunca o toca.
+    """
+
+    tiny_fornecedor_id = serializers.IntegerField(allow_null=True, min_value=1)
 
 
 class CredencialFornecedorEntradaSerializer(serializers.Serializer):

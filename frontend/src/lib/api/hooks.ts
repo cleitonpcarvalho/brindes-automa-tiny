@@ -445,6 +445,33 @@ export function useAtualizarCredencial(slug: string, fornecedor: FornecedorEnum)
   });
 }
 
+/**
+ * Salva/limpa o "ID do fornecedor no Tiny" — id do contato-fornecedor na conta
+ * Tiny da instância. Não é credencial: endpoint próprio, valor em texto pleno.
+ * Enviar `null` limpa. Sem ele o cadastro de novos produtos fica bloqueado.
+ */
+export function useAtualizarTinyFornecedorId(slug: string, fornecedor: FornecedorEnum) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (tiny_fornecedor_id: number | null) =>
+      apiClient.put<CredencialFornecedorResposta>(
+        `/instancias/${slug}/fornecedores/${fornecedor}/tiny-fornecedor-id/`,
+        { tiny_fornecedor_id },
+      ),
+    onSuccess: async (credencialSalva) => {
+      await queryClient.cancelQueries({ queryKey: ["instancias", "credenciais", slug], exact: true });
+      queryClient.setQueryData<CredencialFornecedorResposta[]>(
+        ["instancias", "credenciais", slug],
+        (credenciais) => credenciais?.map((credencial) =>
+          credencial.fornecedor === fornecedor ? credencialSalva : credencial),
+      );
+      queryClient.invalidateQueries({ queryKey: ["instancias", "credenciais", slug] });
+      queryClient.invalidateQueries({ queryKey: ["instancias", "detalhe", slug] });
+      queryClient.invalidateQueries({ queryKey: ["instancias", "cadastro-tiny", "preview", slug] });
+    },
+  });
+}
+
 /** Aba Fornecedores — cadência (intervalo/ativo) dos 4 fornecedores, com defaults quando ainda não configurada. */
 export function useCadencias(slug: string) {
   return useQuery({

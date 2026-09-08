@@ -182,3 +182,95 @@ class CredencialFornecedorDetailPutTests(TestCase):
             content_type="application/json",
         )
         self.assertEqual(resposta.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_put_credenciais_nao_apaga_o_tiny_fornecedor_id(self):
+        CredencialFornecedor.objects.create(
+            instancia=self.instancia, fornecedor="xbz", tiny_fornecedor_id=752131325
+        )
+
+        resposta = self.client.put(
+            f"/api/instancias/{self.instancia.slug}/credenciais/xbz/",
+            {"credenciais": {"cnpj": "1", "token": "abc"}},
+            content_type="application/json",
+        )
+
+        self.assertEqual(resposta.status_code, status.HTTP_200_OK)
+        self.assertEqual(resposta.data["tiny_fornecedor_id"], 752131325)
+        credencial = CredencialFornecedor.objects.get(instancia=self.instancia, fornecedor="xbz")
+        self.assertEqual(credencial.tiny_fornecedor_id, 752131325)
+        self.assertEqual(credencial.credenciais["cnpj"], "1")
+
+
+class TinyFornecedorIdViewTests(TestCase):
+    def setUp(self):
+        self.client = _client_autenticado()
+        self.instancia = Instancia.objects.create(nome="Loja Tiny Fornecedor Id")
+
+    def _url(self, fornecedor="asia"):
+        return f"/api/instancias/{self.instancia.slug}/fornecedores/{fornecedor}/tiny-fornecedor-id/"
+
+    def test_lista_de_credenciais_expoe_o_campo(self):
+        CredencialFornecedor.objects.create(
+            instancia=self.instancia, fornecedor="asia", tiny_fornecedor_id=752133514
+        )
+        resposta = self.client.get(f"/api/instancias/{self.instancia.slug}/credenciais/")
+        asia = next(linha for linha in resposta.data if linha["fornecedor"] == "asia")
+        self.assertEqual(asia["tiny_fornecedor_id"], 752133514)
+        somarcas = next(linha for linha in resposta.data if linha["fornecedor"] == "somarcas")
+        self.assertIsNone(somarcas["tiny_fornecedor_id"])
+
+    def test_put_define_o_id_criando_a_linha_se_preciso(self):
+        resposta = self.client.put(
+            self._url("asia"), {"tiny_fornecedor_id": 752133514}, content_type="application/json"
+        )
+        self.assertEqual(resposta.status_code, status.HTTP_200_OK)
+        self.assertEqual(resposta.data["tiny_fornecedor_id"], 752133514)
+        credencial = CredencialFornecedor.objects.get(instancia=self.instancia, fornecedor="asia")
+        self.assertEqual(credencial.tiny_fornecedor_id, 752133514)
+
+    def test_put_null_limpa_o_id_sem_apagar_as_credenciais(self):
+        CredencialFornecedor.objects.create(
+            instancia=self.instancia,
+            fornecedor="asia",
+            credenciais={"api_key": "a", "secret_key": "b"},
+            ativo=True,
+            tiny_fornecedor_id=752133514,
+        )
+
+        resposta = self.client.put(
+            self._url("asia"), {"tiny_fornecedor_id": None}, content_type="application/json"
+        )
+
+        self.assertEqual(resposta.status_code, status.HTTP_200_OK)
+        self.assertIsNone(resposta.data["tiny_fornecedor_id"])
+        credencial = CredencialFornecedor.objects.get(instancia=self.instancia, fornecedor="asia")
+        self.assertIsNone(credencial.tiny_fornecedor_id)
+        self.assertEqual(credencial.credenciais, {"api_key": "a", "secret_key": "b"})
+        self.assertTrue(credencial.ativo)
+
+    def test_put_rejeita_valor_nao_inteiro(self):
+        resposta = self.client.put(
+            self._url("asia"), {"tiny_fornecedor_id": "abc"}, content_type="application/json"
+        )
+        self.assertEqual(resposta.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_put_isolado_por_instancia_e_fornecedor(self):
+        outra = Instancia.objects.create(nome="Outra")
+        CredencialFornecedor.objects.create(
+            instancia=outra, fornecedor="asia", tiny_fornecedor_id=999
+        )
+
+        self.client.put(
+            self._url("asia"), {"tiny_fornecedor_id": 752133514}, content_type="application/json"
+        )
+
+        self.assertEqual(
+            CredencialFornecedor.objects.get(instancia=outra, fornecedor="asia").tiny_fornecedor_id,
+            999,
+        )
+
+    def test_put_fornecedor_desconhecido_404(self):
+        resposta = self.client.put(
+            self._url("inexistente"), {"tiny_fornecedor_id": 1}, content_type="application/json"
+        )
+        self.assertEqual(resposta.status_code, status.HTTP_404_NOT_FOUND)

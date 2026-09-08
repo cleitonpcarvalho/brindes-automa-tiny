@@ -40,6 +40,7 @@ export type EventoLog = components["schemas"]["EventoLogEnum"];
 
 export type CredencialFornecedorResposta = components["schemas"]["CredencialFornecedorResposta"];
 export type CredencialFornecedorEntrada = components["schemas"]["CredencialFornecedorEntrada"];
+export type TinyFornecedorIdEntrada = components["schemas"]["TinyFornecedorIdEntrada"];
 export type CadenciaFornecedor = components["schemas"]["CadenciaFornecedor"];
 export type PatchedCadenciaFornecedor = components["schemas"]["PatchedCadenciaFornecedor"];
 export type SincronizarResposta = components["schemas"]["SincronizarResposta"];

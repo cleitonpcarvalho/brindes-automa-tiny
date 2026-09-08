@@ -10,7 +10,7 @@ from rest_framework import status
 from apps.catalogo.models import Produto, StatusVariacao, Variacao
 from apps.sincronizacao.models import Execucao, StatusExecucao, TipoExecucao
 
-from ..models import Instancia
+from ..models import CredencialFornecedor, Instancia
 from .test_views import _client_autenticado
 
 
@@ -44,7 +44,16 @@ def _variacao(instancia, sku, *, fornecedor="xbz", **kwargs):
     )
     dados = {"produto": produto, "sku": sku, "nome": f"V {sku}", "preco": Decimal("10.00"), "estoque": 5}
     dados.update(kwargs)
-    return Variacao.objects.create(**dados)
+    variacao = Variacao.objects.create(**dados)
+    _com_tiny_fornecedor_id(instancia, fornecedor)
+    return variacao
+
+
+def _com_tiny_fornecedor_id(instancia, fornecedor, tiny_id=700_000_000):
+    """Sem o id do contato-fornecedor no Tiny o cadastro fica bloqueado no preview."""
+    CredencialFornecedor.objects.update_or_create(
+        instancia=instancia, fornecedor=fornecedor, defaults={"tiny_fornecedor_id": tiny_id}
+    )
 
 
 class CadastroTinyPreviewTests(TestCase):
@@ -90,11 +99,26 @@ class CadastroTinyPreviewTests(TestCase):
         resp = self.client.get(self._url("inexistente"))
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
+    def test_preview_bloqueia_quando_falta_o_id_do_fornecedor_no_tiny(self):
+        # variação existe, mas sem CredencialFornecedor.tiny_fornecedor_id
+        produto = Produto.objects.create(
+            instancia=self.instancia, fornecedor="xbz", codigo_pai="p", nome="P"
+        )
+        Variacao.objects.create(
+            produto=produto, sku="SKU-1", nome="V", preco=Decimal("10.00"), estoque=5
+        )
+        resp = self.client.get(self._url("xbz"))
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertFalse(resp.data["pronta_para_cadastro"])
+        self.assertIn("ID do fornecedor no Tiny", resp.data["motivo_nao_pronta"])
+
 
 class CadastrarProdutosTinyViewTests(TestCase):
     def setUp(self):
         self.client = _client_autenticado()
         self.instancia = _instancia_pronta()
+        for fornecedor in ("xbz", "asia"):
+            _com_tiny_fornecedor_id(self.instancia, fornecedor)
 
     def _url(self, fornecedor="xbz"):
         return f"/api/instancias/{self.instancia.slug}/fornecedores/{fornecedor}/cadastro-tiny/"
@@ -162,6 +186,19 @@ class CadastrarProdutosTinyViewTests(TestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         mock_task.delay.assert_not_called()
+
+    @patch("apps.instancias.views.cadastrar_produtos_tiny_task")
+    def test_400_quando_falta_o_id_do_fornecedor_no_tiny(self, mock_task):
+        CredencialFornecedor.objects.filter(
+            instancia=self.instancia, fornecedor="somarcas"
+        ).delete()
+        resp = self.client.post(self._url("somarcas"))
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("ID do fornecedor no Tiny", resp.data["detail"])
+        mock_task.delay.assert_not_called()
+        self.assertFalse(
+            Execucao.objects.filter(instancia=self.instancia, fornecedor="somarcas").exists()
+        )
 
     @patch("apps.instancias.views.cadastrar_produtos_tiny_task")
     def test_isolamento_entre_instancias_na_trava_de_concorrencia(self, mock_task):

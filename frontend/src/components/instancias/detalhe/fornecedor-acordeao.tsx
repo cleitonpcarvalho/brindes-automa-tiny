@@ -10,6 +10,7 @@ import { formatarNumero, formatarTempoRelativo } from "@/lib/format"
 import { DOT_POR_COR, ROTULO_FORNECEDOR, ROTULO_POR_COR } from "../cor-fornecedor"
 import { badgeStatus, ROTULO_TIPO } from "./execucao-formato"
 import { FornecedorCredenciaisForm } from "./fornecedor-credenciais-form"
+import { FornecedorTinyIdForm } from "./fornecedor-tiny-id-form"
 import { FornecedorCadenciaForm } from "./fornecedor-cadencia-form"
 import { FornecedorCotaCallout } from "./fornecedor-cota-callout"
 import { FornecedorCadastroTiny } from "./fornecedor-cadastro-tiny"
@@ -147,6 +148,9 @@ export function FornecedorAcordeao({
           <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
             <FornecedorCredenciaisForm fornecedor={fornecedor} credencial={credencial} slug={slug} />
             <FornecedorCadenciaForm fornecedor={fornecedor} cadencia={cadencia} slug={slug} />
+          </div>
+          <div className="mt-6 border-t border-border pt-6">
+            <FornecedorTinyIdForm fornecedor={fornecedor} credencial={credencial} slug={slug} />
           </div>
           {fornecedor === "xbz" && <FornecedorCotaCallout />}
           <div className="mt-6">

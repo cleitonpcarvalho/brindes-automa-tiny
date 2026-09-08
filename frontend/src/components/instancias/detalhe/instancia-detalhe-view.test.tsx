@@ -21,6 +21,7 @@ vi.mock("@/lib/api/hooks", () => ({
   useAutorizar: vi.fn(),
   useDesconectar: vi.fn(),
   useAtualizarCredencial: vi.fn(),
+  useAtualizarTinyFornecedorId: vi.fn(),
   useAtualizarCadencia: vi.fn(),
   useCadastroTinyPreview: vi.fn(),
   useCadastrarProdutosTiny: vi.fn(),
@@ -106,6 +107,7 @@ describe("InstanciaDetalheView", () => {
         ativo: false,
         configurado: false,
         campos_mascarados: {},
+        tiny_fornecedor_id: null,
         criado_em: null,
       })),
       isLoading: false,
@@ -122,6 +124,7 @@ describe("InstanciaDetalheView", () => {
     vi.mocked(hooks.useAutorizar).mockReturnValue(mutacaoParada());
     vi.mocked(hooks.useDesconectar).mockReturnValue(mutacaoParada());
     vi.mocked(hooks.useAtualizarCredencial).mockReturnValue(mutacaoParada());
+    vi.mocked(hooks.useAtualizarTinyFornecedorId).mockReturnValue(mutacaoParada());
     vi.mocked(hooks.useAtualizarCadencia).mockReturnValue(mutacaoParada());
     vi.mocked(hooks.useCadastrarProdutosTiny).mockReturnValue(mutacaoParada());
     vi.mocked(hooks.usePausarCadastroTiny).mockReturnValue(mutacaoParada());

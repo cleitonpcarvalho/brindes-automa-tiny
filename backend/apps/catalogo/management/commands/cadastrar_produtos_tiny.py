@@ -157,11 +157,13 @@ class Command(BaseCommand):
             try:
                 if decisao.acao == ACAO_CRIAR:
                     tiny_id = criar_produto_no_tiny(cliente, variacao, decisao.payload)
-                    marcar_cadastrada(variacao, tiny_id, preco_publicado=variacao.preco)
+                    marcar_cadastrada(
+                        variacao, tiny_id, preco_custo_publicado=variacao.preco_custo_tiny
+                    )
                     contagem[ACAO_CRIAR] += 1
                 elif decisao.acao == ACAO_VINCULAR:
                     marcar_cadastrada(
-                        variacao, decisao.tiny_existente["id"], preco_publicado=None
+                        variacao, decisao.tiny_existente["id"], preco_custo_publicado=None
                     )
                     contagem[ACAO_VINCULAR] += 1
             except Exception as exc:  # TinySyncError incluso — uma variação ruim não trava o lote

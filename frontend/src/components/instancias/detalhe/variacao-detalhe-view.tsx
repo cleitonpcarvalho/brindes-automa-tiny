@@ -171,7 +171,8 @@ function DadosTecnicos({ dados }: { dados: VariacaoDetalhe }) {
       "Estoque sincronizado no Tiny",
       dados.estoque_tiny_sincronizado == null ? TRACO : numero.format(dados.estoque_tiny_sincronizado),
     ],
-    ["Preço sincronizado no Tiny", moedaTexto(dados.preco_tiny_sincronizado)],
+    ["Custo sincronizado no Tiny", moedaTexto(dados.preco_custo_tiny_sincronizado)],
+    ["Dados corrigidos no Tiny em", dataTexto(dados.dados_tiny_sincronizados_em)],
     ["Imagens confirmadas no Tiny", listaDeTextos(dados.imagens_tiny_sincronizadas).length],
     ["Hash do conteúdo", dados.hash_conteudo ? <code className="text-code-inline">{dados.hash_conteudo}</code> : TRACO],
   ]

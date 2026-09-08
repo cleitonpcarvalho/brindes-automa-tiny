@@ -1,5 +1,6 @@
 import hashlib
 import json
+from decimal import Decimal
 
 from django.db import models
 
@@ -169,16 +170,25 @@ class Variacao(models.Model):
         "diferente de `estoque` (ou nulo), o comando de atualização de estoque "
         "considera esta variação pendente de sincronização.",
     )
-    preco_tiny_sincronizado = models.DecimalField(
+    preco_custo_tiny_sincronizado = models.DecimalField(
         max_digits=10,
         decimal_places=2,
         null=True,
         blank=True,
-        help_text="Último preço de VENDA (precos.preco) efetivamente publicado no "
-        "cadastro do produto no Tiny. Enquanto for diferente de `preco` (ou nulo), o "
-        "comando `sincronizar_preco_tiny` considera esta variação pendente de "
-        "sincronização de preço. NÃO confundir com o precoUnitario do movimento de "
-        "estoque (que é custo do balanço, não preço de venda).",
+        help_text="Último `precos.precoCusto` efetivamente publicado no cadastro do "
+        "produto no Tiny — igual ao `preco` do fornecedor no momento da publicação. "
+        "Enquanto for diferente de `preco` (ou nulo), o custo no Tiny está "
+        "desatualizado (comando `corrigir_dados_produto_tiny`). Regra definitiva "
+        "(confirmada pelo cliente em 2026-09-08): o valor do fornecedor é CUSTO; o "
+        "preço de VENDA no Tiny fica sempre zerado. Era `preco_tiny_sincronizado`.",
+    )
+    dados_tiny_sincronizados_em = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Última vez que `corrigir_dados_produto_tiny` confirmou no Tiny o "
+        "pacote da regra definitiva deste SKU (descricaoComplementar = Produto.descricao, "
+        "fornecedores, precoCusto = preco, preco/precoPromocional = 0). Nulo = ainda não "
+        "corrigido. Marcador de idempotência/retomada do backfill.",
     )
     imagens_tiny_sincronizadas = models.JSONField(
         default=list,
@@ -206,15 +216,25 @@ class Variacao(models.Model):
     def __str__(self):
         return f"{self.sku} · {self.nome}"
 
+    #: Preço de VENDA a mandar para o Tiny. Regra definitiva do cliente
+    #: (confirmada em 2026-09-08): o valor que vem do fornecedor é CUSTO, e o
+    #: preço de venda no Tiny fica SEMPRE zerado (R$ 0,00). Constante — não um
+    #: cálculo — mas segue sendo o ponto ÚNICO de verdade: se um dia entrar
+    #: markup/precificação, é aqui, e o teste `RegraPrecoDeCustoTests` quebra
+    #: de propósito para forçar a decisão consciente.
+    PRECO_VENDA_TINY = Decimal("0")
+
     @property
     def preco_venda_tiny(self):
+        """Preço de venda no Tiny — sempre 0 (ver `PRECO_VENDA_TINY`)."""
+        return self.PRECO_VENDA_TINY
+
+    @property
+    def preco_custo_tiny(self):
         """
-        Regra do cliente nº 4: o preço cadastrado no Tiny é sempre o preço do
-        fornecedor, sem margem. Este alias existe para que qualquer código
-        futuro que precise "o preço a mandar pro Tiny" tenha um único ponto
-        de verdade — se um dia entrar markup, é aqui que ele seria aplicado,
-        e o teste desta regra quebraria de propósito para forçar a decisão
-        consciente.
+        Preço de CUSTO a mandar para o Tiny (`precos.precoCusto` no cadastro;
+        `precoUnitario` do lançamento de balanço de estoque): o preço do
+        fornecedor, sem margem. Ponto único de verdade do custo.
         """
         return self.preco
 

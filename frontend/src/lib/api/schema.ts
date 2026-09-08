@@ -1500,9 +1500,14 @@ export interface components {
             estoque_tiny_sincronizado?: number | null;
             /**
              * Format: decimal
-             * @description Último preço de VENDA (precos.preco) efetivamente publicado no cadastro do produto no Tiny. Enquanto for diferente de `preco` (ou nulo), o comando `sincronizar_preco_tiny` considera esta variação pendente de sincronização de preço. NÃO confundir com o precoUnitario do movimento de estoque (que é custo do balanço, não preço de venda).
+             * @description Último `precos.precoCusto` efetivamente publicado no cadastro do produto no Tiny — igual ao `preco` do fornecedor no momento da publicação. Enquanto for diferente de `preco` (ou nulo), o custo no Tiny está desatualizado (comando `corrigir_dados_produto_tiny`). Regra definitiva (confirmada pelo cliente em 2026-09-08): o valor do fornecedor é CUSTO; o preço de VENDA no Tiny fica sempre zerado. Era `preco_tiny_sincronizado`.
              */
-            preco_tiny_sincronizado?: string | null;
+            preco_custo_tiny_sincronizado?: string | null;
+            /**
+             * Format: date-time
+             * @description Última vez que `corrigir_dados_produto_tiny` confirmou no Tiny o pacote da regra definitiva deste SKU (descricaoComplementar = Produto.descricao, fornecedores, precoCusto = preco, preco/precoPromocional = 0). Nulo = ainda não corrigido. Marcador de idempotência/retomada do backfill.
+             */
+            dados_tiny_sincronizados_em?: string | null;
             /** @description URLs de imagem que o comando `sincronizar_imagens_tiny` já confirmou estarem nos anexos do produto no Tiny. Serve de marcador para não reenviar/duplicar em reexecuções; a verificação real é sempre feita contra o GET /produtos/{id} antes de qualquer POST de anexo. */
             imagens_tiny_sincronizadas?: unknown;
             hash_conteudo?: string;

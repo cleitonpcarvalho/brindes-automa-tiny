@@ -129,7 +129,8 @@ class VariacaoDetalheSerializer(serializers.ModelSerializer):
             "criado_em",
             "atualizado_em",
             "estoque_tiny_sincronizado",
-            "preco_tiny_sincronizado",
+            "preco_custo_tiny_sincronizado",
+            "dados_tiny_sincronizados_em",
             "imagens_tiny_sincronizadas",
             "hash_conteudo",
         ]

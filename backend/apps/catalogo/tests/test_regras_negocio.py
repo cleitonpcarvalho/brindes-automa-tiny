@@ -165,15 +165,25 @@ class RegraEstoqueZeroFicaAguardandoTests(TestCase):
         self.assertEqual(variacao.status, StatusVariacao.DESCONTINUADO)
 
 
-class RegraPrecoSemMargemTests(TestCase):
-    """Regra nº 4 (cliente): o preço gravado é o preço do fornecedor, sem margem."""
+class RegraPrecoDeCustoTests(TestCase):
+    """
+    Regra DEFINITIVA (cliente, 2026-09-08): o valor que vem do fornecedor é
+    PREÇO DE CUSTO; o preço de VENDA no Tiny fica sempre zerado. Guarda contra
+    regressão da regra antiga (que mandava o custo como preço de venda).
+    """
 
-    def test_preco_venda_tiny_e_identico_ao_preco_do_fornecedor(self):
+    def test_preco_venda_tiny_e_sempre_zero(self):
         instancia = _instancia()
         produto = _produto(instancia)
         variacao = _variacao(produto, preco=Decimal("29.90"))
-        self.assertEqual(variacao.preco_venda_tiny, Decimal("29.90"))
-        self.assertEqual(variacao.preco_venda_tiny, variacao.preco)
+        self.assertEqual(variacao.preco_venda_tiny, Decimal("0"))
+
+    def test_preco_custo_tiny_e_identico_ao_preco_do_fornecedor(self):
+        instancia = _instancia()
+        produto = _produto(instancia)
+        variacao = _variacao(produto, preco=Decimal("29.90"))
+        self.assertEqual(variacao.preco_custo_tiny, Decimal("29.90"))
+        self.assertEqual(variacao.preco_custo_tiny, variacao.preco)
 
     def test_preco_nao_sofre_nenhuma_transformacao_ao_salvar(self):
         instancia = _instancia()

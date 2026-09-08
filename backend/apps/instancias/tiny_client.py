@@ -198,13 +198,16 @@ class TinyApiClient:
 
     def atualizar_preco_venda(self, id_produto, *, preco) -> dict:
         """
-        Atualiza SOMENTE o preço de VENDA de um produto, pelo endpoint
-        específico da API v3: `PUT /produtos/{idProduto}/preco`.
+        Atualiza SOMENTE o preço de VENDA de um produto (`PUT /produtos/{id}/preco`,
+        corpo `{"preco": <valor>}`).
 
-        Envia apenas `{"preco": <valor>}` — o preço do fornecedor sem margem
-        (regra do cliente nº 4). NÃO mexe em descrição/NCM/dimensões e NÃO é
-        o `precoUnitario` de um movimento de estoque (que é custo de
-        balanço, ver `atualizar_estoque`).
+        ATENÇÃO à regra definitiva do cliente (2026-09-08): o valor do
+        fornecedor é CUSTO e o preço de venda no Tiny fica sempre 0 — nenhum
+        fluxo chama este método de rotina. Ele fica como wrapper fiel do
+        endpoint (útil para forçar venda=0 pontualmente). O CUSTO (`precoCusto`)
+        NÃO passa por aqui — este endpoint não aceita `precoCusto`; para
+        custo/descrição/fornecedor use `atualizar_produto` (comando
+        `corrigir_dados_produto_tiny`).
         """
         resposta = self.put(f"/produtos/{id_produto}/preco", json={"preco": float(preco)})
         self._levantar_se_erro(resposta)
@@ -216,11 +219,8 @@ class TinyApiClient:
         um delta).
 
         `precoUnitario` aqui é o CUSTO do lançamento de balanço exigido por
-        esse endpoint — NÃO é o preço de venda do produto (`precos.preco`,
-        que se ajusta com `atualizar_preco_venda` / comando
-        `sincronizar_preco_tiny`). Mandamos o preço do fornecedor sem margem
-        nos dois lugares porque não há outro "custo" disponível, mas são
-        campos e semânticas diferentes.
+        esse endpoint — coerente com a regra definitiva (o valor do fornecedor
+        é custo). Quem chama manda `Variacao.preco_custo_tiny` (= `Variacao.preco`).
         """
         resposta = self.post(
             f"/estoque/{id_produto}",

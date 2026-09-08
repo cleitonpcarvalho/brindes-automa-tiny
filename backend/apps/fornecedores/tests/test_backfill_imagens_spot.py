@@ -104,7 +104,7 @@ class BackfillImagensSpotTests(TestCase):
             ncm="96081000",
             cor="Azul",
             estoque_tiny_sincronizado=7,
-            preco_tiny_sincronizado="4.50",
+            preco_custo_tiny_sincronizado="4.50",
         )
         antes = Variacao.objects.values(
             "status",
@@ -116,7 +116,7 @@ class BackfillImagensSpotTests(TestCase):
             "hash_conteudo",
             "payload_bruto",
             "estoque_tiny_sincronizado",
-            "preco_tiny_sincronizado",
+            "preco_custo_tiny_sincronizado",
         ).get(pk=variacao.pk)
 
         self._run()

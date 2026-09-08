@@ -168,7 +168,7 @@ class BackfillNcmSpotTests(TestCase):
             imagens=["https://spot.example/11110_105.jpg"],
             imagens_tiny_sincronizadas=["https://spot.example/11110_105.jpg"],
             estoque_tiny_sincronizado=7,
-            preco_tiny_sincronizado="4.50",
+            preco_custo_tiny_sincronizado="4.50",
         )
         campos = [
             "status",
@@ -179,7 +179,7 @@ class BackfillNcmSpotTests(TestCase):
             "imagens",
             "imagens_tiny_sincronizadas",
             "estoque_tiny_sincronizado",
-            "preco_tiny_sincronizado",
+            "preco_custo_tiny_sincronizado",
             "hash_conteudo",
             "payload_bruto",
             "atributos",

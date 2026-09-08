@@ -45,7 +45,9 @@ class Command(BaseCommand):
                 cliente.atualizar_estoque(
                     int(variacao.tiny_id),
                     quantidade=variacao.estoque,
-                    preco_unitario=variacao.preco_venda_tiny,
+                    # `precoUnitario` do lançamento de Balanço é CUSTO — usa o
+                    # preço do fornecedor (NÃO o de venda, que agora é sempre 0).
+                    preco_unitario=variacao.preco_custo_tiny,
                 )
                 variacao.estoque_tiny_sincronizado = variacao.estoque
                 variacao.ultimo_erro = ""

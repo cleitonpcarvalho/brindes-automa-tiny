@@ -142,7 +142,9 @@ class MirrorOnlyPersistenciaERegrasTests(TestCase):
         variacao = Variacao.objects.get(sku="AS-00610")
         self.assertEqual(variacao.produto.instancia, self.instancia)
         self.assertEqual(variacao.preco, Decimal("21.01"))
-        self.assertEqual(variacao.preco_venda_tiny, variacao.preco)  # regra nº 4: sem margem
+        # regra definitiva (2026-09-08): o valor do fornecedor é CUSTO, sem margem
+        self.assertEqual(variacao.preco_custo_tiny, variacao.preco)
+        self.assertEqual(variacao.preco_venda_tiny, Decimal("0"))  # venda sempre zerada
         self.assertEqual(variacao.ncm, "76151000")
         self.assertEqual(variacao.estoque, 1788)
         self.assertEqual(variacao.status, StatusVariacao.PENDENTE)

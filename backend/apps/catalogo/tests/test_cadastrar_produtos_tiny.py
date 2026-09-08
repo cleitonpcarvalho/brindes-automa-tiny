@@ -114,7 +114,7 @@ class CadastroCriaProdutoTests(TestCase):
         self.assertEqual(variacao.status, StatusVariacao.CADASTRADO)
         self.assertEqual(variacao.tiny_id, "924252038")
         self.assertEqual(variacao.ultimo_erro, "")
-        self.assertEqual(variacao.preco_tiny_sincronizado, variacao.preco)
+        self.assertEqual(variacao.preco_custo_tiny_sincronizado, variacao.preco)
 
     @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
     @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
@@ -130,7 +130,8 @@ class CadastroCriaProdutoTests(TestCase):
         self.assertEqual(payload["sku"], "SKU-PAYLOAD")
         self.assertEqual(payload["tipo"], "S")  # produto Simples — uma Variacao, um produto
         self.assertEqual(payload["ncm"], "12345678")
-        self.assertEqual(payload["precos"]["preco"], 19.90)
+        # regra definitiva: o valor do fornecedor é CUSTO; a venda fica zerada
+        self.assertEqual(payload["precos"], {"preco": 0, "precoPromocional": 0, "precoCusto": 19.90})
         self.assertEqual(payload["unidade"], "UN")
         self.assertEqual(payload["origem"], 0)
         # produto nasce no Tiny já com o estoque correto
@@ -172,7 +173,7 @@ class SkuPreexistenteNoTinyTests(TestCase):
         variacao.refresh_from_db()
         self.assertEqual(variacao.tiny_id, "999")
         self.assertEqual(variacao.status, StatusVariacao.CADASTRADO)
-        self.assertIsNone(variacao.preco_tiny_sincronizado)  # não assume o preço de um produto preexistente
+        self.assertIsNone(variacao.preco_custo_tiny_sincronizado)  # não assume o custo de um produto preexistente
         mock_criar.assert_not_called()
 
 
@@ -500,7 +501,7 @@ class RegrasDeElegibilidadePreservadasTests(TestCase):
 
     @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
     @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
-    def test_preco_enviado_e_o_do_fornecedor_sem_margem(self, mock_buscar, mock_criar):
+    def test_custo_enviado_e_o_do_fornecedor_com_venda_zerada(self, mock_buscar, mock_criar):
         instancia = _instancia_pronta()
         variacao = _variacao_pendente(instancia, "SKU-PRECO", preco=Decimal("47.53"))
         mock_buscar.return_value = None
@@ -508,10 +509,13 @@ class RegrasDeElegibilidadePreservadasTests(TestCase):
 
         call_command("cadastrar_produtos_tiny", instancia.slug)
 
-        self.assertEqual(mock_criar.call_args[0][0]["precos"]["preco"], 47.53)
+        precos = mock_criar.call_args[0][0]["precos"]
+        self.assertEqual(precos["precoCusto"], 47.53)  # valor do fornecedor = CUSTO
+        self.assertEqual(precos["preco"], 0)           # venda sempre zerada
+        self.assertEqual(precos["precoPromocional"], 0)
         variacao.refresh_from_db()
-        # criação levou precos.preco = preço do fornecedor -> já marcado como sincronizado
-        self.assertEqual(variacao.preco_tiny_sincronizado, Decimal("47.53"))
+        # criação levou precos.precoCusto = Variacao.preco -> marcador de custo avançou
+        self.assertEqual(variacao.preco_custo_tiny_sincronizado, Decimal("47.53"))
 
 
 def _produto(instancia, fornecedor, codigo_pai, nome="Produto"):
@@ -619,7 +623,7 @@ class DryRunTests(TestCase):
         self.assertIsNone(v.tiny_id)
         self.assertEqual(v.status, StatusVariacao.PENDENTE)
         self.assertIsNone(v.cadastrado_em)
-        self.assertIsNone(v.preco_tiny_sincronizado)
+        self.assertIsNone(v.preco_custo_tiny_sincronizado)
 
     @patch("apps.instancias.tiny_client.requests.request")
     def test_dry_run_nao_persiste_rate_limit_da_conta(self, mock_request):

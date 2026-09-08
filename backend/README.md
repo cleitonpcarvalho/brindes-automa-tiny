@@ -253,8 +253,11 @@ Detalhes e diagrama completo no retorno da conversa que gerou este passo
    rastreado; reverte quando repõe estoque; nunca reabre um `descontinuado`
    nem um já `cadastrado`) — `Variacao.aplicar_regra_de_estoque()` /
    `RegraEstoqueZeroFicaAguardandoTests`.
-4. **Preço gravado é sempre o do fornecedor, sem margem** —
-   `Variacao.preco_venda_tiny` / `RegraPrecoSemMargemTests`.
+4. **Regra definitiva de preço (cliente, 2026-09-08): o valor do fornecedor é
+   CUSTO** — `precos.precoCusto = Variacao.preco` (`Variacao.preco_custo_tiny`);
+   o preço de VENDA no Tiny fica sempre 0 (`Variacao.preco_venda_tiny`).
+   `RegraPrecoDeCustoTests`. O backfill dos já cadastrados é
+   `corrigir_dados_produto_tiny` (substituiu `sincronizar_preco_tiny`).
 5. **Slug imutável a partir do 1º access_token, não da mudança de status** —
    `Instancia.ja_foi_autorizada` (marcador permanente, sobrevive a um
    desconectar) / `apps/instancias/tests/test_models.py::InstanciaSlugTests`.
@@ -323,9 +326,9 @@ Detalhes e diagrama completo no retorno da conversa que gerou este passo
   correspondia ao código; sinalizado nessa hora, sem "corrigir" um bug que
   não existia.
 - **Preço-base do lançamento de estoque**: `atualizar_estoque` manda
-  `precoUnitario` (campo obrigatório do endpoint de Balanço do Tiny) igual
-  ao preço do fornecedor, sem margem — mesma regra do cadastro; não há
-  outro preço "de custo" disponível para usar ali.
+  `precoUnitario` (campo obrigatório do endpoint de Balanço do Tiny) =
+  `Variacao.preco_custo_tiny` (= preço do fornecedor = custo) — coerente com a
+  regra definitiva; NÃO usa o preço de venda (que agora é sempre 0).
 - **`Execucao`/`LogItem` não cobrem os comandos que escrevem no Tiny**:
   `cadastrar_produtos_tiny` e `atualizar_estoque_tiny` registram tudo em
   `Variacao.ultimo_erro` + saída do comando, mas não criam `Execucao` (que

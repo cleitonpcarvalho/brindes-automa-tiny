@@ -398,15 +398,15 @@ def criar_produto_no_tiny(cliente, variacao, payload) -> str:
     return str(tiny_id)
 
 
-def marcar_cadastrada(variacao, tiny_id, *, preco_publicado):
+def marcar_cadastrada(variacao, tiny_id, *, preco_custo_publicado):
     variacao.tiny_id = str(tiny_id)
     variacao.status = StatusVariacao.CADASTRADO
     variacao.cadastrado_em = timezone.now()
     variacao.ultimo_erro = ""
     campos = ["tiny_id", "status", "cadastrado_em", "ultimo_erro", "atualizado_em"]
-    if preco_publicado is not None:
-        variacao.preco_tiny_sincronizado = preco_publicado
-        campos.append("preco_tiny_sincronizado")
+    if preco_custo_publicado is not None:
+        variacao.preco_custo_tiny_sincronizado = preco_custo_publicado
+        campos.append("preco_custo_tiny_sincronizado")
     variacao.save(update_fields=campos)
 
 
@@ -689,11 +689,15 @@ def executar_sincronizacao_tiny(
         try:
             if decisao.acao == ACAO_CRIAR:
                 tiny_id = criar_produto_no_tiny(cliente, variacao, decisao.payload)
-                marcar_cadastrada(variacao, tiny_id, preco_publicado=_preco_publicado(variacao))
+                marcar_cadastrada(
+                    variacao, tiny_id, preco_custo_publicado=_preco_custo_publicado(variacao)
+                )
                 resultado.criadas += 1
                 eventos.variacao_criada(variacao, tiny_id)
             elif decisao.acao == ACAO_VINCULAR:
-                marcar_cadastrada(variacao, decisao.tiny_existente["id"], preco_publicado=None)
+                marcar_cadastrada(
+                    variacao, decisao.tiny_existente["id"], preco_custo_publicado=None
+                )
                 resultado.vinculadas += 1
                 eventos.variacao_vinculada(variacao, decisao.tiny_existente["id"])
         except Exception as exc:  # uma variação ruim não trava o lote
@@ -738,9 +742,9 @@ def _sincronizar_imagens_do_sku(cliente, variacao, resultado, eventos, *, dry_ru
     eventos.imagens(variacao, r)
 
 
-def _preco_publicado(variacao) -> Decimal:
-    """O payload de criação levou `precos.preco` = este valor (sem margem)."""
-    return variacao.preco_venda_tiny
+def _preco_custo_publicado(variacao) -> Decimal:
+    """O payload de criação levou `precos.precoCusto` = este valor (= Variacao.preco)."""
+    return variacao.preco_custo_tiny
 
 
 # ---------------------------------------------------------------------------
@@ -749,14 +753,22 @@ def _preco_publicado(variacao) -> Decimal:
 
 
 def montar_payload_produto(variacao, instancia, *, tiny_fornecedor_id=None) -> dict:
+    # Regra definitiva do cliente (2026-09-08): o valor do fornecedor é CUSTO
+    # (`precos.precoCusto`); o preço de VENDA no Tiny fica sempre zerado.
+    # `descricaoComplementar` vem de `Produto.descricao` do espelho.
     payload = {
         "sku": variacao.sku,
         "descricao": variacao.nome,
+        "descricaoComplementar": (variacao.produto.descricao or "") if variacao.produto_id else "",
         "tipo": "S",
         "unidade": instancia.tiny_unidade_medida_padrao,
         "origem": instancia.tiny_origem_padrao,
         "ncm": variacao.ncm or None,
-        "precos": {"preco": float(variacao.preco_venda_tiny)},
+        "precos": {
+            "preco": float(variacao.preco_venda_tiny),      # 0
+            "precoPromocional": 0,
+            "precoCusto": float(variacao.preco_custo_tiny),  # = Variacao.preco
+        },
         "estoque": {"controlar": True, "inicial": float(variacao.estoque)},
     }
     dimensoes = _montar_dimensoes(variacao)

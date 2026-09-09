@@ -219,3 +219,42 @@ class RetentarLoteViewTests(TestCase):
     def test_get_sem_lote_404(self):
         resp = self.client.get(self._url())
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_parar_solicita_interrupcao_cooperativa(self):
+        lote = RetentativaLote.objects.create(
+            execucao=self.execucao,
+            status=StatusRetentativaLote.RODANDO,
+            heartbeat_em=timezone.now(),
+            total=3,
+            variacao_ids=[v.id for v in self.erros],
+        )
+        resp = self.client.post(self._url() + "parar/")
+        self.assertEqual(resp.status_code, status.HTTP_202_ACCEPTED)
+        lote.refresh_from_db()
+        self.assertTrue(lote.parada_solicitada)
+        self.assertEqual(resp.data["id"], lote.id)
+        self.assertEqual(resp.data["status"], StatusRetentativaLote.RODANDO)
+
+    def test_parar_lote_ja_interrompido_409(self):
+        RetentativaLote.objects.create(
+            execucao=self.execucao,
+            status=StatusRetentativaLote.INTERROMPIDO,
+            total=1,
+            variacao_ids=[self.erros[0].id],
+        )
+        resp = self.client.post(self._url() + "parar/")
+        self.assertEqual(resp.status_code, status.HTTP_409_CONFLICT)
+
+    def test_get_reconcilia_lote_stale(self):
+        lote = RetentativaLote.objects.create(
+            execucao=self.execucao,
+            status=StatusRetentativaLote.RODANDO,
+            heartbeat_em=timezone.now() - timezone.timedelta(hours=1),
+            total=1,
+            variacao_ids=[self.erros[0].id],
+        )
+        resp = self.client.get(self._url())
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        lote.refresh_from_db()
+        self.assertEqual(lote.status, StatusRetentativaLote.INTERROMPIDO)
+        self.assertEqual(resp.data["status"], StatusRetentativaLote.INTERROMPIDO)

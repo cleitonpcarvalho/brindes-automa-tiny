@@ -437,6 +437,22 @@ export function useRetentarLote(slug: string, execucaoId: string | number) {
   });
 }
 
+/** Solicita a parada cooperativa do lote; a task encerra após o item atual. */
+export function usePararRetentarLote(slug: string, execucaoId: string | number) {
+  const queryClient = useQueryClient();
+  const id = String(execucaoId);
+  return useMutation({
+    retry: false,
+    mutationFn: () =>
+      apiClient.post<RetentativaLote>(
+        `/instancias/${slug}/execucoes/${execucaoId}/retentar-lote/parar/`,
+      ),
+    onSuccess: (lote) => {
+      queryClient.setQueryData(["instancias", "execucoes", "retentar-lote", slug, id], lote);
+    },
+  });
+}
+
 /**
  * Progresso do job de retentativa em lote mais recente da execução. Faz
  * polling enquanto `status === "rodando"`; quando conclui, quem consome

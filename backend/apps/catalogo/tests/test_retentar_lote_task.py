@@ -227,6 +227,56 @@ class RetentarLoteTaskTests(TestCase):
         self.assertEqual(lote.status, StatusRetentativaLote.INTERROMPIDO)
 
     @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    def test_parada_solicitada_antes_do_proximo_item_preserva_a_fila(self, mock_criar):
+        instancia, execucao, variacoes, originais = _cenario(n_erros=2)
+        lote = _lote(execucao, variacoes, parada_solicitada=True)
+
+        retentar_lote_task(lote.id, "tok-lote")
+
+        lote.refresh_from_db()
+        self.assertEqual(lote.status, StatusRetentativaLote.INTERROMPIDO)
+        self.assertEqual(lote.processados, 0)
+        self.assertEqual(lote.parada_solicitada, True)
+        mock_criar.assert_not_called()
+        self.assertTrue(
+            LogItem.objects.filter(
+                execucao=execucao,
+                mensagem__icontains=f"Retentativa em lote #{lote.id} interrompida",
+            ).exists()
+        )
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku", return_value=None)
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto", return_value={"id": 1, "sku": "x"})
+    def test_parada_apos_item_preserva_item_concluido_e_nao_processa_os_demais(self, mock_criar, _mb):
+        instancia, execucao, variacoes, originais = _cenario(n_erros=3)
+        lote = _lote(execucao, variacoes)
+
+        from apps.catalogo import tasks as tasks_mod
+
+        real = tasks_mod.cadastrar_variacao_individual
+        chamadas = {"n": 0}
+
+        def parar_depois_do_primeiro(*args, **kwargs):
+            chamadas["n"] += 1
+            resultado = real(*args, **kwargs)
+            if chamadas["n"] == 1:
+                RetentativaLote.objects.filter(pk=lote.id).update(parada_solicitada=True)
+            return resultado
+
+        with patch("apps.catalogo.tasks.cadastrar_variacao_individual", side_effect=parar_depois_do_primeiro):
+            retentar_lote_task(lote.id, "tok-lote")
+
+        lote.refresh_from_db()
+        self.assertEqual(lote.status, StatusRetentativaLote.INTERROMPIDO)
+        self.assertEqual((lote.processados, lote.sucessos), (1, 1))
+        self.assertEqual(mock_criar.call_count, 1)
+        variacoes[0].refresh_from_db()
+        self.assertEqual(variacoes[0].status, StatusVariacao.CADASTRADO)
+        for variacao in variacoes[1:]:
+            variacao.refresh_from_db()
+            self.assertEqual(variacao.status, StatusVariacao.ERRO)
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
     def test_variacao_de_outra_instancia_na_fila_e_ignorada(self, mock_criar):
         instancia, execucao, variacoes, originais = _cenario(n_erros=1)
         _outra_inst, _e, outras, _l = _cenario(n_erros=1)

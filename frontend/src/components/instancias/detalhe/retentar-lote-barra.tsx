@@ -1,6 +1,6 @@
 "use client"
 
-import { Loader2, RefreshCw } from "lucide-react"
+import { Loader2, RefreshCw, Square } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { formatarNumero } from "@/lib/format"
 import type { RetentativaLote } from "@/lib/api/types"
@@ -8,7 +8,7 @@ import type { RetentativaLote } from "@/lib/api/types"
 /**
  * Barra de ação/progresso da retentativa EM LOTE, acima da tabela, quando o
  * filtro "Erros" está ativo. Enquanto um job está `rodando`, mostra o
- * progresso (processados/total · sucessos · erros) e o botão fica escondido.
+ * progresso (processados/total · sucessos · erros) e oferece parada cooperativa.
  */
 export function RetentarLoteBarra({
   qtdErrosTotal,
@@ -19,6 +19,8 @@ export function RetentarLoteBarra({
   onSelecionarTodos,
   onLimpar,
   onDisparar,
+  onParar,
+  parando,
 }: {
   qtdErrosTotal: number
   qtdSelecionada: number
@@ -28,6 +30,8 @@ export function RetentarLoteBarra({
   onSelecionarTodos: () => void
   onLimpar: () => void
   onDisparar: () => void
+  onParar: () => void
+  parando: boolean
 }) {
   if (progresso?.status === "rodando") {
     const total = progresso.total ?? 0
@@ -49,6 +53,19 @@ export function RetentarLoteBarra({
             <span className="text-error">{formatarNumero(erros)} erro</span>
             {ignorados > 0 && ` · ${formatarNumero(ignorados)} já cadastrado`}
           </span>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={onParar}
+            disabled={parando || progresso.parada_solicitada === true}
+          >
+            {parando || progresso.parada_solicitada ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <Square size={14} />
+            )}
+            {parando || progresso.parada_solicitada ? "Parando…" : "Parar"}
+          </Button>
         </div>
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-background">
           <div

@@ -26,6 +26,7 @@ from apps.fornecedores.services import (
 )
 from apps.catalogo.tasks import (
     EventosRetentativa,
+    _reconciliar_retentativa_lote_stale,
     cadastrar_produtos_tiny_task,
     recomputar_contadores_execucao,
     retentar_lote_task,
@@ -1268,6 +1269,11 @@ class RetentarLoteExecucaoView(APIView):
                 {"detail": "Nenhuma retentativa em lote para esta execução."},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        if lote.status == StatusRetentativaLote.RODANDO and heartbeat_expirado(
+            lote.heartbeat_em, timezone.now()
+        ):
+            _reconciliar_retentativa_lote_stale(lote.id)
+            lote.refresh_from_db()
         return Response(RetentativaLoteSerializer(lote).data)
 
     @extend_schema(request=None, responses=RetentativaLoteSerializer)
@@ -1334,6 +1340,34 @@ class RetentarLoteExecucaoView(APIView):
             )
 
         retentar_lote_task.delay(lote.id, token)
+        return Response(RetentativaLoteSerializer(lote).data, status=status.HTTP_202_ACCEPTED)
+
+
+class PararRetentativaLoteView(APIView):
+    """Solicita a parada cooperativa da retentativa em lote mais recente."""
+
+    @extend_schema(request=None, responses=RetentativaLoteSerializer)
+    def post(self, request, slug, execucao_id):
+        execucao = _obter_execucao_ou_404(slug, execucao_id)
+        with transaction.atomic():
+            _travar_instancia(execucao.instancia)
+            lote = execucao.retentativas_lote.order_by("-criado_em").first()
+            if lote is None:
+                return Response(
+                    {"detail": "Nenhuma retentativa em lote para esta execução."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            if lote.status != StatusRetentativaLote.RODANDO:
+                return Response(
+                    {"detail": "A retentativa em lote não está em andamento."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            if heartbeat_expirado(lote.heartbeat_em, timezone.now()):
+                _reconciliar_retentativa_lote_stale(lote.id)
+                lote.refresh_from_db()
+                return Response(RetentativaLoteSerializer(lote).data)
+            lote.parada_solicitada = True
+            lote.save(update_fields=["parada_solicitada"])
         return Response(RetentativaLoteSerializer(lote).data, status=status.HTTP_202_ACCEPTED)
 
 

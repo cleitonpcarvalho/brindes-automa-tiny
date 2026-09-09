@@ -29,6 +29,8 @@ function renderBarra(props: Partial<Parameters<typeof RetentarLoteBarra>[0]> = {
     onSelecionarTodos: vi.fn(),
     onLimpar: vi.fn(),
     onDisparar: vi.fn(),
+    onParar: vi.fn(),
+    parando: false,
   }
   const p = { ...base, ...props }
   render(<RetentarLoteBarra {...p} />)
@@ -65,14 +67,26 @@ describe("RetentarLoteBarra", () => {
     expect(p.onSelecionarTodos).toHaveBeenCalledOnce()
   })
 
-  it("job rodando: mostra progresso processados/total e barra, sem botões de ação", () => {
+  it("job rodando: mostra progresso e botão Parar", () => {
     renderBarra({ progresso: lote({ status: "rodando", total: 10, processados: 4, sucessos: 3, erros: 1 }) })
     expect(screen.getByText("Retentativa em lote em andamento")).toBeInTheDocument()
     expect(screen.getByText(/4\/10/)).toBeInTheDocument()
     expect(screen.getByText(/3 ok/)).toBeInTheDocument()
     expect(screen.getByText(/1 erro/)).toBeInTheDocument()
     expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "40")
+    expect(screen.getByRole("button", { name: "Parar" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /Tentar novamente/ })).not.toBeInTheDocument()
+  })
+
+  it("Parar chama o callback", () => {
+    const p = renderBarra({ progresso: lote({ status: "rodando" }) })
+    fireEvent.click(screen.getByRole("button", { name: "Parar" }))
+    expect(p.onParar).toHaveBeenCalledOnce()
+  })
+
+  it("Parar fica desabilitado enquanto a solicitação está pendente", () => {
+    renderBarra({ progresso: lote({ status: "rodando", parada_solicitada: true }), parando: true })
+    expect(screen.getByRole("button", { name: "Parando…" })).toBeDisabled()
   })
 
   it("job concluído não é mostrado como progresso (barra de ação normal)", () => {

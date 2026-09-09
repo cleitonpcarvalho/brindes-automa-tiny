@@ -17,6 +17,7 @@ import {
   useExecucaoLogsGerais,
   useExecucaoProdutos,
   useRetentarLote,
+  usePararRetentarLote,
   useRetentarLoteProgresso,
 } from "@/lib/api/hooks"
 import { formatarDuracao, formatarNumero, formatarTempoRelativo } from "@/lib/format"
@@ -217,11 +218,15 @@ export function ExecucaoDetalheView({ slug, execucaoId }: { slug: string; execuc
   const loteProgresso = useRetentarLoteProgresso(slug, execucaoId, { enabled: noFiltroErros })
   const loteRodando = loteProgresso.data?.status === "rodando"
   const retentarLote = useRetentarLote(slug, execucaoId)
+  const pararRetentarLote = usePararRetentarLote(slug, execucaoId)
 
   const statusLoteAnterior = useRef<string | null | undefined>(undefined)
   useEffect(() => {
     const st = loteProgresso.data?.status
-    if (statusLoteAnterior.current === "rodando" && st === "concluido") {
+    if (
+      statusLoteAnterior.current === "rodando" &&
+      (st === "concluido" || st === "interrompido")
+    ) {
       const d = loteProgresso.data
       queryClient.invalidateQueries({
         queryKey: ["instancias", "execucoes", "detalhe", slug, String(execucaoId)],
@@ -230,9 +235,15 @@ export function ExecucaoDetalheView({ slug, execucaoId }: { slug: string; execuc
         queryKey: ["instancias", "execucoes", "produtos", slug, String(execucaoId)],
       })
       queryClient.invalidateQueries({ queryKey: ["instancias", "detalhe", slug] })
-      toast.sucesso(
-        `Retentativa em lote concluída: ${d?.sucessos ?? 0} cadastrado(s), ${d?.erros ?? 0} com erro.`,
-      )
+      if (st === "concluido") {
+        toast.sucesso(
+          `Retentativa em lote concluída: ${d?.sucessos ?? 0} cadastrado(s), ${d?.erros ?? 0} com erro.`,
+        )
+      } else {
+        toast.sucesso(
+          `Retentativa em lote interrompida: ${d?.processados ?? 0} de ${d?.total ?? 0} processado(s).`,
+        )
+      }
       setSelecionados(new Set())
       setSelecaoTodos(false)
     }
@@ -338,6 +349,18 @@ export function ExecucaoDetalheView({ slug, execucaoId }: { slug: string; execuc
             selecaoTodos={selecaoTodos}
             progresso={loteProgresso.data}
             disparando={retentarLote.isPending}
+            parando={pararRetentarLote.isPending}
+            onParar={() =>
+              pararRetentarLote.mutate(undefined, {
+                onSuccess: () => toast.sucesso("Parada da retentativa solicitada."),
+                onError: (erro) =>
+                  toast.erro(
+                    erro instanceof ApiError
+                      ? erro.message
+                      : "Não foi possível parar a retentativa em lote.",
+                  ),
+              })
+            }
             onSelecionarTodos={() => {
               setSelecaoTodos(true)
               setSelecionados(new Set())

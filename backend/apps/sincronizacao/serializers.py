@@ -103,6 +103,7 @@ class RetentativaLoteSerializer(serializers.ModelSerializer):
             "sucessos",
             "erros",
             "ignorados",
+            "parada_solicitada",
             "criado_em",
             "finalizado_em",
         ]

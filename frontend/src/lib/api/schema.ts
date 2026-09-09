@@ -1490,6 +1490,7 @@ export interface components {
             erros?: number;
             /** @description SKU que já estava cadastrado quando o lote chegou nele. */
             ignorados?: number;
+            parada_solicitada?: boolean;
             /** Format: date-time */
             readonly criado_em: string;
             /** Format: date-time */

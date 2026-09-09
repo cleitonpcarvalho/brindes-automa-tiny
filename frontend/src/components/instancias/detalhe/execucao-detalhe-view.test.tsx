@@ -14,6 +14,7 @@ vi.mock("@/lib/api/hooks", () => ({
   useExecucaoProdutoLogs: vi.fn(),
   useExecucaoLogsGerais: vi.fn(),
   useRetentarLote: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+  usePararRetentarLote: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   useRetentarLoteProgresso: vi.fn(() => ({ data: null, isLoading: false, isError: false })),
   useRetentarVariacaoExecucao: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
 }))
@@ -199,7 +200,7 @@ describe("ExecucaoDetalheView", () => {
     )
   })
 
-  it("com o lote rodando: mostra o progresso e some o botão de disparo", () => {
+  it("com o lote rodando: mostra o progresso e o botão Parar", () => {
     vi.mocked(hooks.useRetentarLoteProgresso).mockReturnValue({
       data: {
         id: 1, status: "rodando", selecao_todos: true, total: 6, processados: 2,
@@ -214,6 +215,7 @@ describe("ExecucaoDetalheView", () => {
 
     expect(screen.getByText("Retentativa em lote em andamento")).toBeInTheDocument()
     expect(screen.getByText(/2\/6/)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Parar" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /Tentar novamente selecionados/ })).not.toBeInTheDocument()
   })
 

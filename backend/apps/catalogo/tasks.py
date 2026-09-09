@@ -550,11 +550,17 @@ def retentar_lote_task(retentativa_id, lease_token=None):
     for variacao_id in list(lote.variacao_ids):
         linha = (
             RetentativaLote.objects.filter(pk=retentativa_id)
-            .values("lease_token", "status")
+            .values("lease_token", "status", "parada_solicitada")
             .first()
         )
         if linha is None or linha["lease_token"] != token:
             logger.info("retentar_lote_task %s: lease perdido, encerrando sem tocar no estado", retentativa_id)
+            return
+        if linha["status"] != StatusRetentativaLote.RODANDO:
+            logger.info("retentar_lote_task %s: lote já finalizado como %s", retentativa_id, linha["status"])
+            return
+        if linha["parada_solicitada"]:
+            _finalizar_lote(retentativa_id, token, interrompido=True)
             return
         RetentativaLote.objects.filter(pk=retentativa_id, lease_token=token).update(
             heartbeat_em=timezone.now()
@@ -614,29 +620,44 @@ def _retentar_um_do_lote(retentativa_id, execucao, instancia, variacao_id, clien
     RetentativaLote.objects.filter(pk=retentativa_id).update(**campos)
 
 
-def _finalizar_lote(retentativa_id, token, *, aviso=None):
+def _finalizar_lote(retentativa_id, token, *, aviso=None, interrompido=False):
     with transaction.atomic():
         lote = RetentativaLote.objects.select_for_update().select_related("execucao").get(pk=retentativa_id)
         if token and lote.lease_token != token:
             logger.info("retentar_lote_task %s: lease trocou antes do fechamento", retentativa_id)
             return
         recomputar_contadores_execucao(lote.execucao)
-        lote.status = StatusRetentativaLote.CONCLUIDO
+        lote.status = (
+            StatusRetentativaLote.INTERROMPIDO
+            if interrompido
+            else StatusRetentativaLote.CONCLUIDO
+        )
         lote.heartbeat_em = timezone.now()
         lote.finalizado_em = timezone.now()
         lote.save(update_fields=["status", "heartbeat_em", "finalizado_em"])
+        if interrompido:
+            mensagem = (
+                f"Retentativa em lote #{retentativa_id} interrompida: "
+                f"{lote.processados} processado(s), {lote.sucessos} cadastrado(s), "
+                f"{lote.erros} com erro, {lote.ignorados} já cadastrado(s)"
+            )
+        else:
+            mensagem = (
+                f"Retentativa em lote #{retentativa_id} concluída: {lote.sucessos} "
+                f"cadastrado(s), {lote.erros} com erro, {lote.ignorados} já cadastrado(s)"
+            )
         LogItem.objects.create(
             execucao=lote.execucao,
             nivel=NivelLog.INFO,
             evento=EventoLog.GERAL,
-            mensagem=(f"Retentativa em lote #{retentativa_id} concluída: {lote.sucessos} "
-                      f"cadastrado(s), {lote.erros} com erro, {lote.ignorados} já cadastrado(s)")[:500],
+            mensagem=mensagem[:500],
             detalhe={
                 "origem": "retentativa_lote",
                 "retentativa_id": retentativa_id,
                 "sucessos": lote.sucessos,
                 "erros": lote.erros,
                 "ignorados": lote.ignorados,
+                "interrompido": interrompido,
                 **({"aviso": aviso} if aviso else {}),
             },
         )
@@ -657,13 +678,34 @@ def reconciliar_retentativas_lote_travadas():
             status=StatusRetentativaLote.RODANDO, heartbeat_em__lt=limite
         ).values_list("pk", flat=True)
     ):
-        if RetentativaLote.objects.filter(
-            pk=pk, status=StatusRetentativaLote.RODANDO, heartbeat_em__lt=limite
-        ).update(status=StatusRetentativaLote.INTERROMPIDO):
+        if _reconciliar_retentativa_lote_stale(pk, limite):
             reconhecidas += 1
     if reconhecidas:
         logger.warning("%s retentativa(s) em lote reconhecida(s) como interrompida(s)", reconhecidas)
     return reconhecidas
+
+
+def _reconciliar_retentativa_lote_stale(retentativa_id, limite=None):
+    """Marca atomicamente um lote sem heartbeat como interrompido."""
+    limite = limite or timezone.now() - timedelta(seconds=HEARTBEAT_TIMEOUT_SEGUNDOS)
+    agora = timezone.now()
+    atualizada = RetentativaLote.objects.filter(
+        pk=retentativa_id,
+        status=StatusRetentativaLote.RODANDO,
+        heartbeat_em__lt=limite,
+    ).update(
+        status=StatusRetentativaLote.INTERROMPIDO,
+        finalizado_em=agora,
+        heartbeat_em=agora,
+    )
+    if atualizada:
+        LogItem.objects.create(
+            execucao_id=RetentativaLote.objects.values_list("execucao_id", flat=True).get(pk=retentativa_id),
+            nivel=NivelLog.AVISO,
+            mensagem=f"Retentativa em lote #{retentativa_id} interrompida por heartbeat expirado",
+            detalhe={"origem": "reconciliacao_stale", "timeout_segundos": HEARTBEAT_TIMEOUT_SEGUNDOS},
+        )
+    return bool(atualizada)
 
 
 # ---------------------------------------------------------------------------

@@ -203,6 +203,10 @@ class RetentativaLote(models.Model):
     )
     lease_token = models.CharField(max_length=36, blank=True, default="")
     heartbeat_em = models.DateTimeField(null=True, blank=True)
+    parada_solicitada = models.BooleanField(
+        default=False,
+        help_text="Solicitação cooperativa para parar antes do próximo item.",
+    )
 
     total = models.PositiveIntegerField(default=0)
     processados = models.PositiveIntegerField(default=0)

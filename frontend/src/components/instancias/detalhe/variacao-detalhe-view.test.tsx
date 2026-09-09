@@ -13,6 +13,7 @@ vi.mock("@/lib/api/hooks", () => ({
   useVariacaoInstancia: vi.fn(),
   useAtualizarVariacaoFornecedor: vi.fn(),
   useAtualizarVariacaoTiny: vi.fn(),
+  useStatusAtualizarVariacaoFornecedor: vi.fn(),
 }))
 
 const atualizarFornecedor = vi.fn()
@@ -92,6 +93,7 @@ describe("VariacaoDetalheView", () => {
     vi.clearAllMocks()
     vi.mocked(hooks.useAtualizarVariacaoFornecedor).mockReturnValue({ mutate: atualizarFornecedor, isPending: false } as never)
     vi.mocked(hooks.useAtualizarVariacaoTiny).mockReturnValue({ mutate: atualizarTiny, isPending: false } as never)
+    vi.mocked(hooks.useStatusAtualizarVariacaoFornecedor).mockReturnValue({ data: undefined } as never)
   })
 
   it("renderiza cabeçalho, informações principais e link de voltar", () => {
@@ -280,6 +282,17 @@ describe("VariacaoDetalheView", () => {
 
   it("desabilita as duas ações e mostra loading durante uma atualização", () => {
     vi.mocked(hooks.useAtualizarVariacaoFornecedor).mockReturnValue({ mutate: atualizarFornecedor, isPending: true } as never)
+    mock({ data: detalhe() })
+    renderDetalhe()
+
+    expect(screen.getByRole("button", { name: "Atualizando…" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Atualizar no Tiny" })).toBeDisabled()
+  })
+
+  it("mantém o botão em loading enquanto o status Celery está rodando", () => {
+    vi.mocked(hooks.useStatusAtualizarVariacaoFornecedor).mockReturnValue({
+      data: { id: 9, variacao: 42, fornecedor: "xbz", status: "rodando", erro: "" },
+    } as never)
     mock({ data: detalhe() })
     renderDetalhe()
 

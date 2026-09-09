@@ -210,6 +210,25 @@ def identidade_tiny(variacao) -> str:
     return composto
 
 
+def sku_tiny_para_exibicao(variacao) -> str:
+    """Retorna o SKU Tiny destinado às telas e respostas de leitura.
+
+    A identidade usada pelo sincronizador continua sendo ``identidade_tiny``.
+    Para XBZ, porém, a fonte semântica do valor exibido é deliberadamente o
+    atributo normalizado ``codigo_composto``; ``Variacao.sku`` jamais é um
+    fallback de apresentação nesse caso.
+    """
+    if not variacao:
+        return ""
+    if variacao.produto.fornecedor == Fornecedor.XBZ:
+        atributos = variacao.atributos or {}
+        return str(atributos.get("codigo_composto") or "").strip()
+    try:
+        return identidade_tiny(variacao)
+    except IdentidadeTinyError:
+        return ""
+
+
 @dataclass
 class Decisao:
     acao: str

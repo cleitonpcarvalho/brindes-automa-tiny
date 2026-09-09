@@ -18,10 +18,18 @@ from rest_framework.views import APIView
 
 from apps.catalogo.models import StatusVariacao, Variacao
 from apps.catalogo.serializers import VariacaoDetalheSerializer, VariacaoEspelhoSerializer
-from apps.fornecedores.models import CadenciaFornecedor
+from apps.fornecedores.models import (
+    AtualizacaoVariacaoFornecedor,
+    CadenciaFornecedor,
+    StatusAtualizacaoVariacao,
+)
+from apps.fornecedores.serializers import AtualizacaoVariacaoFornecedorSerializer
+from apps.fornecedores.tasks import (
+    ATUALIZACAO_FORNECEDOR_STALE_SEGUNDOS,
+    atualizar_variacao_fornecedor_task,
+)
 from apps.fornecedores.services import (
     checar_limite_diario_xbz,
-    atualizar_variacao_do_fornecedor,
     listar_cadencias_com_defaults,
     obter_credencial_ativa,
 )
@@ -808,9 +816,9 @@ class VariacaoDetalheView(generics.RetrieveAPIView):
 
 
 class AtualizarVariacaoFornecedorView(APIView):
-    """Busca e grava somente a variação indicada no espelho local."""
+    """Enfileira a atualização individual; a rede nunca roda no ciclo HTTP."""
 
-    @extend_schema(request=None, responses=VariacaoDetalheSerializer)
+    @extend_schema(request=None, responses=AtualizacaoVariacaoFornecedorSerializer)
     def post(self, request, slug, variacao_id):
         instancia = _obter_instancia_ou_404(slug)
         with transaction.atomic():
@@ -819,12 +827,72 @@ class AtualizarVariacaoFornecedorView(APIView):
                 pk=variacao_id,
                 produto__instancia=instancia,
             )
-            try:
-                atualizar_variacao_do_fornecedor(instancia, variacao)
-            except Exception as exc:
-                return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
-            variacao.refresh_from_db()
-        return Response(VariacaoDetalheSerializer(variacao).data)
+            limite = timezone.now() - timezone.timedelta(
+                seconds=ATUALIZACAO_FORNECEDOR_STALE_SEGUNDOS
+            )
+            AtualizacaoVariacaoFornecedor.objects.filter(
+                variacao=variacao,
+                status=StatusAtualizacaoVariacao.RODANDO,
+            ).filter(Q(heartbeat_em__lt=limite) | Q(heartbeat_em__isnull=True)).update(
+                status=StatusAtualizacaoVariacao.INTERROMPIDO,
+                erro="A operação anterior ficou stale e foi interrompida automaticamente.",
+                finalizado_em=timezone.now(),
+            )
+            if AtualizacaoVariacaoFornecedor.objects.filter(
+                variacao=variacao, status=StatusAtualizacaoVariacao.RODANDO
+            ).exists():
+                return Response(
+                    {"detail": "Já existe uma atualização do fornecedor em andamento para esta variação."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            operacao = AtualizacaoVariacaoFornecedor.objects.create(
+                instancia=instancia,
+                variacao=variacao,
+                fornecedor=variacao.produto.fornecedor,
+                heartbeat_em=timezone.now(),
+            )
+
+            def enfileirar():
+                resultado = atualizar_variacao_fornecedor_task.delay(operacao.id)
+                task_id = getattr(resultado, "id", "")
+                if isinstance(task_id, str) and task_id:
+                    AtualizacaoVariacaoFornecedor.objects.filter(pk=operacao.id).update(
+                        celery_task_id=task_id
+                    )
+
+            transaction.on_commit(enfileirar)
+        return Response(
+            AtualizacaoVariacaoFornecedorSerializer(operacao).data,
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+class StatusAtualizarVariacaoFornecedorView(APIView):
+    """Consulta o estado persistido de uma atualização individual."""
+
+    @extend_schema(request=None, responses=AtualizacaoVariacaoFornecedorSerializer)
+    def get(self, request, slug, variacao_id, operacao_id):
+        operacao = get_object_or_404(
+            AtualizacaoVariacaoFornecedor.objects.select_related("instancia"),
+            pk=operacao_id,
+            variacao_id=variacao_id,
+            instancia__slug=slug,
+        )
+        limite = timezone.now() - timezone.timedelta(
+            seconds=ATUALIZACAO_FORNECEDOR_STALE_SEGUNDOS
+        )
+        if operacao.status == StatusAtualizacaoVariacao.RODANDO and (
+            operacao.heartbeat_em is None or operacao.heartbeat_em < limite
+        ):
+            AtualizacaoVariacaoFornecedor.objects.filter(
+                pk=operacao.pk, status=StatusAtualizacaoVariacao.RODANDO
+            ).update(
+                status=StatusAtualizacaoVariacao.INTERROMPIDO,
+                erro="A task Celery não enviou heartbeat dentro do prazo; operação interrompida.",
+                finalizado_em=timezone.now(),
+            )
+            operacao.refresh_from_db()
+        return Response(AtualizacaoVariacaoFornecedorSerializer(operacao).data)
 
 
 class AtualizarVariacaoTinyView(APIView):

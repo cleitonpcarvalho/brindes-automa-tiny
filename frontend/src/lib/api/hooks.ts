@@ -5,6 +5,7 @@ import { ApiError, apiClient } from "./client";
 import type {
   Alerta,
   AutorizarResposta,
+  AtualizacaoVariacaoFornecedor,
   CadenciaFornecedor,
   ConfiguracoesInstancia,
   CredencialFornecedorResposta,
@@ -216,13 +217,31 @@ export function useAtualizarVariacaoFornecedor(slug: string) {
   return useMutation({
     retry: false,
     mutationFn: (variacaoId: number) =>
-      apiClient.post<VariacaoDetalhe>(
+      apiClient.post<AtualizacaoVariacaoFornecedor>(
         `/instancias/${slug}/produtos/${variacaoId}/atualizar-fornecedor/`,
       ),
     onSuccess: (dados, variacaoId) => {
       queryClient.setQueryData(["instancias", "produtos", "detalhe", slug, String(variacaoId)], dados);
       queryClient.invalidateQueries({ queryKey: ["instancias", "produtos", slug] });
     },
+  });
+}
+
+export function useStatusAtualizarVariacaoFornecedor(
+  slug: string,
+  variacaoId: number,
+  operacaoId: number | null,
+) {
+  return useQuery({
+    queryKey: ["instancias", "produtos", "atualizar-fornecedor", slug, variacaoId, operacaoId],
+    queryFn: () =>
+      apiClient.get<AtualizacaoVariacaoFornecedor>(
+        `/instancias/${slug}/produtos/${variacaoId}/atualizar-fornecedor/${operacaoId}/`,
+      ),
+    enabled: operacaoId !== null,
+    retry: false,
+    refetchInterval: (query) =>
+      query.state.data?.status === "rodando" ? 2000 : false,
   });
 }
 

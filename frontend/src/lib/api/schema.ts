@@ -1676,6 +1676,16 @@ export interface components {
             imagens_tiny_sincronizadas?: unknown;
             hash_conteudo?: string;
         };
+        AtualizacaoVariacaoFornecedor: {
+            readonly id: number;
+            readonly variacao: number;
+            readonly fornecedor: components["schemas"]["FornecedorEnum"];
+            readonly status: "rodando" | "sucesso" | "erro" | "interrompido";
+            readonly erro: string;
+            readonly criado_em: string;
+            readonly iniciado_em: string | null;
+            readonly finalizado_em: string | null;
+        };
         /**
          * @description Uma linha da aba "Produtos" do detalhe da instância.
          *

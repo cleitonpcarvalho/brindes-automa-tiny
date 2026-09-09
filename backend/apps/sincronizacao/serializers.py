@@ -115,6 +115,8 @@ class ExecucaoProdutoSerializer(serializers.Serializer):
     log_id = serializers.IntegerField()
     variacao_id = serializers.IntegerField(allow_null=True)
     sku = serializers.CharField()
+    codigo_fornecedor = serializers.CharField()
+    sku_tiny = serializers.CharField()
     produto_nome = serializers.CharField()
     resultado = serializers.ChoiceField(choices=EventoLog.choices)
     tiny_id = serializers.CharField(allow_blank=True)

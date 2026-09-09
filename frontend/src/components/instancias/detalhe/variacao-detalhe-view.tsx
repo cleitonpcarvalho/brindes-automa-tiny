@@ -1,7 +1,8 @@
 "use client"
 
-import type { ReactNode } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import Link from "next/link"
+import { useQueryClient } from "@tanstack/react-query"
 import { ArrowLeft, CircleAlert, RefreshCw, Send } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -9,7 +10,12 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ErrorState } from "@/components/ui/empty-error-state"
 import { ApiError } from "@/lib/api/client"
-import { useAtualizarVariacaoFornecedor, useAtualizarVariacaoTiny, useVariacaoInstancia } from "@/lib/api/hooks"
+import {
+  useAtualizarVariacaoFornecedor,
+  useAtualizarVariacaoTiny,
+  useStatusAtualizarVariacaoFornecedor,
+  useVariacaoInstancia,
+} from "@/lib/api/hooks"
 import { useToast } from "@/components/ui/toast"
 import { ROTULO_FORNECEDOR } from "../cor-fornecedor"
 import { varianteBadgeStatus } from "./variacao-status"
@@ -73,14 +79,34 @@ function variacaoTexto(dados: VariacaoDetalhe): string {
 
 function AcoesVariacao({ dados, slug }: { dados: VariacaoDetalhe; slug: string }) {
   const toast = useToast()
+  const queryClient = useQueryClient()
   const fornecedor = useAtualizarVariacaoFornecedor(slug)
   const tiny = useAtualizarVariacaoTiny(slug)
-  const emAtualizacao = fornecedor.isPending || tiny.isPending
+  const [operacaoId, setOperacaoId] = useState<number | null>(null)
+  const operacao = useStatusAtualizarVariacaoFornecedor(slug, dados.id, operacaoId)
+  const fornecedorEmAtualizacao = fornecedor.isPending || operacao.data?.status === "rodando"
+  const emAtualizacao = fornecedorEmAtualizacao || tiny.isPending
+
+  useEffect(() => {
+    const dadosOperacao = operacao.data
+    const status = dadosOperacao?.status
+    if (!operacaoId || !status || status === "rodando") return
+    if (status === "sucesso") {
+      toast.sucesso("Variação atualizada a partir do fornecedor.")
+      queryClient.invalidateQueries({
+        queryKey: ["instancias", "produtos", "detalhe", slug, String(dados.id)],
+      })
+      queryClient.invalidateQueries({ queryKey: ["instancias", "produtos", slug] })
+    } else {
+      toast.erro(dadosOperacao.erro || "Não foi possível atualizar do fornecedor.")
+    }
+    setOperacaoId(null)
+  }, [dados.id, operacao.data, operacaoId, queryClient, slug, toast])
 
   const atualizarFornecedor = () => {
     if (emAtualizacao) return
     fornecedor.mutate(dados.id, {
-      onSuccess: () => toast.sucesso("Variação atualizada a partir do fornecedor."),
+      onSuccess: (resultado) => setOperacaoId(resultado.id),
       onError: (erro) =>
         toast.erro(erro instanceof ApiError ? erro.message : "Não foi possível atualizar do fornecedor."),
     })
@@ -103,8 +129,8 @@ function AcoesVariacao({ dados, slug }: { dados: VariacaoDetalhe; slug: string }
         disabled={emAtualizacao}
         onClick={atualizarFornecedor}
       >
-        <RefreshCw size={14} className={fornecedor.isPending ? "animate-spin" : undefined} />
-        {fornecedor.isPending ? "Atualizando…" : "Atualizar do fornecedor"}
+        <RefreshCw size={14} className={fornecedorEmAtualizacao ? "animate-spin" : undefined} />
+        {fornecedorEmAtualizacao ? "Atualizando…" : "Atualizar do fornecedor"}
       </Button>
       <Button
         variant="primary"

@@ -3,14 +3,75 @@ import logging
 from celery import shared_task
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.instancias.models import Instancia
 from apps.sincronizacao.models import Execucao, StatusExecucao
 
-from .models import CadenciaFornecedor
+from .models import (
+    AtualizacaoVariacaoFornecedor,
+    CadenciaFornecedor,
+    StatusAtualizacaoVariacao,
+)
 
 logger = logging.getLogger(__name__)
+
+ATUALIZACAO_FORNECEDOR_STALE_SEGUNDOS = 1800
+
+
+@shared_task
+def atualizar_variacao_fornecedor_task(operacao_id):
+    """Executa uma atualização individual fora do ciclo HTTP."""
+    operacao = AtualizacaoVariacaoFornecedor.objects.select_related(
+        "instancia", "variacao", "variacao__produto"
+    ).filter(pk=operacao_id).first()
+    if operacao is None or operacao.status != StatusAtualizacaoVariacao.RODANDO:
+        return
+
+    agora = timezone.now()
+    AtualizacaoVariacaoFornecedor.objects.filter(
+        pk=operacao_id, status=StatusAtualizacaoVariacao.RODANDO
+    ).update(iniciado_em=agora, heartbeat_em=agora)
+
+    try:
+        from .services import atualizar_variacao_do_fornecedor
+
+        atualizar_variacao_do_fornecedor(operacao.instancia, operacao.variacao)
+    except Exception as exc:
+        logger.exception("atualização individual %s falhou", operacao_id)
+        AtualizacaoVariacaoFornecedor.objects.filter(
+            pk=operacao_id, status=StatusAtualizacaoVariacao.RODANDO
+        ).update(
+        status=StatusAtualizacaoVariacao.ERRO,
+            erro=str(exc),
+            finalizado_em=timezone.now(),
+            heartbeat_em=timezone.now(),
+        )
+        return
+
+    agora = timezone.now()
+    AtualizacaoVariacaoFornecedor.objects.filter(
+        pk=operacao_id, status=StatusAtualizacaoVariacao.RODANDO
+    ).update(
+        status=StatusAtualizacaoVariacao.SUCESSO,
+        erro="",
+        finalizado_em=agora,
+        heartbeat_em=agora,
+    )
+
+
+@shared_task
+def reconciliar_atualizacoes_fornecedor_stale():
+    """Libera operações cujo worker morreu antes de concluir."""
+    limite = timezone.now() - timezone.timedelta(seconds=ATUALIZACAO_FORNECEDOR_STALE_SEGUNDOS)
+    return AtualizacaoVariacaoFornecedor.objects.filter(
+        status=StatusAtualizacaoVariacao.RODANDO,
+    ).filter(Q(heartbeat_em__lt=limite) | Q(heartbeat_em__isnull=True)).update(
+        status=StatusAtualizacaoVariacao.INTERROMPIDO,
+        erro="A task Celery não enviou heartbeat dentro do prazo; operação interrompida.",
+        finalizado_em=timezone.now(),
+    )
 
 
 @shared_task

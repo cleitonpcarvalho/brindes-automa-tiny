@@ -7,6 +7,7 @@ from .views import (
     CadastrarVariacaoTinyView,
     AtualizarVariacaoFornecedorView,
     AtualizarVariacaoTinyView,
+    StatusAtualizarVariacaoFornecedorView,
     CadastroTinyPreviewView,
     PausarCadastroTinyView,
     RetomarCadastroTinyView,
@@ -114,6 +115,11 @@ urlpatterns = router.urls + [
         "instancias/<slug:slug>/produtos/<int:variacao_id>/atualizar-fornecedor/",
         AtualizarVariacaoFornecedorView.as_view(),
         name="instancia-produto-atualizar-fornecedor",
+    ),
+    path(
+        "instancias/<slug:slug>/produtos/<int:variacao_id>/atualizar-fornecedor/<int:operacao_id>/",
+        StatusAtualizarVariacaoFornecedorView.as_view(),
+        name="instancia-produto-atualizar-fornecedor-status",
     ),
     path(
         "instancias/<slug:slug>/produtos/<int:variacao_id>/atualizar-tiny/",

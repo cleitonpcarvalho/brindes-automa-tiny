@@ -32,4 +32,8 @@ app.conf.beat_schedule = {
         "task": "apps.catalogo.tasks.reconciliar_retentativas_lote_travadas",
         "schedule": crontab(minute="*/5"),
     },
+    "reconciliar-atualizacoes-fornecedor": {
+        "task": "apps.fornecedores.tasks.reconciliar_atualizacoes_fornecedor_stale",
+        "schedule": crontab(minute="*/5"),
+    },
 }

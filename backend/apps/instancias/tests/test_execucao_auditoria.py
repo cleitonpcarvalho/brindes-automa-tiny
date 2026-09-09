@@ -131,6 +131,24 @@ class ExecucaoDetalheResumoTests(AuditoriaBase):
 
 
 class ExecucaoProdutosTabelaTests(AuditoriaBase):
+    def test_xbz_separa_codigo_fornecedor_e_sku_tiny(self):
+        variacao = _variacao(
+            self.instancia,
+            "X134066",
+            fornecedor="xbz",
+            nome="Caneca térmica 500ml",
+            atributos={"codigo_composto": "18700-AZU"},
+            payload_bruto={"CodigoComposto": "VALOR-LEGADO"},
+        )
+        _log(self.execucao, EventoLog.CRIADO, "SKU X134066 criado no Tiny", variacao=variacao, tiny_id="777")
+
+        linha = next(
+            l for l in self.client.get(self._url("produtos/")).data["results"] if l["sku"] == "X134066"
+        )
+        self.assertEqual(linha["codigo_fornecedor"], "X134066")
+        self.assertEqual(linha["sku_tiny"], "18700-AZU")
+        self.assertNotEqual(linha["sku_tiny"], linha["codigo_fornecedor"])
+
     def test_uma_linha_por_sku_com_dados_da_variacao(self):
         resp = self.client.get(self._url("produtos/"))
         self.assertEqual(resp.status_code, status.HTTP_200_OK)

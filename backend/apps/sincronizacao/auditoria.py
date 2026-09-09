@@ -9,7 +9,7 @@ campo `LogItem.evento` (estruturado). Nenhuma interpretação de texto livre.
 
 from django.db.models import Count, Q, Subquery
 
-from apps.catalogo.tiny_sync import IdentidadeTinyError, identidade_tiny
+from apps.catalogo.tiny_sync import sku_tiny_para_exibicao
 
 from .models import EVENTOS_DESFECHO, EventoLog, LogItem
 
@@ -112,12 +112,7 @@ def montar_linhas(execucao, logs):
 
 
 def _identidade_tiny_segura(variacao):
-    if not variacao:
-        return ""
-    try:
-        return identidade_tiny(variacao)
-    except IdentidadeTinyError:
-        return ""
+    return sku_tiny_para_exibicao(variacao)
 
 
 def _detalhe_curto(log) -> str:

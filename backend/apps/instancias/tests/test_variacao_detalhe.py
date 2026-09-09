@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
 from unittest.mock import MagicMock, patch
 from rest_framework import status
 from rest_framework.authtoken.models import Token
@@ -51,7 +52,7 @@ class VariacaoDetalheTests(TestCase):
         )
         self.variacao = Variacao.objects.create(
             produto=self.produto,
-            sku="CN-01-AZUL",
+            sku="X134066",
             nome="Caneca azul 300ml",
             ncm="69120000",
             preco="19.90",
@@ -72,7 +73,7 @@ class VariacaoDetalheTests(TestCase):
             },
             status=StatusVariacao.CADASTRADO,
             tiny_id="tiny-123",
-            payload_bruto={"segredo_interno": "nao deve vazar", "x": 1},
+            payload_bruto={"segredo_interno": "nao deve vazar", "CodigoComposto": "LEGADO"},
         )
 
     def _url(self, variacao_id, instancia=None):
@@ -96,8 +97,8 @@ class VariacaoDetalheTests(TestCase):
         self.assertEqual(dados["produto_nome"], "Caneca de porcelana")
         self.assertEqual(dados["produto_descricao"], "Caneca de porcelana 300ml.")
         self.assertEqual(dados["produto_categorias"], ["Canecas"])
-        self.assertEqual(dados["sku"], "CN-01-AZUL")
-        self.assertEqual(dados["codigo_fornecedor"], "CN-01-AZUL")
+        self.assertEqual(dados["sku"], "X134066")
+        self.assertEqual(dados["codigo_fornecedor"], "X134066")
         self.assertEqual(dados["sku_tiny"], "18700-AZU")
         self.assertEqual(dados["nome"], "Caneca azul 300ml")
         self.assertEqual(dados["ncm"], "69120000")
@@ -186,18 +187,47 @@ class VariacaoDetalheTests(TestCase):
         # select_related. Folga pequena; o que não pode é escalar por campo.
         self.assertLessEqual(len(ctx.captured_queries), 4)
 
-    @patch("apps.instancias.views.atualizar_variacao_do_fornecedor")
-    def test_atualizar_do_fornecedor_e_individual(self, atualizar):
-        atualizar.return_value = self.variacao
+    @patch("apps.instancias.views.atualizar_variacao_fornecedor_task.delay")
+    def test_atualizar_do_fornecedor_enfileira_e_retorna_202(self, enfileirar):
 
-        resposta = self.client.post(
-            f"/api/instancias/{self.instancia.slug}/produtos/{self.variacao.id}/atualizar-fornecedor/"
+        with self.captureOnCommitCallbacks(execute=True):
+            resposta = self.client.post(
+                f"/api/instancias/{self.instancia.slug}/produtos/{self.variacao.id}/atualizar-fornecedor/"
+            )
+
+        self.assertEqual(resposta.status_code, status.HTTP_202_ACCEPTED)
+        enfileirar.assert_called_once()
+        self.assertEqual(resposta.data["status"], "rodando")
+        self.assertEqual(resposta.data["variacao"], self.variacao.id)
+
+    def test_status_da_atualizacao_e_isolado_por_instancia_e_variacao(self):
+        from apps.fornecedores.models import AtualizacaoVariacaoFornecedor
+
+        operacao = AtualizacaoVariacaoFornecedor.objects.create(
+            instancia=self.instancia,
+            variacao=self.variacao,
+            fornecedor=Fornecedor.XBZ,
         )
-
+        resposta = self.client.get(
+            f"/api/instancias/{self.instancia.slug}/produtos/{self.variacao.id}/"
+            f"atualizar-fornecedor/{operacao.id}/"
+        )
         self.assertEqual(resposta.status_code, status.HTTP_200_OK)
-        atualizar.assert_called_once()
-        self.assertEqual(resposta.data["codigo_fornecedor"], "CN-01-AZUL")
-        self.assertEqual(resposta.data["sku_tiny"], "18700-AZU")
+        self.assertEqual(resposta.data["id"], operacao.id)
+
+    @patch("apps.instancias.views.atualizar_variacao_fornecedor_task.delay")
+    def test_nao_dispara_duas_atualizacoes_concorrentes(self, enfileirar):
+        url = (
+            f"/api/instancias/{self.instancia.slug}/produtos/{self.variacao.id}/"
+            "atualizar-fornecedor/"
+        )
+        with self.captureOnCommitCallbacks(execute=True):
+            primeira = self.client.post(url)
+        segunda = self.client.post(url)
+
+        self.assertEqual(primeira.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(segunda.status_code, status.HTTP_409_CONFLICT)
+        enfileirar.assert_called_once()
 
     @patch("apps.instancias.views.atualizar_variacao_individual")
     def test_atualizar_no_tiny_reutiliza_fluxo_individual(self, atualizar):
@@ -210,14 +240,38 @@ class VariacaoDetalheTests(TestCase):
         self.assertEqual(resposta.status_code, status.HTTP_200_OK)
         atualizar.assert_called_once()
 
-    @patch("apps.instancias.views.atualizar_variacao_do_fornecedor", side_effect=ValueError("credencial ausente"))
-    def test_erro_da_atualizacao_do_fornecedor_retorna_mensagem(self, _atualizar):
-        resposta = self.client.post(
-            f"/api/instancias/{self.instancia.slug}/produtos/{self.variacao.id}/atualizar-fornecedor/"
+    @patch("apps.fornecedores.services.atualizar_variacao_do_fornecedor", side_effect=ValueError("API indisponível"))
+    def test_task_registra_erro_da_api_externa(self, _atualizar):
+        from apps.fornecedores.models import AtualizacaoVariacaoFornecedor
+        from apps.fornecedores.tasks import atualizar_variacao_fornecedor_task
+
+        operacao = AtualizacaoVariacaoFornecedor.objects.create(
+            instancia=self.instancia,
+            variacao=self.variacao,
+            fornecedor=Fornecedor.XBZ,
+            heartbeat_em=timezone.now(),
+        )
+        atualizar_variacao_fornecedor_task.run(operacao.id)
+
+        operacao.refresh_from_db()
+        self.assertEqual(operacao.status, "erro")
+        self.assertIn("API indisponível", operacao.erro)
+
+    def test_reaper_interrompe_operacao_sem_heartbeat(self):
+        from datetime import timedelta
+        from apps.fornecedores.models import AtualizacaoVariacaoFornecedor
+        from apps.fornecedores.tasks import reconciliar_atualizacoes_fornecedor_stale
+
+        operacao = AtualizacaoVariacaoFornecedor.objects.create(
+            instancia=self.instancia,
+            variacao=self.variacao,
+            fornecedor=Fornecedor.XBZ,
+            heartbeat_em=timezone.now() - timedelta(hours=1),
         )
 
-        self.assertEqual(resposta.status_code, status.HTTP_502_BAD_GATEWAY)
-        self.assertIn("credencial ausente", resposta.data["detail"])
+        self.assertEqual(reconciliar_atualizacoes_fornecedor_stale.run(), 1)
+        operacao.refresh_from_db()
+        self.assertEqual(operacao.status, "interrompido")
 
     @patch("apps.fornecedores.management.commands.importar_fornecedor.Command")
     @patch("apps.fornecedores.registry.obter_cliente")

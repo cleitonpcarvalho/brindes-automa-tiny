@@ -3,14 +3,11 @@ from rest_framework import serializers
 from apps.instancias.constants import Fornecedor
 
 from .models import Variacao
-from .tiny_sync import IdentidadeTinyError, identidade_tiny
+from .tiny_sync import sku_tiny_para_exibicao
 
 
 def _sku_tiny(variacao):
-    try:
-        return identidade_tiny(variacao)
-    except IdentidadeTinyError:
-        return ""
+    return sku_tiny_para_exibicao(variacao)
 
 
 class VariacaoEspelhoSerializer(serializers.ModelSerializer):

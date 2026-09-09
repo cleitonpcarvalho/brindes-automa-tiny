@@ -70,6 +70,33 @@ describe("ExecucaoProdutosTabela", () => {
     expect(screen.getByText("924252038")).toBeInTheDocument()
   })
 
+  it("XBZ exibe o código fornecedor separado do SKU Tiny", () => {
+    renderTabela({
+      itens: [
+        linha({
+          sku: "X134066",
+          codigo_fornecedor: "X134066",
+          sku_tiny: "18700-AZU",
+          produto_nome: "Caneca térmica 500ml",
+        }),
+      ],
+    })
+
+    expect(screen.getByText("X134066")).toBeInTheDocument()
+    const produto = screen.getByRole("button", { name: /18700-AZUCaneca térmica 500ml/ })
+    expect(produto).toHaveTextContent("18700-AZU")
+    expect(produto).not.toHaveTextContent("X134066")
+  })
+
+  it("não usa o código fornecedor como fallback de SKU Tiny", () => {
+    renderTabela({
+      itens: [linha({ sku: "X134066", codigo_fornecedor: "X134066", sku_tiny: "" })],
+    })
+
+    const produto = screen.getByRole("button", { name: /—Mochila para notebook/ })
+    expect(produto).not.toHaveTextContent("X134066")
+  })
+
   it("erro: badge 'Erro' + mensagem humana curta na coluna Detalhe/erro (sem JSON)", () => {
     renderTabela({
       itens: [

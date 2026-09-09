@@ -1,5 +1,6 @@
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Q
 
 from apps.instancias.constants import Fornecedor
 from apps.instancias.models import Instancia
@@ -89,3 +90,50 @@ class CadenciaFornecedor(models.Model):
     def save(self, *args, **kwargs):
         self.clean()
         super().save(*args, **kwargs)
+
+
+class StatusAtualizacaoVariacao(models.TextChoices):
+    RODANDO = "rodando", "Rodando"
+    SUCESSO = "sucesso", "Sucesso"
+    ERRO = "erro", "Erro"
+    INTERROMPIDO = "interrompido", "Interrompido"
+
+
+class AtualizacaoVariacaoFornecedor(models.Model):
+    """Operação assíncrona de atualização de uma única variação do fornecedor."""
+
+    instancia = models.ForeignKey(
+        Instancia, on_delete=models.CASCADE, related_name="atualizacoes_variacao_fornecedor"
+    )
+    variacao = models.ForeignKey(
+        "catalogo.Variacao", on_delete=models.CASCADE, related_name="atualizacoes_fornecedor"
+    )
+    fornecedor = models.CharField(max_length=20, choices=Fornecedor.choices)
+    status = models.CharField(
+        max_length=20,
+        choices=StatusAtualizacaoVariacao.choices,
+        default=StatusAtualizacaoVariacao.RODANDO,
+    )
+    celery_task_id = models.CharField(max_length=255, blank=True, default="")
+    erro = models.TextField(blank=True, default="")
+    criado_em = models.DateTimeField(auto_now_add=True)
+    iniciado_em = models.DateTimeField(null=True, blank=True)
+    finalizado_em = models.DateTimeField(null=True, blank=True)
+    heartbeat_em = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-criado_em"]
+        indexes = [
+            models.Index(fields=["variacao", "-criado_em"]),
+            models.Index(fields=["status", "heartbeat_em"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["variacao"],
+                condition=Q(status=StatusAtualizacaoVariacao.RODANDO),
+                name="uma_atualizacao_fornecedor_rodando_por_variacao",
+            )
+        ]
+
+    def __str__(self):
+        return f"Atualização do fornecedor #{self.pk} · variação {self.variacao_id} · {self.status}"

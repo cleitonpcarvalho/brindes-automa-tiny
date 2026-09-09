@@ -165,7 +165,7 @@ export function ExecucaoProdutosTabela({
                         className="flex flex-col text-left disabled:cursor-default"
                       >
                         <span className="font-mono text-[13px] text-foreground hover:underline">
-                          {linha.sku_tiny || linha.sku || "—"}
+                    {linha.sku_tiny || "—"}
                         </span>
                         <span className="text-caption-label text-muted-foreground">
                           {linha.produto_nome || "(produto removido do espelho)"}

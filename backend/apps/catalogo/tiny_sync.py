@@ -36,6 +36,7 @@ from decimal import Decimal
 from django.db.models import Count, Q
 from django.utils import timezone
 
+from apps.instancias.constants import Fornecedor
 from apps.instancias.models import CredencialFornecedor
 from apps.instancias.tiny_client import TinyApiClient
 from apps.sincronizacao.models import (
@@ -179,6 +180,36 @@ class TinySyncError(RuntimeError):
     """Falha ao sincronizar UMA variação (não interrompe o lote)."""
 
 
+class IdentidadeTinyError(TinySyncError):
+    """A variação não tem um código válido para ser publicado no Tiny."""
+
+
+def identidade_tiny(variacao) -> str:
+    """
+    Identidade externa do produto no Tiny.
+
+    `Variacao.sku` continua sendo a identidade interna/original. Só a XBZ
+    possui uma identidade externa diferente: `CodigoComposto`, preservado
+    tanto no payload bruto quanto nos atributos normalizados.
+    """
+    interno = (variacao.sku or "").strip()
+    if variacao.produto.fornecedor != Fornecedor.XBZ:
+        if not interno:
+            raise IdentidadeTinyError("SKU vazio no espelho")
+        return interno
+
+    bruto = variacao.payload_bruto or {}
+    composto = bruto.get("CodigoComposto")
+    if not composto:
+        composto = (variacao.atributos or {}).get("codigo_composto")
+    composto = str(composto or "").strip()
+    if not composto:
+        raise IdentidadeTinyError(
+            f"XBZ {interno!r} sem CodigoComposto — cadastro no Tiny bloqueado"
+        )
+    return composto
+
+
 @dataclass
 class Decisao:
     acao: str
@@ -194,28 +225,35 @@ class Decisao:
 
 def colisoes_cross_fornecedor(instancia) -> dict[str, list[str]]:
     """
-    `{sku: [fornecedores]}` para SKUs que aparecem em mais de um fornecedor
+    `{identidade_tiny: [fornecedores]}` para identidades que aparecem em mais
+    de um fornecedor
     nesta instância — esses nunca são cadastrados automaticamente (não dá
     para saber a qual produto o SKU do Tiny corresponderia).
     """
-    skus_colididos = list(
-        Variacao.objects.filter(produto__instancia=instancia)
-        .exclude(sku="")
-        .values("sku")
-        .annotate(n=Count("produto__fornecedor", distinct=True))
-        .filter(n__gt=1)
-        .values_list("sku", flat=True)
-    )
-    if not skus_colididos:
-        return {}
     mapa: dict[str, list[str]] = {}
-    for linha in (
-        Variacao.objects.filter(produto__instancia=instancia, sku__in=skus_colididos)
-        .values("sku", "produto__fornecedor")
-        .distinct()
-    ):
-        mapa.setdefault(linha["sku"], []).append(linha["produto__fornecedor"])
-    return {sku: sorted(set(forn)) for sku, forn in mapa.items()}
+    for variacao in Variacao.objects.filter(produto__instancia=instancia).select_related("produto"):
+        try:
+            codigo = identidade_tiny(variacao)
+        except IdentidadeTinyError:
+            continue
+        mapa.setdefault(codigo, []).append(variacao.produto.fornecedor)
+    return {codigo: sorted(set(forns)) for codigo, forns in mapa.items()
+            if len(forns) > 1}
+
+
+def colisoes_identidade_tiny(instancia, identidade, *, excluir_variacao_id=None) -> list[Variacao]:
+    """Variações locais que usam a mesma identidade Tiny exata."""
+    resultado = []
+    qs = Variacao.objects.filter(produto__instancia=instancia).select_related("produto")
+    if excluir_variacao_id:
+        qs = qs.exclude(pk=excluir_variacao_id)
+    for outra in qs:
+        try:
+            if identidade_tiny(outra) == identidade:
+                resultado.append(outra)
+        except IdentidadeTinyError:
+            continue
+    return resultado
 
 
 def fila_cadastro(instancia, *, fornecedor=None, skus=None, limite=None):
@@ -312,9 +350,10 @@ def bloqueio_local(variacao, colisoes_por_sku) -> str | None:
     Motivo de bloqueio determinável SEM falar com o Tiny (para o preview e
     como 1ª etapa da avaliação real). `None` = passou nas proteções locais.
     """
-    sku = (variacao.sku or "").strip()
-    if not sku:
-        return "SKU vazio no espelho"
+    try:
+        sku = identidade_tiny(variacao)
+    except IdentidadeTinyError as exc:
+        return str(exc)
     if variacao.status == StatusVariacao.DESCONTINUADO or (
         variacao.produto_id and variacao.produto.descontinuado
     ):
@@ -340,11 +379,10 @@ def avaliar_variacao(
     afetada — só segue para a etapa de imagens).
     """
     vincular_skus = set(vincular_skus or ())
-    sku = (variacao.sku or "").strip()
-
     motivo_local = bloqueio_local(variacao, colisoes_por_sku)
     if motivo_local:
         return Decisao(ACAO_BLOQUEADO, motivo_local)
+    sku = identidade_tiny(variacao)
 
     if variacao.status == StatusVariacao.CADASTRADO and (variacao.tiny_id or "").strip():
         return Decisao(ACAO_JA_CADASTRADO, f"já vinculada (tiny_id={variacao.tiny_id})")
@@ -354,7 +392,7 @@ def avaliar_variacao(
 
     existente = cliente.buscar_produto_por_sku(sku)  # GET — permitido no dry-run
     if existente:
-        if sku in vincular_skus:
+        if sku in vincular_skus or variacao.sku in vincular_skus:
             return Decisao(
                 ACAO_VINCULAR,
                 f"vínculo confirmado pelo operador (--vincular-skus); tiny_id={existente.get('id')}",
@@ -388,7 +426,7 @@ def criar_produto_no_tiny(cliente, variacao, payload) -> str:
     resultado = cliente.criar_produto(payload)
     tiny_id = _id_do_resultado(resultado)
     if not tiny_id:
-        confirmado = cliente.buscar_produto_por_sku(variacao.sku)
+        confirmado = cliente.buscar_produto_por_sku(identidade_tiny(variacao))
         tiny_id = _id_do_resultado(confirmado) if confirmado else None
     if not tiny_id:
         raise TinySyncError(
@@ -850,7 +888,7 @@ def montar_payload_produto(variacao, instancia, *, tiny_fornecedor_id=None) -> d
     # (`precos.precoCusto`); o preço de VENDA no Tiny fica sempre zerado.
     # `descricaoComplementar` vem de `Produto.descricao` do espelho.
     payload = {
-        "sku": variacao.sku,
+        "sku": identidade_tiny(variacao),
         "descricao": variacao.nome,
         "descricaoComplementar": (variacao.produto.descricao or "") if variacao.produto_id else "",
         "tipo": "S",
@@ -878,7 +916,7 @@ def montar_payload_produto(variacao, instancia, *, tiny_fornecedor_id=None) -> d
             {
                 "id": int(tiny_fornecedor_id),
                 "padrao": True,
-                "codigoProdutoNoFornecedor": variacao.sku,
+                "codigoProdutoNoFornecedor": identidade_tiny(variacao),
             }
         ]
     return payload

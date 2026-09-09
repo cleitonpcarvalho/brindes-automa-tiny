@@ -23,6 +23,7 @@ from apps.instancias.tiny_client import TinyApiClient
 
 from ...models import Variacao
 from ...tiny_dados_produto import comparar_campos, montar_payload_atualizacao
+from ...tiny_sync import identidade_tiny
 from ...tiny_sync import tiny_fornecedor_id_de
 
 
@@ -81,14 +82,16 @@ class Command(BaseCommand):
 
         antes = cliente.obter_produto(tiny_id)
         sku_no_tiny = str(antes.get("sku") or "")
-        if sku_no_tiny != sku:
+        identidade = identidade_tiny(variacao)
+        if sku_no_tiny not in {sku, identidade}:
             raise CommandError(
-                f"O produto tiny_id={tiny_id} tem sku={sku_no_tiny!r}, esperado {sku!r} — "
+                f"O produto tiny_id={tiny_id} tem sku={sku_no_tiny!r}, esperado {sku!r} ou {identidade!r} — "
                 "abortado por segurança (produto errado)."
             )
 
         payload = montar_payload_atualizacao(
-            antes, variacao=variacao, tiny_fornecedor_id=tiny_fornecedor_id
+            antes, variacao=variacao, tiny_fornecedor_id=tiny_fornecedor_id,
+            sku_atual_esperado=sku_no_tiny,
         )
 
         w("")

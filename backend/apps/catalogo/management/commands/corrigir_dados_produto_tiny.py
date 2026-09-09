@@ -55,7 +55,7 @@ from ...tiny_dados_produto import (
     comparar_campos,
     montar_payload_atualizacao,
 )
-from ...tiny_sync import tiny_fornecedor_id_de
+from ...tiny_sync import identidade_tiny, tiny_fornecedor_id_de
 
 
 class Command(BaseCommand):
@@ -144,18 +144,23 @@ class Command(BaseCommand):
                 self._progresso(processados, total, atualizados, ignorados, erros)
                 continue
 
-            sku_no_tiny = str(antes.get("sku") or "")
-            if sku_no_tiny != variacao.sku:
-                ignorados += 1
-                w(self.style.WARNING(
-                    f"{rotulo}: IGNORADO — o produto no Tiny tem sku={sku_no_tiny!r} (sem fuzzy)."
-                ))
-                self._progresso(processados, total, atualizados, ignorados, erros)
-                continue
-
             try:
+                sku_no_tiny = str(antes.get("sku") or "")
+                sku_tiny = identidade_tiny(variacao)
+                skus_aceitos = {variacao.sku, sku_tiny}
+                if sku_no_tiny not in skus_aceitos:
+                    ignorados += 1
+                    w(self.style.WARNING(
+                        f"{rotulo}: IGNORADO — o produto no Tiny tem sku={sku_no_tiny!r} (sem fuzzy)."
+                    ))
+                    self._progresso(processados, total, atualizados, ignorados, erros)
+                    continue
+
                 payload = montar_payload_atualizacao(
-                    antes, variacao=variacao, tiny_fornecedor_id=tiny_fornecedor_id
+                    antes,
+                    variacao=variacao,
+                    tiny_fornecedor_id=tiny_fornecedor_id,
+                    sku_atual_esperado=sku_no_tiny,
                 )
             except DadosProdutoError as exc:
                 erros += 1

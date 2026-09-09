@@ -47,6 +47,8 @@ def _variacao(instancia, sku, *, fornecedor="xbz", codigo_pai=None, estoque=5, s
         "nome": f"Variação {sku}",
         "preco": Decimal("10.00"),
         "estoque": estoque,
+        "payload_bruto": {"CodigoComposto": sku} if fornecedor == "xbz" else {},
+        "atributos": {"codigo_composto": sku} if fornecedor == "xbz" else {},
     }
     dados.update(kwargs)
     v = Variacao.objects.create(**dados)

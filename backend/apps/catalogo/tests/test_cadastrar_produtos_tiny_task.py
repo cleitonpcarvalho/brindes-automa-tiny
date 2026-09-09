@@ -38,7 +38,8 @@ def _variacao(instancia, sku, *, fornecedor="xbz", **kwargs):
     produto = Produto.objects.create(
         instancia=instancia, fornecedor=fornecedor, codigo_pai=f"pai-{sku}", nome=f"P {sku}"
     )
-    dados = {"produto": produto, "sku": sku, "nome": f"V {sku}", "preco": Decimal("10.00"), "estoque": 5}
+    dados = {"produto": produto, "sku": sku, "nome": f"V {sku}", "preco": Decimal("10.00"), "estoque": 5,
+             "payload_bruto": {"CodigoComposto": sku}, "atributos": {"codigo_composto": sku}}
     dados.update(kwargs)
     variacao = Variacao.objects.create(**dados)
     CredencialFornecedor.objects.update_or_create(

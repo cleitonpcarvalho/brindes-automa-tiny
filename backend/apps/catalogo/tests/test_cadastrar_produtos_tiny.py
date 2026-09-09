@@ -47,6 +47,8 @@ def _variacao_pendente(instancia, sku, **kwargs):
         "preco": Decimal("10.00"),
         "estoque": 5,
     }
+    dados["payload_bruto"] = {"CodigoComposto": sku}
+    dados["atributos"] = {"codigo_composto": sku}
     dados.update(kwargs)
     variacao = Variacao.objects.create(**dados)
     _com_tiny_fornecedor_id(instancia, "xbz")
@@ -527,6 +529,8 @@ def _produto(instancia, fornecedor, codigo_pai, nome="Produto"):
 
 def _variacao(produto, sku, **kwargs):
     dados = {"produto": produto, "sku": sku, "nome": f"Variação {sku}", "preco": Decimal("10.00"), "estoque": 5}
+    if produto.fornecedor == "xbz":
+        dados.update(payload_bruto={"CodigoComposto": sku}, atributos={"codigo_composto": sku})
     dados.update(kwargs)
     return Variacao.objects.create(**dados)
 

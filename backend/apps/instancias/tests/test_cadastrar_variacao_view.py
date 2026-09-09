@@ -41,9 +41,11 @@ def _variacao(instancia, sku, *, fornecedor="asia", estoque=5, preco="10.00",
         instancia=instancia, fornecedor=fornecedor, codigo_pai=codigo_pai or f"pai-{sku}",
         nome=sku, descricao=descricao_produto,
     )
-    variacao = Variacao.objects.create(
-        produto=produto, sku=sku, nome=sku, preco=Decimal(preco), estoque=estoque, **kwargs
-    )
+    dados = dict(produto=produto, sku=sku, nome=sku, preco=Decimal(preco), estoque=estoque, **kwargs)
+    if fornecedor == "xbz":
+        dados.setdefault("payload_bruto", {"CodigoComposto": sku})
+        dados.setdefault("atributos", {"codigo_composto": sku})
+    variacao = Variacao.objects.create(**dados)
     if com_id_fornecedor:
         CredencialFornecedor.objects.update_or_create(
             instancia=instancia, fornecedor=fornecedor, defaults={"tiny_fornecedor_id": TINY_FORN_ID}

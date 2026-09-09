@@ -27,6 +27,10 @@ e a persistência do marcador.
 
 import json
 
+from apps.instancias.constants import Fornecedor
+
+from .tiny_sync import identidade_tiny
+
 # Campos escalares graváveis do topo de AtualizarProdutoRequestModel.
 CAMPOS_TOPO_GRAVAVEIS = (
     "sku",
@@ -67,7 +71,9 @@ class DadosProdutoError(RuntimeError):
     """Falha ao preparar os dados de UM produto (não deve parar o lote)."""
 
 
-def montar_fornecedores(atuais, *, tiny_fornecedor_id, codigo_produto_no_fornecedor):
+def montar_fornecedores(
+    atuais, *, tiny_fornecedor_id, codigo_produto_no_fornecedor, sobrescrever_codigo=False
+):
     """
     Preserva TODOS os fornecedores já associados ao produto e garante o nosso
     (`tiny_fornecedor_id`) na lista, sem duplicar.
@@ -110,7 +116,9 @@ def montar_fornecedores(atuais, *, tiny_fornecedor_id, codigo_produto_no_fornece
                 {
                     "id": alvo,
                     "codigoProdutoNoFornecedor": (
-                        item.get("codigoProdutoNoFornecedor") or codigo_produto_no_fornecedor
+                        codigo_produto_no_fornecedor
+                        if sobrescrever_codigo
+                        else (item.get("codigoProdutoNoFornecedor") or codigo_produto_no_fornecedor)
                     ),
                     "padrao": True,  # nunca desmarca o nosso
                 }
@@ -147,7 +155,9 @@ def _copiar_subobjeto(payload, detalhe, chave, subchaves):
         payload[chave] = graveis
 
 
-def montar_payload_atualizacao(detalhe, *, variacao, tiny_fornecedor_id):
+def montar_payload_atualizacao(
+    detalhe, *, variacao, tiny_fornecedor_id, sku_atual_esperado=None
+):
     """
     Corpo do `PUT /produtos/{id}` para UMA variação já cadastrada, a partir
     do GET (`detalhe`). Reenvia todo campo gravável presente e SOBREPÕE só o
@@ -156,12 +166,14 @@ def montar_payload_atualizacao(detalhe, *, variacao, tiny_fornecedor_id):
       - precos                <- {preco: 0, precoPromocional: 0, precoCusto: Variacao.preco}
       - fornecedores          <- merge com os existentes (montar_fornecedores)
 
-    Confere o SKU (o `detalhe` tem que ser o do produto certo) — sem fuzzy.
+    Confere o SKU atual do `detalhe` sem fuzzy e publica a identidade Tiny
+    correta (para XBZ, o CodigoComposto).
     """
     sku_no_tiny = str(detalhe.get("sku") or "")
-    if sku_no_tiny != variacao.sku:
+    sku_esperado = sku_atual_esperado or identidade_tiny(variacao)
+    if sku_no_tiny != sku_esperado:
         raise DadosProdutoError(
-            f"SKU do GET ({sku_no_tiny!r}) != SKU do espelho ({variacao.sku!r}) — abortado."
+            f"SKU do GET ({sku_no_tiny!r}) != SKU esperado ({sku_esperado!r}) — abortado."
         )
 
     payload = {}
@@ -196,10 +208,13 @@ def montar_payload_atualizacao(detalhe, *, variacao, tiny_fornecedor_id):
         "precoPromocional": 0,
         "precoCusto": float(variacao.preco_custo_tiny),      # = Variacao.preco
     }
+    codigo_fornecedor = identidade_tiny(variacao)
+    payload["sku"] = codigo_fornecedor
     payload["fornecedores"] = montar_fornecedores(
         detalhe.get("fornecedores"),
         tiny_fornecedor_id=tiny_fornecedor_id,
-        codigo_produto_no_fornecedor=variacao.sku,
+        codigo_produto_no_fornecedor=codigo_fornecedor,
+        sobrescrever_codigo=variacao.produto.fornecedor == Fornecedor.XBZ,
     )
     return payload
 

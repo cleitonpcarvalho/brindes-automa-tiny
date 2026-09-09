@@ -9,6 +9,8 @@ campo `LogItem.evento` (estruturado). Nenhuma interpretação de texto livre.
 
 from django.db.models import Count, Q, Subquery
 
+from apps.catalogo.tiny_sync import IdentidadeTinyError, identidade_tiny
+
 from .models import EVENTOS_DESFECHO, EventoLog, LogItem
 
 # filtro da UI -> conjunto de eventos de desfecho
@@ -95,6 +97,8 @@ def montar_linhas(execucao, logs):
                 "log_id": log.id,
                 "variacao_id": log.variacao_id,
                 "sku": variacao.sku if variacao else "",
+                "codigo_fornecedor": variacao.sku if variacao else "",
+                "sku_tiny": _identidade_tiny_segura(variacao),
                 "produto_nome": (produto.nome if produto else "") or (variacao.nome if variacao else ""),
                 "resultado": log.evento,
                 "tiny_id": str(tiny_id),
@@ -105,6 +109,15 @@ def montar_linhas(execucao, logs):
             }
         )
     return linhas
+
+
+def _identidade_tiny_segura(variacao):
+    if not variacao:
+        return ""
+    try:
+        return identidade_tiny(variacao)
+    except IdentidadeTinyError:
+        return ""
 
 
 def _detalhe_curto(log) -> str:

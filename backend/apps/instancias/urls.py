@@ -5,6 +5,8 @@ from .auth_views import LoginView, LogoutView, MeView
 from .views import (
     CadastrarProdutosTinyView,
     CadastrarVariacaoTinyView,
+    AtualizarVariacaoFornecedorView,
+    AtualizarVariacaoTinyView,
     CadastroTinyPreviewView,
     PausarCadastroTinyView,
     RetomarCadastroTinyView,
@@ -107,6 +109,16 @@ urlpatterns = router.urls + [
         "instancias/<slug:slug>/produtos/<int:variacao_id>/cadastro-tiny/",
         CadastrarVariacaoTinyView.as_view(),
         name="instancia-produto-cadastro-tiny",
+    ),
+    path(
+        "instancias/<slug:slug>/produtos/<int:variacao_id>/atualizar-fornecedor/",
+        AtualizarVariacaoFornecedorView.as_view(),
+        name="instancia-produto-atualizar-fornecedor",
+    ),
+    path(
+        "instancias/<slug:slug>/produtos/<int:variacao_id>/atualizar-tiny/",
+        AtualizarVariacaoTinyView.as_view(),
+        name="instancia-produto-atualizar-tiny",
     ),
     path(
         "instancias/<slug:slug>/execucoes/",

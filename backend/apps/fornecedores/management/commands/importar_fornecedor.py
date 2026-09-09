@@ -381,7 +381,9 @@ class Command(BaseCommand):
 
         return totais
 
-    def _gravar_produto(self, instancia, fornecedor, produto_normalizado):
+    def _gravar_produto(
+        self, instancia, fornecedor, produto_normalizado, *, reset_tiny_markers=True
+    ):
         produto, _ = Produto.objects.get_or_create(
             instancia=instancia,
             fornecedor=fornecedor,
@@ -407,7 +409,7 @@ class Command(BaseCommand):
         produto.payload_bruto = produto_normalizado.payload_bruto
         produto.save()
 
-        if descricao_mudou:
+        if descricao_mudou and reset_tiny_markers:
             Variacao.objects.filter(
                 produto=produto, status=StatusVariacao.CADASTRADO
             ).update(dados_tiny_sincronizados_em=None)

@@ -47,7 +47,7 @@ export function ProdutosTabela({ slug, itens, isLoading, isError, onRetry, temFi
         <TableHeader>
           <TableRow>
             <TableHead>Fornecedor</TableHead>
-            <TableHead>SKU / Código</TableHead>
+            <TableHead>Código fornecedor</TableHead>
             <TableHead>Produto</TableHead>
             <TableHead>Variação</TableHead>
             <TableHead className="text-right">Estoque</TableHead>

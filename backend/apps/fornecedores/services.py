@@ -50,6 +50,48 @@ def obter_configuracao(fornecedor):
     return {"url_base_imagens": config.url_base_imagens} if config else {}
 
 
+def atualizar_variacao_do_fornecedor(instancia, variacao):
+    """Busca, normaliza e persiste somente a variação indicada.
+
+    Os adapters atuais expõem apenas endpoints de catálogo completo. A rede
+    pode portanto devolver o catálogo inteiro, mas apenas o produto-pai e a
+    variação alvo são persistidos. Isso evita transformar a ação em uma
+    sincronização silenciosa de todos os itens.
+    """
+    from apps.fornecedores.registry import obter_cliente
+    from apps.fornecedores.management.commands.importar_fornecedor import Command
+
+    fornecedor = variacao.produto.fornecedor
+    checar_limite_diario_xbz(instancia, fornecedor)
+    credencial = obter_credencial_ativa(instancia, fornecedor)
+    cliente = obter_cliente(fornecedor, configuracao=obter_configuracao(fornecedor))
+    normalizados = cliente.normalizar(cliente.buscar(credencial.credenciais))
+
+    alvo = None
+    for produto_normalizado in normalizados:
+        for variacao_normalizada in produto_normalizado.variacoes:
+            if variacao_normalizada.sku == variacao.sku:
+                alvo = (produto_normalizado, variacao_normalizada)
+                break
+        if alvo:
+            break
+    if alvo is None:
+        raise ValueError(
+            f"A variação {variacao.sku!r} não foi encontrada no catálogo atual de {fornecedor}."
+        )
+
+    produto_normalizado, variacao_normalizada = alvo
+    comando = Command()
+    produto = comando._gravar_produto(
+        instancia,
+        fornecedor,
+        produto_normalizado,
+        reset_tiny_markers=False,
+    )
+    _resultado, atualizada = comando._gravar_variacao(produto, variacao_normalizada)
+    return atualizada
+
+
 _DEFAULT_INTERVALO_MINUTOS = 60
 
 

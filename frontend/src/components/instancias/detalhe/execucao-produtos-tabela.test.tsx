@@ -20,6 +20,8 @@ function linha(over: Partial<ExecucaoProduto> = {}): ExecucaoProduto {
     log_id: 1,
     variacao_id: 42,
     sku: "MC511",
+    codigo_fornecedor: "MC511",
+    sku_tiny: "MC511",
     produto_nome: "Mochila para notebook",
     resultado: "criado",
     tiny_id: "924252038",
@@ -96,12 +98,14 @@ describe("ExecucaoProdutosTabela", () => {
   })
 
   it("'Ver produto' e o clique no SKU levam para a Variacao correta", () => {
-    renderTabela({ itens: [linha({ variacao_id: 99, sku: "SKU-99" })] })
+    renderTabela({
+      itens: [linha({ variacao_id: 99, sku: "SKU-99", codigo_fornecedor: "SKU-99", sku_tiny: "SKU-99" })],
+    })
     fireEvent.click(screen.getByRole("button", { name: "Ver produto" }))
     expect(push).toHaveBeenCalledWith("/instancias/loja-x/produtos/99")
 
     push.mockClear()
-    fireEvent.click(screen.getByText("SKU-99"))
+    fireEvent.click(screen.getByRole("button", { name: /SKU-99/ }))
     expect(push).toHaveBeenCalledWith("/instancias/loja-x/produtos/99")
   })
 

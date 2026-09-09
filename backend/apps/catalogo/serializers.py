@@ -3,6 +3,14 @@ from rest_framework import serializers
 from apps.instancias.constants import Fornecedor
 
 from .models import Variacao
+from .tiny_sync import IdentidadeTinyError, identidade_tiny
+
+
+def _sku_tiny(variacao):
+    try:
+        return identidade_tiny(variacao)
+    except IdentidadeTinyError:
+        return ""
 
 
 class VariacaoEspelhoSerializer(serializers.ModelSerializer):
@@ -28,6 +36,11 @@ class VariacaoEspelhoSerializer(serializers.ModelSerializer):
     # aguardando reposição, cadastrado, descontinuado, erro); o rótulo legível
     # acompanha para a UI não precisar reimplementar o mapa de choices.
     status_rotulo = serializers.CharField(source="get_status_display", read_only=True)
+    codigo_fornecedor = serializers.CharField(source="sku", read_only=True)
+    sku_tiny = serializers.SerializerMethodField()
+
+    def get_sku_tiny(self, obj):
+        return _sku_tiny(obj)
 
     class Meta:
         model = Variacao
@@ -38,6 +51,8 @@ class VariacaoEspelhoSerializer(serializers.ModelSerializer):
             "produto_nome",
             "produto_descontinuado",
             "sku",
+            "codigo_fornecedor",
+            "sku_tiny",
             "nome",
             "cor",
             "tamanho",
@@ -89,6 +104,11 @@ class VariacaoDetalheSerializer(serializers.ModelSerializer):
         source="produto.atualizado_em_fornecedor", read_only=True, allow_null=True
     )
     status_rotulo = serializers.CharField(source="get_status_display", read_only=True)
+    codigo_fornecedor = serializers.CharField(source="sku", read_only=True)
+    sku_tiny = serializers.SerializerMethodField()
+
+    def get_sku_tiny(self, obj):
+        return _sku_tiny(obj)
 
     class Meta:
         model = Variacao
@@ -106,6 +126,8 @@ class VariacaoDetalheSerializer(serializers.ModelSerializer):
             "produto_descontinuado",
             "produto_atualizado_em_fornecedor",
             "sku",
+            "codigo_fornecedor",
+            "sku_tiny",
             "nome",
             "ncm",
             "preco",

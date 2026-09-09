@@ -21,6 +21,7 @@ from apps.catalogo.serializers import VariacaoDetalheSerializer, VariacaoEspelho
 from apps.fornecedores.models import CadenciaFornecedor
 from apps.fornecedores.services import (
     checar_limite_diario_xbz,
+    atualizar_variacao_do_fornecedor,
     listar_cadencias_com_defaults,
     obter_credencial_ativa,
 )
@@ -34,6 +35,7 @@ from apps.catalogo.tasks import (
 from apps.catalogo.tiny_sync import (
     EventosSincronizacao,
     cadastrar_variacao_individual,
+    atualizar_variacao_individual,
     cadastro_tiny_bloqueia_espelho,
     estado_cadastro_tiny,
     estimar_cadastro,
@@ -803,6 +805,55 @@ class VariacaoDetalheView(generics.RetrieveAPIView):
             id=self.kwargs["variacao_id"],
             produto__instancia__slug=self.kwargs["slug"],
         )
+
+
+class AtualizarVariacaoFornecedorView(APIView):
+    """Busca e grava somente a variação indicada no espelho local."""
+
+    @extend_schema(request=None, responses=VariacaoDetalheSerializer)
+    def post(self, request, slug, variacao_id):
+        instancia = _obter_instancia_ou_404(slug)
+        with transaction.atomic():
+            variacao = get_object_or_404(
+                Variacao.objects.select_for_update().select_related("produto"),
+                pk=variacao_id,
+                produto__instancia=instancia,
+            )
+            try:
+                atualizar_variacao_do_fornecedor(instancia, variacao)
+            except Exception as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            variacao.refresh_from_db()
+        return Response(VariacaoDetalheSerializer(variacao).data)
+
+
+class AtualizarVariacaoTinyView(APIView):
+    """Cadastra ou atualiza somente uma variação no Tiny."""
+
+    @extend_schema(request=None, responses=VariacaoDetalheSerializer)
+    def post(self, request, slug, variacao_id):
+        instancia = _obter_instancia_ou_404(slug)
+        with transaction.atomic():
+            variacao = get_object_or_404(
+                Variacao.objects.select_for_update().select_related("produto"),
+                pk=variacao_id,
+                produto__instancia=instancia,
+            )
+            fornecedor = variacao.produto.fornecedor
+            pronta, motivo = _pronta_para_cadastro_tiny(instancia, fornecedor)
+            if not pronta:
+                return Response({"detail": motivo}, status=status.HTTP_400_BAD_REQUEST)
+            if cadastro_tiny_bloqueia_espelho(instancia, fornecedor):
+                return Response(
+                    {"detail": "Há uma sincronização em massa deste fornecedor com o Tiny em andamento."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            try:
+                atualizar_variacao_individual(instancia, variacao)
+            except Exception as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            variacao.refresh_from_db()
+        return Response(VariacaoDetalheSerializer(variacao).data)
 
 
 class _ColetorResultadoVariacao(EventosSincronizacao):

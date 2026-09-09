@@ -1070,6 +1070,8 @@ export interface components {
             log_id: number;
             variacao_id: number | null;
             sku: string;
+            codigo_fornecedor: string;
+            sku_tiny: string;
             produto_nome: string;
             resultado: components["schemas"]["EventoLogEnum"];
             tiny_id: string;
@@ -1605,6 +1607,8 @@ export interface components {
             /** Format: date-time */
             readonly produto_atualizado_em_fornecedor: string | null;
             sku: string;
+            codigo_fornecedor: string;
+            sku_tiny: string;
             nome: string;
             /** @description NCM brasileiro. Na Spot o campo de origem é o 'Taric': o normalizador (apps/fornecedores/spot.py, _ncm_do_taric) aproveita só quando ele tem 8 dígitos (~95,5% da amostra) e nunca trunca os códigos CN10/TARIC da UE de 9-10 dígitos; o valor cru fica sempre em atributos['taric']. Backfill dos registros antigos: backfill_ncm_spot. */
             ncm?: string;
@@ -1688,6 +1692,8 @@ export interface components {
             readonly produto_nome: string;
             readonly produto_descontinuado: boolean;
             sku: string;
+            codigo_fornecedor: string;
+            sku_tiny: string;
             nome: string;
             cor?: string;
             tamanho?: string;

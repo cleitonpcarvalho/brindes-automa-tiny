@@ -13,6 +13,8 @@ function variacao(overrides: Partial<VariacaoEspelho> = {}): VariacaoEspelho {
     produto_nome: "Mini caderno",
     produto_descontinuado: false,
     sku: "BL026-BG",
+    codigo_fornecedor: "BL026-BG",
+    sku_tiny: "BL026-BG",
     nome: "Mini caderno bege",
     cor: "Bege",
     tamanho: "",

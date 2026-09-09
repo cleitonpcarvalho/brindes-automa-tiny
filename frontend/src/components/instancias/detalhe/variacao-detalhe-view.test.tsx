@@ -1,13 +1,22 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { render, screen } from "@testing-library/react"
+import { render, screen, waitFor } from "@testing-library/react"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import * as hooks from "@/lib/api/hooks"
 import { ApiError } from "@/lib/api/client"
 import { VariacaoDetalheView } from "./variacao-detalhe-view"
 import type { VariacaoDetalhe } from "@/lib/api/types"
+import { ToastProvider } from "@/components/ui/toast"
 
-vi.mock("@/lib/api/hooks", () => ({ useVariacaoInstancia: vi.fn() }))
+vi.mock("@/lib/api/hooks", () => ({
+  useVariacaoInstancia: vi.fn(),
+  useAtualizarVariacaoFornecedor: vi.fn(),
+  useAtualizarVariacaoTiny: vi.fn(),
+}))
+
+const atualizarFornecedor = vi.fn()
+const atualizarTiny = vi.fn()
 
 function detalhe(overrides: Partial<VariacaoDetalhe> = {}): VariacaoDetalhe {
   return {
@@ -23,7 +32,9 @@ function detalhe(overrides: Partial<VariacaoDetalhe> = {}): VariacaoDetalhe {
     produto_atributos: {},
     produto_descontinuado: false,
     produto_atualizado_em_fornecedor: null,
-    sku: "CN-01-AZUL",
+    sku: "X134066",
+    codigo_fornecedor: "X134066",
+    sku_tiny: "18700-AZU",
     nome: "Caneca azul 300ml",
     ncm: "69120000",
     preco: "19.90",
@@ -66,15 +77,30 @@ function mock(estado: Record<string, unknown>) {
   } as never)
 }
 
+function renderDetalhe() {
+  return render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ToastProvider>
+        <VariacaoDetalheView slug="loja-x" variacaoId="42" />
+      </ToastProvider>
+    </QueryClientProvider>,
+  )
+}
+
 describe("VariacaoDetalheView", () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(hooks.useAtualizarVariacaoFornecedor).mockReturnValue({ mutate: atualizarFornecedor, isPending: false } as never)
+    vi.mocked(hooks.useAtualizarVariacaoTiny).mockReturnValue({ mutate: atualizarTiny, isPending: false } as never)
+  })
 
   it("renderiza cabeçalho, informações principais e link de voltar", () => {
     mock({ data: detalhe() })
-    render(<VariacaoDetalheView slug="loja-x" variacaoId="42" />)
+    renderDetalhe()
 
     expect(screen.getByRole("heading", { name: "Caneca de porcelana" })).toBeInTheDocument()
-    expect(screen.getAllByText("CN-01-AZUL").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("X134066").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("18700-AZU").length).toBeGreaterThan(0)
     expect(screen.getAllByText("XBZ").length).toBeGreaterThan(0)
     expect(screen.getAllByText("Cadastrado no Tiny").length).toBeGreaterThan(0)
     expect(screen.getByText("69120000")).toBeInTheDocument()
@@ -88,7 +114,7 @@ describe("VariacaoDetalheView", () => {
 
   it("mostra as especificações (dimensões, peso, categorias, atributos)", () => {
     mock({ data: detalhe() })
-    render(<VariacaoDetalheView slug="loja-x" variacaoId="42" />)
+    renderDetalhe()
 
     expect(screen.getByText("Especificações")).toBeInTheDocument()
     expect(screen.getByText("Largura 8 cm")).toBeInTheDocument()
@@ -103,7 +129,7 @@ describe("VariacaoDetalheView", () => {
       "Mochila para notebook de 15,6 polegadas em poliéster 600D com dois compartimentos, " +
       "divisória almofadada, interior forrado e alça de transporte reforçada para uso diário."
     mock({ data: detalhe({ produto_descricao: longa }) })
-    render(<VariacaoDetalheView slug="loja-x" variacaoId="42" />)
+    renderDetalhe()
 
     const paragrafo = screen.getByText(longa)
     expect(paragrafo).toBeInTheDocument()
@@ -150,7 +176,7 @@ describe("VariacaoDetalheView", () => {
         produto_atributos: { "dimensao-produto": "39x42x18cm (AxLxP)" },
       }),
     })
-    const { container } = render(<VariacaoDetalheView slug="loja-x" variacaoId="42" />)
+    const { container } = renderDetalhe()
 
     expect(screen.getByText("Cinza")).toBeInTheDocument()
     expect(screen.getByText("29L")).toBeInTheDocument()
@@ -163,19 +189,19 @@ describe("VariacaoDetalheView", () => {
 
   it("mantém um atributo de valor vazio visível como travessão (não some da lista)", () => {
     mock({ data: detalhe({ atributos: { garantia_do_produto: "" }, produto_atributos: {} }) })
-    render(<VariacaoDetalheView slug="loja-x" variacaoId="42" />)
+    renderDetalhe()
     expect(screen.getByText("garantia do produto")).toBeInTheDocument()
   })
 
   it("renderiza a galeria com miniaturas quando há múltiplas imagens", () => {
     mock({ data: detalhe() })
-    render(<VariacaoDetalheView slug="loja-x" variacaoId="42" />)
+    renderDetalhe()
     expect(screen.getAllByRole("button", { name: /Ver imagem \d+ de 2/ })).toHaveLength(2)
   })
 
   it("usa o fallback de imagem quando não há imagens na variação nem no produto", () => {
     mock({ data: detalhe({ imagens: [], produto_imagens: [] }) })
-    render(<VariacaoDetalheView slug="loja-x" variacaoId="42" />)
+    renderDetalhe()
     expect(screen.getByText("Sem imagem no espelho")).toBeInTheDocument()
   })
 
@@ -201,7 +227,7 @@ describe("VariacaoDetalheView", () => {
         status_rotulo: "Pendente",
       }),
     })
-    render(<VariacaoDetalheView slug="loja-x" variacaoId="42" />)
+    renderDetalhe()
 
     expect(screen.queryByText("Tiny ID")).not.toBeInTheDocument()
     expect(screen.queryByText("Especificações")).not.toBeInTheDocument()
@@ -213,25 +239,61 @@ describe("VariacaoDetalheView", () => {
 
   it("mostra o alerta de último erro quando existe", () => {
     mock({ data: detalhe({ status: "erro", status_rotulo: "Erro ao cadastrar", ultimo_erro: "SKU já existe no Tiny" }) })
-    render(<VariacaoDetalheView slug="loja-x" variacaoId="42" />)
+    renderDetalhe()
     expect(screen.getByText("SKU já existe no Tiny")).toBeInTheDocument()
   })
 
   it("mostra 'Variação não encontrada' num 404", () => {
     mock({ isError: true, error: new ApiError(404, "Não encontrado.") })
-    render(<VariacaoDetalheView slug="loja-x" variacaoId="999" />)
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ToastProvider>
+          <VariacaoDetalheView slug="loja-x" variacaoId="999" />
+        </ToastProvider>
+      </QueryClientProvider>,
+    )
     expect(screen.getByText("Variação não encontrada")).toBeInTheDocument()
   })
 
   it("mostra o estado de erro genérico com retry para falhas não-404", () => {
     mock({ isError: true, error: new ApiError(500, "Erro interno.") })
-    render(<VariacaoDetalheView slug="loja-x" variacaoId="42" />)
+    renderDetalhe()
     expect(screen.getByRole("button", { name: "Tentar de novo" })).toBeInTheDocument()
   })
 
   it("mostra skeletons enquanto carrega", () => {
     mock({ isLoading: true })
-    const { container } = render(<VariacaoDetalheView slug="loja-x" variacaoId="42" />)
+    const { container } = renderDetalhe()
     expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0)
+  })
+
+  it("aciona cada atualização individual com a variação atual", () => {
+    mock({ data: detalhe() })
+    renderDetalhe()
+
+    screen.getByRole("button", { name: "Atualizar do fornecedor" }).click()
+    screen.getByRole("button", { name: "Atualizar no Tiny" }).click()
+
+    expect(atualizarFornecedor).toHaveBeenCalledWith(42, expect.objectContaining({ onSuccess: expect.any(Function) }))
+    expect(atualizarTiny).toHaveBeenCalledWith(42, expect.objectContaining({ onSuccess: expect.any(Function) }))
+  })
+
+  it("desabilita as duas ações e mostra loading durante uma atualização", () => {
+    vi.mocked(hooks.useAtualizarVariacaoFornecedor).mockReturnValue({ mutate: atualizarFornecedor, isPending: true } as never)
+    mock({ data: detalhe() })
+    renderDetalhe()
+
+    expect(screen.getByRole("button", { name: "Atualizando…" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Atualizar no Tiny" })).toBeDisabled()
+  })
+
+  it("exibe o erro devolvido pelo backend no toast", async () => {
+    atualizarFornecedor.mockImplementation((_id, opcoes) => opcoes.onError(new ApiError(502, "Fornecedor indisponível")))
+    mock({ data: detalhe() })
+    renderDetalhe()
+
+    screen.getByRole("button", { name: "Atualizar do fornecedor" }).click()
+
+    await waitFor(() => expect(screen.getByText("Fornecedor indisponível")).toBeInTheDocument())
   })
 })

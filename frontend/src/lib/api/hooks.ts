@@ -211,6 +211,36 @@ export function useVariacaoInstancia(slug: string, variacaoId: string | number) 
   });
 }
 
+export function useAtualizarVariacaoFornecedor(slug: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    retry: false,
+    mutationFn: (variacaoId: number) =>
+      apiClient.post<VariacaoDetalhe>(
+        `/instancias/${slug}/produtos/${variacaoId}/atualizar-fornecedor/`,
+      ),
+    onSuccess: (dados, variacaoId) => {
+      queryClient.setQueryData(["instancias", "produtos", "detalhe", slug, String(variacaoId)], dados);
+      queryClient.invalidateQueries({ queryKey: ["instancias", "produtos", slug] });
+    },
+  });
+}
+
+export function useAtualizarVariacaoTiny(slug: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    retry: false,
+    mutationFn: (variacaoId: number) =>
+      apiClient.post<VariacaoDetalhe>(
+        `/instancias/${slug}/produtos/${variacaoId}/atualizar-tiny/`,
+      ),
+    onSuccess: (dados, variacaoId) => {
+      queryClient.setQueryData(["instancias", "produtos", "detalhe", slug, String(variacaoId)], dados);
+      queryClient.invalidateQueries({ queryKey: ["instancias", "produtos", slug] });
+    },
+  });
+}
+
 /**
  * Cadastro INDIVIDUAL de uma variação (SKU) no Tiny — ação "Enviar ao Tiny" da
  * tabela de Produtos. Chama o endpoint que reusa o mesmo fluxo validado do

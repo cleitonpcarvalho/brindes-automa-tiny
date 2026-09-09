@@ -10,6 +10,8 @@ function linha(over: Partial<ExecucaoProduto> = {}): ExecucaoProduto {
     log_id: 10,
     variacao_id: 42,
     sku: "MC511",
+    codigo_fornecedor: "MC511",
+    sku_tiny: "MC511",
     produto_nome: "Mochila",
     resultado: "erro",
     tiny_id: "",

@@ -846,6 +846,57 @@ def cadastrar_variacao_individual(
     return resultado
 
 
+def atualizar_variacao_individual(
+    instancia,
+    variacao,
+    *,
+    cliente: TinyApiClient | None = None,
+    eventos: EventosSincronizacao | None = None,
+) -> ResultadoSincronizacao:
+    """Atualiza uma variação já vinculada no Tiny, ou cadastra-a se pendente."""
+    if not (variacao.tiny_id or "").strip():
+        return cadastrar_variacao_individual(instancia, variacao, cliente=cliente, eventos=eventos)
+
+    from .tiny_dados_produto import DadosProdutoError, montar_payload_atualizacao
+
+    eventos = eventos or EventosSincronizacao()
+    cliente = cliente or TinyApiClient(instancia, somente_leitura=False)
+    detalhe = cliente.obter_produto(int(variacao.tiny_id))
+    sku_no_tiny = str(detalhe.get("sku") or "")
+    identidade = identidade_tiny(variacao)
+    aceitos = {identidade, variacao.sku}
+    if sku_no_tiny not in aceitos:
+        raise DadosProdutoError(
+            f"SKU do Tiny ({sku_no_tiny!r}) não corresponde à variação ({identidade!r}); atualização abortada."
+        )
+    fornecedor_id = tiny_fornecedor_id_de(instancia, variacao.produto.fornecedor)
+    if not fornecedor_id:
+        raise DadosProdutoError(MOTIVO_SEM_TINY_FORNECEDOR_ID)
+    payload = montar_payload_atualizacao(
+        detalhe,
+        variacao=variacao,
+        tiny_fornecedor_id=fornecedor_id,
+        sku_atual_esperado=sku_no_tiny,
+    )
+    cliente.atualizar_produto(int(variacao.tiny_id), payload)
+    cliente.atualizar_estoque(
+        int(variacao.tiny_id),
+        quantidade=variacao.estoque,
+        preco_unitario=variacao.preco_custo_tiny,
+    )
+    variacao.preco_custo_tiny_sincronizado = variacao.preco
+    variacao.estoque_tiny_sincronizado = variacao.estoque
+    variacao.dados_tiny_sincronizados_em = timezone.now()
+    variacao.ultimo_erro = ""
+    variacao.save(update_fields=[
+        "preco_custo_tiny_sincronizado", "estoque_tiny_sincronizado",
+        "dados_tiny_sincronizados_em", "ultimo_erro", "atualizado_em",
+    ])
+    resultado = ResultadoSincronizacao(fila=1, vinculadas=1)
+    _sincronizar_imagens_do_sku(cliente, variacao, resultado, eventos, dry_run=False)
+    return resultado
+
+
 def _sincronizar_imagens_do_sku(cliente, variacao, resultado, eventos, *, dry_run: bool) -> None:
     """
     Sincroniza as imagens de UM SKU logo após ele ter sido cadastrado/

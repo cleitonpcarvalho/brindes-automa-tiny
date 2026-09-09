@@ -1,5 +1,6 @@
 from decimal import Decimal
 from unittest.mock import patch
+from unittest.mock import MagicMock
 
 from django.test import TestCase
 
@@ -20,6 +21,7 @@ from ..tiny_sync import (
     ControladorSincronizacao,
     estimar_cadastro,
     executar_sincronizacao_tiny,
+    atualizar_variacao_individual,
 )
 
 
@@ -94,6 +96,28 @@ def _rodar(instancia, fornecedor, mock, **kwargs):
 
 
 class OrquestradorTests(TestCase):
+    @patch("apps.catalogo.tiny_sync._sincronizar_imagens_do_sku")
+    def test_atualizacao_existente_xbz_publica_codigo_composto(self, _imagens):
+        inst = _instancia()
+        v = _variacao(
+            inst,
+            "X134066",
+            payload_bruto={"CodigoComposto": "18700-AZU"},
+            atributos={"codigo_composto": "18700-AZU"},
+            status=StatusVariacao.CADASTRADO,
+            tiny_id="123",
+        )
+        cliente = MagicMock()
+        cliente.obter_produto.return_value = {"id": 123, "sku": "X134066", "fornecedores": []}
+
+        atualizar_variacao_individual(inst, v, cliente=cliente)
+
+        payload = cliente.atualizar_produto.call_args.args[1]
+        self.assertEqual(payload["sku"], "18700-AZU")
+        self.assertEqual(payload["fornecedores"][0]["codigoProdutoNoFornecedor"], "18700-AZU")
+        self.assertEqual(payload["precos"]["preco"], 0.0)
+        cliente.atualizar_estoque.assert_called_once()
+
     def test_variacao_elegivel_e_criada_no_tiny(self):
         inst = _instancia()
         v = _variacao(inst, "SKU-OK")

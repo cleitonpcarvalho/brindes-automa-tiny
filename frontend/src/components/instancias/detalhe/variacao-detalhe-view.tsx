@@ -2,13 +2,15 @@
 
 import type { ReactNode } from "react"
 import Link from "next/link"
-import { ArrowLeft, CircleAlert } from "lucide-react"
+import { ArrowLeft, CircleAlert, RefreshCw, Send } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ErrorState } from "@/components/ui/empty-error-state"
 import { ApiError } from "@/lib/api/client"
-import { useVariacaoInstancia } from "@/lib/api/hooks"
+import { useAtualizarVariacaoFornecedor, useAtualizarVariacaoTiny, useVariacaoInstancia } from "@/lib/api/hooks"
+import { useToast } from "@/components/ui/toast"
 import { ROTULO_FORNECEDOR } from "../cor-fornecedor"
 import { varianteBadgeStatus } from "./variacao-status"
 import { apresentarAtributo, humanizarChave } from "./atributo-formato"
@@ -67,6 +69,54 @@ function ListaDeCampos({ children }: { children: ReactNode }) {
 
 function variacaoTexto(dados: VariacaoDetalhe): string {
   return [dados.cor, dados.tamanho, dados.capacidade].filter(Boolean).join(" · ") || TRACO
+}
+
+function AcoesVariacao({ dados, slug }: { dados: VariacaoDetalhe; slug: string }) {
+  const toast = useToast()
+  const fornecedor = useAtualizarVariacaoFornecedor(slug)
+  const tiny = useAtualizarVariacaoTiny(slug)
+  const emAtualizacao = fornecedor.isPending || tiny.isPending
+
+  const atualizarFornecedor = () => {
+    if (emAtualizacao) return
+    fornecedor.mutate(dados.id, {
+      onSuccess: () => toast.sucesso("Variação atualizada a partir do fornecedor."),
+      onError: (erro) =>
+        toast.erro(erro instanceof ApiError ? erro.message : "Não foi possível atualizar do fornecedor."),
+    })
+  }
+
+  const atualizarTiny = () => {
+    if (emAtualizacao) return
+    tiny.mutate(dados.id, {
+      onSuccess: () => toast.sucesso("Variação atualizada no Tiny."),
+      onError: (erro) =>
+        toast.erro(erro instanceof ApiError ? erro.message : "Não foi possível atualizar no Tiny."),
+    })
+  }
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      <Button
+        variant="secondary"
+        size="sm"
+        disabled={emAtualizacao}
+        onClick={atualizarFornecedor}
+      >
+        <RefreshCw size={14} className={fornecedor.isPending ? "animate-spin" : undefined} />
+        {fornecedor.isPending ? "Atualizando…" : "Atualizar do fornecedor"}
+      </Button>
+      <Button
+        variant="primary"
+        size="sm"
+        disabled={emAtualizacao}
+        onClick={atualizarTiny}
+      >
+        <Send size={14} className={tiny.isPending ? "animate-spin" : undefined} />
+        {tiny.isPending ? "Atualizando…" : "Atualizar no Tiny"}
+      </Button>
+    </div>
+  )
 }
 
 function EspecificacoesCard({ dados }: { dados: VariacaoDetalhe }) {
@@ -216,8 +266,13 @@ function Conteudo({ slug, dados }: { slug: string; dados: VariacaoDetalhe }) {
 
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-title-page text-foreground">{dados.produto_nome || dados.nome || dados.sku}</h1>
+          <span className="text-caption-label text-muted-foreground">Código fornecedor:</span>
           <span className="rounded bg-muted px-2 py-0.5 font-mono text-code-inline text-muted-foreground">
-            {dados.sku}
+            {dados.codigo_fornecedor || dados.sku}
+          </span>
+          <span className="text-caption-label text-muted-foreground">SKU Tiny:</span>
+          <span className="rounded bg-muted px-2 py-0.5 font-mono text-code-inline text-foreground">
+            {dados.sku_tiny || TRACO}
           </span>
           <Badge variant="neutral">{ROTULO_FORNECEDOR[dados.fornecedor]}</Badge>
           <Badge variant={varianteBadgeStatus(dados.status)}>{dados.status_rotulo}</Badge>
@@ -243,6 +298,7 @@ function Conteudo({ slug, dados }: { slug: string; dados: VariacaoDetalhe }) {
             )}
           </div>
         )}
+        <AcoesVariacao dados={dados} slug={slug} />
       </div>
 
       {dados.ultimo_erro && (
@@ -264,8 +320,11 @@ function Conteudo({ slug, dados }: { slug: string; dados: VariacaoDetalhe }) {
           <CardContent>
             <ListaDeCampos>
               <Campo rotulo="Fornecedor">{dados.fornecedor_rotulo || ROTULO_FORNECEDOR[dados.fornecedor]}</Campo>
-              <Campo rotulo="SKU / código">
-                <span className="font-mono text-[13px]">{dados.sku}</span>
+              <Campo rotulo="Código fornecedor">
+                <span className="font-mono text-[13px]">{dados.codigo_fornecedor || dados.sku}</span>
+              </Campo>
+              <Campo rotulo="SKU Tiny">
+                <span className="font-mono text-[13px]">{texto(dados.sku_tiny)}</span>
               </Campo>
               <Campo rotulo="Código / referência do produto">
                 <span className="font-mono text-[13px]">{texto(dados.produto_codigo_pai)}</span>

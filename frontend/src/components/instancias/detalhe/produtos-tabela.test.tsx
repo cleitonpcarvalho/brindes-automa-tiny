@@ -25,6 +25,8 @@ function variacao(overrides: Partial<VariacaoEspelho> = {}): VariacaoEspelho {
     produto_nome: "Caneca de porcelana",
     produto_descontinuado: false,
     sku: "CN-01-AZUL",
+    codigo_fornecedor: "CN-01-AZUL",
+    sku_tiny: "18700-AZU",
     nome: "Caneca azul 300ml",
     cor: "Azul",
     tamanho: "300ml",

@@ -2,14 +2,17 @@ from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
+from unittest.mock import MagicMock, patch
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
 
 from apps.catalogo.models import Produto, StatusVariacao, Variacao
+from apps.fornecedores.base import ProdutoNormalizado, VariacaoNormalizada
+from apps.fornecedores.services import atualizar_variacao_do_fornecedor
 
 from ..constants import Fornecedor
-from ..models import Instancia
+from ..models import CredencialFornecedor, Instancia
 
 
 def _client_autenticado():
@@ -25,7 +28,17 @@ def _client_autenticado():
 class VariacaoDetalheTests(TestCase):
     def setUp(self):
         self.client = _client_autenticado()
-        self.instancia = Instancia.objects.create(nome="Loja A")
+        self.instancia = Instancia.objects.create(
+            nome="Loja A",
+            access_token="token-local",
+            tiny_origem_padrao=0,
+            tiny_unidade_medida_padrao="UN",
+        )
+        CredencialFornecedor.objects.create(
+            instancia=self.instancia,
+            fornecedor=Fornecedor.XBZ,
+            tiny_fornecedor_id=752133514,
+        )
         self.outra = Instancia.objects.create(nome="Loja B")
         self.produto = Produto.objects.create(
             instancia=self.instancia,
@@ -52,7 +65,11 @@ class VariacaoDetalheTests(TestCase):
                 "https://cdn.exemplo.com/caneca-azul-1.jpg",
                 "https://cdn.exemplo.com/caneca-azul-2.jpg",
             ],
-            atributos={"material": "porcelana", "taric": "6912.00.00"},
+            atributos={
+                "material": "porcelana",
+                "taric": "6912.00.00",
+                "codigo_composto": "18700-AZU",
+            },
             status=StatusVariacao.CADASTRADO,
             tiny_id="tiny-123",
             payload_bruto={"segredo_interno": "nao deve vazar", "x": 1},
@@ -80,6 +97,8 @@ class VariacaoDetalheTests(TestCase):
         self.assertEqual(dados["produto_descricao"], "Caneca de porcelana 300ml.")
         self.assertEqual(dados["produto_categorias"], ["Canecas"])
         self.assertEqual(dados["sku"], "CN-01-AZUL")
+        self.assertEqual(dados["codigo_fornecedor"], "CN-01-AZUL")
+        self.assertEqual(dados["sku_tiny"], "18700-AZU")
         self.assertEqual(dados["nome"], "Caneca azul 300ml")
         self.assertEqual(dados["ncm"], "69120000")
         self.assertEqual(dados["preco"], "19.90")
@@ -89,7 +108,14 @@ class VariacaoDetalheTests(TestCase):
         self.assertEqual(dados["largura"], 8.0)
         self.assertEqual(dados["altura"], 10.5)
         self.assertEqual(dados["peso_bruto"], 0.42)
-        self.assertEqual(dados["atributos"], {"material": "porcelana", "taric": "6912.00.00"})
+        self.assertEqual(
+            dados["atributos"],
+            {
+                "material": "porcelana",
+                "taric": "6912.00.00",
+                "codigo_composto": "18700-AZU",
+            },
+        )
         self.assertEqual(dados["status"], StatusVariacao.CADASTRADO)
         self.assertEqual(dados["status_rotulo"], "Cadastrado no Tiny")
         self.assertEqual(dados["tiny_id"], "tiny-123")
@@ -123,6 +149,8 @@ class VariacaoDetalheTests(TestCase):
         self.assertIsNone(dados["diametro"])
         self.assertIsNone(dados["peso_liquido"])
         self.assertEqual(dados["atributos"], {})
+        self.assertEqual(dados["codigo_fornecedor"], "S-1")
+        self.assertEqual(dados["sku_tiny"], "S-1")
         self.assertEqual(dados["imagens"], [])
         self.assertIsNone(dados["tiny_id"])
         self.assertIsNone(dados["cadastrado_em"])
@@ -157,3 +185,70 @@ class VariacaoDetalheTests(TestCase):
         # auth (usuário + token) + a variação com produto/instância via
         # select_related. Folga pequena; o que não pode é escalar por campo.
         self.assertLessEqual(len(ctx.captured_queries), 4)
+
+    @patch("apps.instancias.views.atualizar_variacao_do_fornecedor")
+    def test_atualizar_do_fornecedor_e_individual(self, atualizar):
+        atualizar.return_value = self.variacao
+
+        resposta = self.client.post(
+            f"/api/instancias/{self.instancia.slug}/produtos/{self.variacao.id}/atualizar-fornecedor/"
+        )
+
+        self.assertEqual(resposta.status_code, status.HTTP_200_OK)
+        atualizar.assert_called_once()
+        self.assertEqual(resposta.data["codigo_fornecedor"], "CN-01-AZUL")
+        self.assertEqual(resposta.data["sku_tiny"], "18700-AZU")
+
+    @patch("apps.instancias.views.atualizar_variacao_individual")
+    def test_atualizar_no_tiny_reutiliza_fluxo_individual(self, atualizar):
+        atualizar.return_value = self.variacao
+
+        resposta = self.client.post(
+            f"/api/instancias/{self.instancia.slug}/produtos/{self.variacao.id}/atualizar-tiny/"
+        )
+
+        self.assertEqual(resposta.status_code, status.HTTP_200_OK)
+        atualizar.assert_called_once()
+
+    @patch("apps.instancias.views.atualizar_variacao_do_fornecedor", side_effect=ValueError("credencial ausente"))
+    def test_erro_da_atualizacao_do_fornecedor_retorna_mensagem(self, _atualizar):
+        resposta = self.client.post(
+            f"/api/instancias/{self.instancia.slug}/produtos/{self.variacao.id}/atualizar-fornecedor/"
+        )
+
+        self.assertEqual(resposta.status_code, status.HTTP_502_BAD_GATEWAY)
+        self.assertIn("credencial ausente", resposta.data["detail"])
+
+    @patch("apps.fornecedores.management.commands.importar_fornecedor.Command")
+    @patch("apps.fornecedores.registry.obter_cliente")
+    def test_servico_do_fornecedor_persiste_somente_a_variacao_alvo(self, obter_cliente, command_class):
+        cliente = MagicMock()
+        cliente.normalizar.return_value = [
+            ProdutoNormalizado(
+                codigo_pai=self.produto.codigo_pai,
+                nome=self.produto.nome,
+                variacoes=[
+                    VariacaoNormalizada(
+                        sku=self.variacao.sku,
+                        nome=self.variacao.nome,
+                        preco=self.variacao.preco,
+                        estoque=self.variacao.estoque,
+                    )
+                ],
+            )
+        ]
+        obter_cliente.return_value = cliente
+        comando = command_class.return_value
+        comando._gravar_produto.return_value = self.produto
+        comando._gravar_variacao.return_value = ("atualizados", self.variacao)
+
+        resultado = atualizar_variacao_do_fornecedor(self.instancia, self.variacao)
+
+        self.assertEqual(resultado, self.variacao)
+        comando._gravar_produto.assert_called_once_with(
+            self.instancia,
+            Fornecedor.XBZ,
+            cliente.normalizar.return_value[0],
+            reset_tiny_markers=False,
+        )
+        comando._gravar_variacao.assert_called_once()

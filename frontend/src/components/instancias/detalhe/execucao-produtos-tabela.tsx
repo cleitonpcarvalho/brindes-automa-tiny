@@ -58,7 +58,7 @@ export function ExecucaoProdutosTabela({
   const todosDaPaginaMarcados =
     idsErroPagina.length > 0 &&
     (selecao?.selecaoTodos || idsErroPagina.every((id) => selecao?.selecionados.has(id)))
-  const COLUNAS = 6 + (selecao ? 1 : 0)
+  const COLUNAS = 7 + (selecao ? 1 : 0)
 
   return (
     <div className="overflow-hidden rounded-xl border border-border">
@@ -76,7 +76,8 @@ export function ExecucaoProdutosTabela({
               </TableHead>
             )}
             <TableHead className="w-8" />
-            <TableHead>SKU / Produto</TableHead>
+            <TableHead>Código fornecedor</TableHead>
+            <TableHead>SKU Tiny / Produto</TableHead>
             <TableHead>Resultado</TableHead>
             <TableHead>Tiny ID</TableHead>
             <TableHead>Detalhe / erro</TableHead>
@@ -153,6 +154,9 @@ export function ExecucaoProdutosTabela({
                         {aberto ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                       </button>
                     </TableCell>
+                    <TableCell className="align-top font-mono text-[13px] text-foreground">
+                      {linha.codigo_fornecedor || linha.sku || "—"}
+                    </TableCell>
                     <TableCell className="max-w-[280px] whitespace-normal align-top">
                       <button
                         type="button"
@@ -161,7 +165,7 @@ export function ExecucaoProdutosTabela({
                         className="flex flex-col text-left disabled:cursor-default"
                       >
                         <span className="font-mono text-[13px] text-foreground hover:underline">
-                          {linha.sku || "—"}
+                          {linha.sku_tiny || linha.sku || "—"}
                         </span>
                         <span className="text-caption-label text-muted-foreground">
                           {linha.produto_nome || "(produto removido do espelho)"}

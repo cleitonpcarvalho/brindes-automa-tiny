@@ -36,9 +36,9 @@ def _instancia_pronta(**kwargs):
     return Instancia.objects.create(**dados)
 
 
-def _variacao_pendente(instancia, sku, **kwargs):
+def _variacao_pendente(instancia, sku, *, fornecedor="xbz", **kwargs):
     produto = Produto.objects.create(
-        instancia=instancia, fornecedor="xbz", codigo_pai=f"pai-{sku}", nome=f"Produto {sku}"
+        instancia=instancia, fornecedor=fornecedor, codigo_pai=f"pai-{sku}", nome=f"Produto {sku}"
     )
     dados = {
         "produto": produto,
@@ -47,11 +47,12 @@ def _variacao_pendente(instancia, sku, **kwargs):
         "preco": Decimal("10.00"),
         "estoque": 5,
     }
-    dados["payload_bruto"] = {"CodigoComposto": sku}
-    dados["atributos"] = {"codigo_composto": sku}
+    if fornecedor == "xbz":
+        dados["payload_bruto"] = {"CodigoComposto": sku}
+        dados["atributos"] = {"codigo_composto": sku}
     dados.update(kwargs)
     variacao = Variacao.objects.create(**dados)
-    _com_tiny_fornecedor_id(instancia, "xbz")
+    _com_tiny_fornecedor_id(instancia, fornecedor)
     return variacao
 
 
@@ -151,7 +152,7 @@ class SkuPreexistenteNoTinyTests(TestCase):
     @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
     def test_sku_ja_existente_sem_vinculo_confirmado_e_bloqueado(self, mock_buscar, mock_criar):
         instancia = _instancia_pronta()
-        variacao = _variacao_pendente(instancia, "SKU-ANTIGO")
+        variacao = _variacao_pendente(instancia, "SKU-ANTIGO", fornecedor="asia")
         mock_buscar.return_value = {"id": 999, "sku": "SKU-ANTIGO"}
 
         saida = _rodar("cadastrar_produtos_tiny", instancia.slug)
@@ -167,7 +168,7 @@ class SkuPreexistenteNoTinyTests(TestCase):
     @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
     def test_vinculo_so_acontece_com_confirmacao_explicita_do_operador(self, mock_buscar, mock_criar):
         instancia = _instancia_pronta()
-        variacao = _variacao_pendente(instancia, "SKU-ANTIGO")
+        variacao = _variacao_pendente(instancia, "SKU-ANTIGO", fornecedor="asia")
         mock_buscar.return_value = {"id": 999, "sku": "SKU-ANTIGO"}
 
         call_command("cadastrar_produtos_tiny", instancia.slug, "--vincular-skus", "SKU-ANTIGO")

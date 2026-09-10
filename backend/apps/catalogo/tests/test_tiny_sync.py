@@ -16,9 +16,11 @@ def _com_tiny_fornecedor_id(instancia, fornecedor, tiny_id=700_000_000):
         instancia=instancia, fornecedor=fornecedor, defaults={"tiny_fornecedor_id": tiny_id}
     )
 from ..tiny_sync import (
+    ACAO_BLOQUEADO,
     PARADA_LEASE_PERDIDA,
     PARADA_PAUSA,
     ControladorSincronizacao,
+    avaliar_variacao,
     estimar_cadastro,
     executar_sincronizacao_tiny,
     atualizar_variacao_individual,
@@ -96,6 +98,105 @@ def _rodar(instancia, fornecedor, mock, **kwargs):
 
 
 class OrquestradorTests(TestCase):
+    def _cliente_atualizacao(self, *, encontrados):
+        cliente = MagicMock()
+        cliente.buscar_produto_por_sku.side_effect = lambda sku: encontrados.get(sku)
+        cliente.obter_produto.side_effect = lambda tiny_id: {
+            "id": int(tiny_id),
+            "sku": "X134066",
+            "fornecedores": [],
+        }
+        return cliente
+
+    @patch("apps.catalogo.tiny_sync._sincronizar_imagens_do_sku")
+    def test_xbz_sem_tiny_id_reconcilia_sku_legado_e_atualiza(self, _imagens):
+        inst = _instancia()
+        v = _variacao(
+            inst,
+            "X134066",
+            payload_bruto={"CodigoComposto": "18700-AZU"},
+            atributos={"codigo_composto": "18700-AZU"},
+        )
+        cliente = self._cliente_atualizacao(encontrados={"X134066": {"id": 123, "sku": "X134066"}})
+
+        resultado = atualizar_variacao_individual(inst, v, cliente=cliente)
+
+        v.refresh_from_db()
+        self.assertEqual(resultado.vinculadas, 1)
+        self.assertEqual(v.tiny_id, "123")
+        self.assertEqual(cliente.buscar_produto_por_sku.call_args_list[0].args, ("18700-AZU",))
+        self.assertEqual(cliente.buscar_produto_por_sku.call_args_list[1].args, ("X134066",))
+        self.assertEqual(cliente.atualizar_produto.call_args.args[0], 123)
+        self.assertEqual(cliente.atualizar_produto.call_args.args[1]["sku"], "18700-AZU")
+        cliente.criar_produto.assert_not_called()
+
+        atualizar_variacao_individual(inst, v, cliente=cliente)
+
+        v.refresh_from_db()
+        self.assertEqual(v.tiny_id, "123")
+        self.assertEqual(cliente.atualizar_produto.call_count, 2)
+        cliente.criar_produto.assert_not_called()
+
+    @patch("apps.catalogo.tiny_sync._sincronizar_imagens_do_sku")
+    def test_xbz_sem_tiny_id_reconcilia_sku_composto_e_atualiza(self, _imagens):
+        inst = _instancia()
+        v = _variacao(
+            inst,
+            "X134066",
+            payload_bruto={"CodigoComposto": "18700-AZU"},
+            atributos={"codigo_composto": "18700-AZU"},
+        )
+        cliente = self._cliente_atualizacao(encontrados={"18700-AZU": {"id": 456, "sku": "18700-AZU"}})
+        cliente.obter_produto.side_effect = lambda tiny_id: {
+            "id": int(tiny_id), "sku": "18700-AZU", "fornecedores": []
+        }
+
+        atualizar_variacao_individual(inst, v, cliente=cliente)
+
+        v.refresh_from_db()
+        self.assertEqual(v.tiny_id, "456")
+        self.assertEqual(cliente.atualizar_produto.call_args.args[0], 456)
+        cliente.criar_produto.assert_not_called()
+
+    def test_xbz_sem_tiny_id_e_sem_skus_pode_criar_so_com_sku_composto(self):
+        inst = _instancia()
+        v = _variacao(
+            inst,
+            "X134066",
+            payload_bruto={"CodigoComposto": "18700-AZU"},
+            atributos={"codigo_composto": "18700-AZU"},
+        )
+        cliente = _MockTiny()
+
+        resultado = executar_sincronizacao_tiny(inst, "xbz", cliente=cliente)
+
+        self.assertEqual(resultado.criadas, 1)
+        self.assertEqual(len(cliente.criados), 1)
+        self.assertEqual(cliente.criados[0]["sku"], "18700-AZU")
+
+    def test_xbz_com_sku_legado_e_composto_exige_conflito_com_dois_ids(self):
+        inst = _instancia()
+        v = _variacao(
+            inst,
+            "X134066",
+            payload_bruto={"CodigoComposto": "18700-AZU"},
+            atributos={"codigo_composto": "18700-AZU"},
+        )
+        cliente = self._cliente_atualizacao(
+            encontrados={
+                "18700-AZU": {"id": 456, "sku": "18700-AZU"},
+                "X134066": {"id": 123, "sku": "X134066"},
+            }
+        )
+
+        decisao = avaliar_variacao(cliente, inst, v, {}, tiny_fornecedor_id=700000000)
+
+        self.assertEqual(decisao.acao, ACAO_BLOQUEADO)
+        self.assertIn("id=456", decisao.motivo)
+        self.assertIn("id=123", decisao.motivo)
+        cliente.criar_produto.assert_not_called()
+        cliente.atualizar_produto.assert_not_called()
+
     @patch("apps.catalogo.tiny_sync._sincronizar_imagens_do_sku")
     def test_atualizacao_existente_xbz_publica_codigo_composto(self, _imagens):
         inst = _instancia()
@@ -163,10 +264,10 @@ class OrquestradorTests(TestCase):
 
     def test_sku_ja_existente_sem_vinculo_e_bloqueado(self):
         inst = _instancia()
-        v = _variacao(inst, "SKU-ANTIGO")
+        v = _variacao(inst, "SKU-ANTIGO", fornecedor="asia")
         mock = _MockTiny(skus_existentes={"SKU-ANTIGO": {"id": 555, "sku": "SKU-ANTIGO"}})
 
-        r = _rodar(inst, "xbz", mock)
+        r = _rodar(inst, "asia", mock)
 
         v.refresh_from_db()
         self.assertEqual(v.status, StatusVariacao.PENDENTE)  # intacto

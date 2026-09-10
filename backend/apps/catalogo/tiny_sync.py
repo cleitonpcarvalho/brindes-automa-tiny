@@ -149,6 +149,7 @@ def estado_cadastro_tiny(execucao, *, agora=None) -> str:
 # Ações neutras (sem texto de UI). Cada chamador rotula como quiser.
 ACAO_CRIAR = "criar"
 ACAO_VINCULAR = "vincular"
+ACAO_ATUALIZAR_EXISTENTE = "atualizar_existente"
 ACAO_BLOQUEADO = "bloqueado"
 ACAO_JA_CADASTRADO = "ja_cadastrado"
 
@@ -409,7 +410,34 @@ def avaliar_variacao(
     if not tiny_fornecedor_id:
         return Decisao(ACAO_BLOQUEADO, MOTIVO_SEM_TINY_FORNECEDOR_ID)
 
-    existente = cliente.buscar_produto_por_sku(sku)  # GET — permitido no dry-run
+    if variacao.produto.fornecedor == Fornecedor.XBZ:
+        # O espelho XBZ mantém o código X... localmente, mas o Tiny pode
+        # conter esse SKU legado antes de o código composto ter sido adotado.
+        # As duas consultas são exatas e precisam ser feitas antes de qualquer
+        # POST para impedir a criação de um segundo produto.
+        existente_composto = cliente.buscar_produto_por_sku(sku)
+        existente_legado = None
+        if variacao.sku != sku:
+            existente_legado = cliente.buscar_produto_por_sku(variacao.sku)
+        if existente_composto and existente_legado:
+            return Decisao(
+                ACAO_BLOQUEADO,
+                "conflito XBZ: os SKUs Tiny "
+                f"{sku!r} (id={existente_composto.get('id')}) e "
+                f"{variacao.sku!r} (id={existente_legado.get('id')}) "
+                "já existem no Tiny; reconciliação manual obrigatória",
+            )
+        existente = existente_composto or existente_legado
+        if existente:
+            return Decisao(
+                ACAO_ATUALIZAR_EXISTENTE,
+                "produto XBZ existente encontrado por SKU exato; será atualizado "
+                f"sem criar outro (tiny_id={existente.get('id')})",
+                tiny_existente=existente,
+            )
+    else:
+        existente = cliente.buscar_produto_por_sku(sku)  # GET — permitido no dry-run
+
     if existente:
         if sku in vincular_skus or variacao.sku in vincular_skus:
             return Decisao(
@@ -789,7 +817,7 @@ def _processar_variacao(
     if dry_run:
         if decisao.acao == ACAO_CRIAR:
             resultado.criadas += 1
-        elif decisao.acao == ACAO_VINCULAR:
+        elif decisao.acao in (ACAO_VINCULAR, ACAO_ATUALIZAR_EXISTENTE):
             resultado.vinculadas += 1
         return
 
@@ -805,6 +833,13 @@ def _processar_variacao(
             marcar_cadastrada(
                 variacao, decisao.tiny_existente["id"], preco_custo_publicado=None
             )
+            resultado.vinculadas += 1
+            eventos.variacao_vinculada(variacao, decisao.tiny_existente["id"])
+        elif decisao.acao == ACAO_ATUALIZAR_EXISTENTE:
+            marcar_cadastrada(
+                variacao, decisao.tiny_existente["id"], preco_custo_publicado=None
+            )
+            _atualizar_variacao_vinculada(cliente, instancia, variacao, eventos=eventos)
             resultado.vinculadas += 1
             eventos.variacao_vinculada(variacao, decisao.tiny_existente["id"])
     except Exception as exc:  # uma variação ruim não trava o lote
@@ -876,10 +911,17 @@ def atualizar_variacao_individual(
     if not (variacao.tiny_id or "").strip():
         return cadastrar_variacao_individual(instancia, variacao, cliente=cliente, eventos=eventos)
 
-    from .tiny_dados_produto import DadosProdutoError, montar_payload_atualizacao
-
     eventos = eventos or EventosSincronizacao()
     cliente = cliente or TinyApiClient(instancia, somente_leitura=False)
+    _atualizar_variacao_vinculada(cliente, instancia, variacao, eventos=eventos)
+    return ResultadoSincronizacao(fila=1, vinculadas=1)
+
+
+def _atualizar_variacao_vinculada(cliente, instancia, variacao, *, eventos):
+    """Atualiza o produto já identificado por ``variacao.tiny_id``."""
+
+    from .tiny_dados_produto import DadosProdutoError, montar_payload_atualizacao
+
     detalhe = cliente.obter_produto(int(variacao.tiny_id))
     sku_no_tiny = str(detalhe.get("sku") or "")
     identidade = identidade_tiny(variacao)
@@ -913,7 +955,6 @@ def atualizar_variacao_individual(
     ])
     resultado = ResultadoSincronizacao(fila=1, vinculadas=1)
     _sincronizar_imagens_do_sku(cliente, variacao, resultado, eventos, dry_run=False)
-    return resultado
 
 
 def _sincronizar_imagens_do_sku(cliente, variacao, resultado, eventos, *, dry_run: bool) -> None:

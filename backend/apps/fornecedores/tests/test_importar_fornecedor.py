@@ -105,6 +105,28 @@ class ImportarFornecedorIdempotenciaTests(TestCase):
         self.assertEqual(mock_buscar.call_count, 1)
 
     @patch("apps.fornecedores.xbz.XbzFornecedor.buscar")
+    def test_execucao_de_cadastro_tiny_nao_conta_como_importacao_xbz(self, mock_buscar):
+        Execucao.objects.create(
+            instancia=self.instancia,
+            fornecedor="xbz",
+            tipo=TipoExecucao.CADASTRO_TINY,
+            status=StatusExecucao.SUCESSO,
+        )
+        mock_buscar.return_value = XBZ_GRUPO_06520
+
+        call_command("importar_fornecedor", self.instancia.slug, "xbz", "--mirror-only")
+
+        self.assertEqual(mock_buscar.call_count, 1)
+        self.assertTrue(
+            Execucao.objects.filter(
+                instancia=self.instancia,
+                fornecedor="xbz",
+                tipo=TipoExecucao.INCREMENTAL,
+                status=StatusExecucao.SUCESSO,
+            ).exists()
+        )
+
+    @patch("apps.fornecedores.xbz.XbzFornecedor.buscar")
     def test_produto_com_prefixo_p_arroba_entra_direto_como_descontinuado(self, mock_buscar):
         mock_buscar.return_value = XBZ_GRUPO_P12288
         call_command("importar_fornecedor", self.instancia.slug, "xbz", "--mirror-only")

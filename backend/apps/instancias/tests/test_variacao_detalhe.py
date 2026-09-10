@@ -277,6 +277,13 @@ class VariacaoDetalheTests(TestCase):
     @patch("apps.fornecedores.management.commands.importar_fornecedor.Command")
     @patch("apps.fornecedores.registry.obter_cliente")
     def test_servico_do_fornecedor_persiste_somente_a_variacao_alvo(self, obter_cliente, command_class):
+        self.produto.fornecedor = Fornecedor.ASIA
+        self.produto.save(update_fields=["fornecedor", "atualizado_em"])
+        CredencialFornecedor.objects.create(
+            instancia=self.instancia,
+            fornecedor=Fornecedor.ASIA,
+            credenciais={"api_key": "key", "secret_key": "secret"},
+        )
         cliente = MagicMock()
         cliente.normalizar.return_value = [
             ProdutoNormalizado(
@@ -302,7 +309,7 @@ class VariacaoDetalheTests(TestCase):
         self.assertEqual(resultado, self.variacao)
         comando._gravar_produto.assert_called_once_with(
             self.instancia,
-            Fornecedor.XBZ,
+            Fornecedor.ASIA,
             cliente.normalizar.return_value[0],
             reset_tiny_markers=False,
         )

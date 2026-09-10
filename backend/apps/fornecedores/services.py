@@ -5,11 +5,12 @@ caminhos apliquem exatamente a mesma checagem, sem duplicar a lógica nem a
 mensagem de erro.
 """
 
+from django.db import transaction
 from django.utils import timezone
 
 from apps.instancias.constants import Fornecedor
 from apps.instancias.models import CredencialFornecedor
-from apps.sincronizacao.models import Execucao, StatusExecucao
+from apps.sincronizacao.models import Execucao, StatusExecucao, TipoExecucao
 
 from .models import CadenciaFornecedor, ConfiguracaoFornecedor
 
@@ -26,6 +27,7 @@ def checar_limite_diario_xbz(instancia, fornecedor, force=False):
     ja_rodou_hoje = Execucao.objects.filter(
         instancia=instancia,
         fornecedor=fornecedor,
+        tipo__in=[TipoExecucao.CARGA_INICIAL, TipoExecucao.INCREMENTAL],
         status__in=[StatusExecucao.SUCESSO, StatusExecucao.PARCIAL],
         iniciada_em__date=timezone.localdate(),
     ).exists()
@@ -53,19 +55,21 @@ def obter_configuracao(fornecedor):
 def atualizar_variacao_do_fornecedor(instancia, variacao):
     """Busca, normaliza e persiste somente a variação indicada.
 
-    Os adapters atuais expõem apenas endpoints de catálogo completo. A rede
-    pode portanto devolver o catálogo inteiro, mas apenas o produto-pai e a
-    variação alvo são persistidos. Isso evita transformar a ação em uma
-    sincronização silenciosa de todos os itens.
+    XBZ não oferece consulta individual: nesse caso reprocessa, sem rede, o
+    grupo bruto da importação completa mais recente do dia. Sem cache atual
+    comprovável, exige uma importação completa explícita. Os outros adapters
+    mantêm o fluxo anterior de consulta e persistência seletiva.
     """
     from apps.fornecedores.registry import obter_cliente
     from apps.fornecedores.management.commands.importar_fornecedor import Command
 
     fornecedor = variacao.produto.fornecedor
-    checar_limite_diario_xbz(instancia, fornecedor)
     credencial = obter_credencial_ativa(instancia, fornecedor)
     cliente = obter_cliente(fornecedor, configuracao=obter_configuracao(fornecedor))
-    normalizados = cliente.normalizar(cliente.buscar(credencial.credenciais))
+    if fornecedor == Fornecedor.XBZ:
+        normalizados = _normalizar_xbz_do_cache_atual(instancia, variacao, cliente)
+    else:
+        normalizados = cliente.normalizar(cliente.buscar(credencial.credenciais))
 
     alvo = None
     for produto_normalizado in normalizados:
@@ -81,15 +85,72 @@ def atualizar_variacao_do_fornecedor(instancia, variacao):
         )
 
     produto_normalizado, variacao_normalizada = alvo
-    comando = Command()
-    produto = comando._gravar_produto(
-        instancia,
-        fornecedor,
-        produto_normalizado,
-        reset_tiny_markers=False,
-    )
-    _resultado, atualizada = comando._gravar_variacao(produto, variacao_normalizada)
+    with transaction.atomic():
+        variacao_atual = (
+            variacao.__class__.objects.select_for_update()
+            .select_related("produto")
+            .get(
+                pk=variacao.pk,
+                sku=variacao.sku,
+                produto__instancia=instancia,
+                produto__fornecedor=fornecedor,
+            )
+        )
+        comando = Command()
+        if fornecedor == Fornecedor.XBZ:
+            # O Produto já foi atualizado pela importação que gerou o cache.
+            # Regravá-lo aqui substituiria o cache do grupo por um recorte e
+            # não acrescentaria dado novo. Somente a variação alvo é tocada.
+            produto = variacao_atual.produto
+        else:
+            produto = comando._gravar_produto(
+                instancia,
+                fornecedor,
+                produto_normalizado,
+                reset_tiny_markers=False,
+            )
+        _resultado, atualizada = comando._gravar_variacao(produto, variacao_normalizada)
     return atualizada
+
+
+def _normalizar_xbz_do_cache_atual(instancia, variacao, cliente):
+    """Normaliza o grupo XBZ da última importação de hoje, sem chamada HTTP."""
+    ultima = (
+        Execucao.objects.filter(
+            instancia=instancia,
+            fornecedor=Fornecedor.XBZ,
+            tipo__in=[TipoExecucao.CARGA_INICIAL, TipoExecucao.INCREMENTAL],
+            status__in=[StatusExecucao.SUCESSO, StatusExecucao.PARCIAL],
+            iniciada_em__date=timezone.localdate(),
+            finalizada_em__isnull=False,
+        )
+        .order_by("-iniciada_em", "-id")
+        .first()
+    )
+    produto = variacao.produto.__class__.objects.get(
+        pk=variacao.produto_id,
+        instancia=instancia,
+        fornecedor=Fornecedor.XBZ,
+    )
+    atualizado_em = produto.atualizado_em
+    cache_veio_da_ultima = bool(
+        ultima
+        and atualizado_em
+        and ultima.iniciada_em <= atualizado_em <= ultima.finalizada_em
+    )
+    payload_produto = produto.payload_bruto if isinstance(produto.payload_bruto, dict) else {}
+    linhas = payload_produto.get("linhas")
+    linha_presente = isinstance(linhas, list) and any(
+        isinstance(linha, dict) and str(linha.get("CodigoXbz") or "") == variacao.sku
+        for linha in linhas
+    )
+    if not cache_veio_da_ultima or not linha_presente:
+        raise ValueError(
+            "A XBZ não oferece consulta individual e não há cache atual comprovado desta "
+            "variação na última importação completa de hoje. Execute uma importação completa "
+            "da XBZ explicitamente; nenhuma chamada à API foi consumida por esta operação."
+        )
+    return cliente.normalizar(linhas)
 
 
 _DEFAULT_INTERVALO_MINUTOS = 60

@@ -27,6 +27,15 @@ class TinyApiError(Exception):
     """Erro definitivo ao chamar a API do Tiny (ex.: 429 esgotado)."""
 
 
+class TinyRateLimitError(TinyApiError):
+    """O Tiny continuou respondendo 429 após todas as tentativas configuradas."""
+
+    def __init__(self, caminho, tentativas):
+        self.caminho = caminho
+        self.tentativas = tentativas
+        super().__init__(f"429 persistente após {tentativas} tentativas em {caminho!r}.")
+
+
 class TinyEscritaBloqueadaError(TinyApiError):
     """
     O cliente foi criado em modo somente-leitura e algo tentou um método de
@@ -78,6 +87,7 @@ class TinyApiClient:
         somente_leitura=False,
         max_tentativas_429=None,
         rate_limit_fallback=None,
+        on_rate_limit=None,
     ):
         self.instancia = instancia
         self.base_url = base_url if base_url is not None else _base_url_padrao()
@@ -94,6 +104,9 @@ class TinyApiClient:
         # não foi visto NESTA sessão. `None` = comportamento antigo (sem freio até
         # a 1ª resposta). Útil no dry-run em massa, que não persiste o header.
         self._rate_limit_fallback = rate_limit_fallback
+        # Observabilidade opcional para comandos longos. Não altera retries,
+        # sleeps nem exceções quando não informado.
+        self._on_rate_limit = on_rate_limit
         # Último `x-limit-api` visto nesta sessão — usado pelo limiter mesmo em
         # `somente_leitura` (que não grava no banco).
         self._rate_limit_visto = None
@@ -301,10 +314,8 @@ class TinyApiClient:
             if resposta.status_code == 429:
                 tentativa += 1
                 if tentativa > self._max_tentativas_429:
-                    raise TinyApiError(
-                        f"429 persistente após {self._max_tentativas_429} tentativas em {caminho!r}."
-                    )
-                self._aguardar_backoff(resposta, tentativa)
+                    raise TinyRateLimitError(caminho, self._max_tentativas_429)
+                self._aguardar_backoff(resposta, tentativa, caminho)
                 continue
 
             return resposta
@@ -340,19 +351,27 @@ class TinyApiClient:
             self.instancia.rate_limit_por_minuto = valor_int
             self.instancia.save(update_fields=["rate_limit_por_minuto", "atualizado_em"])
 
-    def _aguardar_backoff(self, resposta: requests.Response, tentativa: int):
+    def _aguardar_backoff(self, resposta: requests.Response, tentativa: int, caminho: str):
         retry_after = resposta.headers.get("Retry-After")
+        espera = None
+        usou_retry_after = False
         if retry_after:
             try:
-                self._sleep(min(float(retry_after), self.RETRY_AFTER_MAXIMO_SEGUNDOS))
-                return
+                espera = min(float(retry_after), self.RETRY_AFTER_MAXIMO_SEGUNDOS)
+                usou_retry_after = True
             except ValueError:
                 pass
-        # Backoff exponencial COM JITTER (equal jitter): espera aleatória em
-        # [teto/2, teto]. O jitter dessincroniza o servidor Django e os workers
-        # do Celery que levaram 429 ao mesmo tempo (mesma conta do Tiny).
-        teto = min(self.BACKOFF_BASE_SEGUNDOS * (2 ** (tentativa - 1)), self.BACKOFF_MAXIMO_SEGUNDOS)
-        self._sleep(random.uniform(teto / 2, teto))
+        if espera is None:
+            # Backoff exponencial COM JITTER (equal jitter): espera aleatória
+            # em [teto/2, teto]. O jitter dessincroniza processos concorrentes.
+            teto = min(
+                self.BACKOFF_BASE_SEGUNDOS * (2 ** (tentativa - 1)),
+                self.BACKOFF_MAXIMO_SEGUNDOS,
+            )
+            espera = random.uniform(teto / 2, teto)
+        if self._on_rate_limit:
+            self._on_rate_limit(caminho, tentativa, espera, usou_retry_after)
+        self._sleep(espera)
 
 
 def _corpo_anexos(urls) -> list[dict]:

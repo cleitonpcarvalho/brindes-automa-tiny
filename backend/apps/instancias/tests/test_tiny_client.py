@@ -245,6 +245,83 @@ class Trata429Tests(TestCase):
         self.assertEqual(cliente.obter_produto(5)["sku"], "X-1")
 
 
+class TokenExpiradoEmExecucaoLongaTests(TestCase):
+    @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.requests.request")
+    def test_401_recarrega_token_novo_e_repete_a_mesma_requisicao(self, mock_request):
+        instancia = _instancia(access_token="token-A")
+        mock_request.side_effect = [
+            _resposta(401, {}, {"mensagem": "token expirado"}),
+            _resposta(200, {}, {"ok": True}),
+        ]
+        cliente = TinyApiClient(instancia, sleep_fn=lambda s: None, limiter=LimiterFalso())
+
+        Instancia.objects.filter(pk=instancia.pk).update(access_token="token-B")
+        resposta = cliente.get("/produtos")
+
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(mock_request.call_count, 2)
+        self.assertEqual(
+            [chamada.kwargs["headers"]["Authorization"] for chamada in mock_request.call_args_list],
+            ["Bearer token-A", "Bearer token-B"],
+        )
+        self.assertEqual(cliente.instancia.access_token, "token-B")
+
+    @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.requests.request")
+    def test_401_com_mesmo_token_nao_fica_em_loop(self, mock_request):
+        instancia = _instancia(access_token="token-A")
+        mock_request.return_value = _resposta(401, {}, {"mensagem": "token inválido"})
+        cliente = TinyApiClient(instancia, sleep_fn=lambda s: None, limiter=LimiterFalso())
+
+        with self.assertRaises(TinyApiValidationError):
+            cliente.get("/produtos")
+
+        mock_request.assert_called_once()
+        self.assertEqual(mock_request.call_args.kwargs["headers"]["Authorization"], "Bearer token-A")
+
+    @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.requests.request")
+    def test_401_em_put_repete_payload_apenas_uma_vez_com_token_novo(self, mock_request):
+        instancia = _instancia(access_token="token-A")
+        mock_request.side_effect = [_resposta(401), _resposta(204)]
+        cliente = TinyApiClient(instancia, sleep_fn=lambda s: None, limiter=LimiterFalso())
+
+        Instancia.objects.filter(pk=instancia.pk).update(access_token="token-B")
+        cliente.put("/produtos/7", json={"sku": "SKU-7"})
+
+        self.assertEqual(mock_request.call_count, 2)
+        self.assertEqual(
+            [chamada.kwargs["json"] for chamada in mock_request.call_args_list],
+            [{"sku": "SKU-7"}, {"sku": "SKU-7"}],
+        )
+        self.assertEqual(mock_request.call_args_list[-1].kwargs["headers"]["Authorization"], "Bearer token-B")
+
+    @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
+    @patch("apps.instancias.tiny_client.requests.request")
+    def test_429_e_401_preservam_retry_de_rate_limit_e_rotacao_do_token(self, mock_request):
+        instancia = _instancia(access_token="token-A")
+        mock_request.side_effect = [
+            _resposta(429, {"Retry-After": "3"}),
+            _resposta(401, {}, {"mensagem": "token expirado"}),
+            _resposta(200, {}, {"ok": True}),
+        ]
+        esperas = []
+        cliente = TinyApiClient(
+            instancia, sleep_fn=esperas.append, limiter=LimiterFalso(), max_tentativas_429=2
+        )
+
+        Instancia.objects.filter(pk=instancia.pk).update(access_token="token-B")
+        self.assertEqual(cliente.get("/produtos").status_code, 200)
+
+        self.assertEqual(esperas, [3.0])
+        self.assertEqual(mock_request.call_count, 3)
+        self.assertEqual(
+            [chamada.kwargs["headers"]["Authorization"] for chamada in mock_request.call_args_list],
+            ["Bearer token-A", "Bearer token-A", "Bearer token-B"],
+        )
+
+
 class DominioProdutosTests(TestCase):
     @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
     @patch("apps.instancias.tiny_client.requests.request")

@@ -300,11 +300,14 @@ class TinyApiClient:
             raise ImproperlyConfigured("TINY_API_BASE_URL não configurado.")
 
         tentativa = 0
+        tentou_reautenticar = False
+        headers_adicionais = kwargs.pop("headers", {}) or {}
         while True:
             self._limiter.aguardar_vaga(self._limite_para_o_limiter())
 
-            headers = {"Authorization": f"Bearer {self.instancia.access_token}"}
-            headers.update(kwargs.pop("headers", {}) or {})
+            token_usado = self.instancia.access_token
+            headers = dict(headers_adicionais)
+            headers["Authorization"] = f"Bearer {token_usado}"
 
             resposta = requests.request(
                 metodo, f"{self.base_url}{caminho}", headers=headers, timeout=30, **kwargs
@@ -318,7 +321,38 @@ class TinyApiClient:
                 self._aguardar_backoff(resposta, tentativa, caminho)
                 continue
 
+            if resposta.status_code == 401 and not tentou_reautenticar:
+                tentou_reautenticar = True
+                if self._recarregar_instancia_se_token_mudou(token_usado):
+                    # O método, corpo e kwargs permanecem exatamente os mesmos.
+                    # A repetição é permitida uma única vez e só quando houve
+                    # rotação efetiva do token no banco — inclusive para POST/PUT.
+                    continue
+
             return resposta
+
+    def _recarregar_instancia_se_token_mudou(self, token_usado):
+        """Atualiza o snapshot da instância somente para validar um 401.
+
+        A renovação proativa grava os tokens no banco, mas execuções longas
+        podem continuar segurando uma Instancia antiga em memória. Se o 401
+        foi causado por essa rotação, o chamador pode repetir a requisição uma
+        vez com o token novo. Se não houve mudança, retorna False para evitar
+        qualquer loop (e deixa o 401 original seguir para o tratamento usual).
+        """
+        self.instancia.refresh_from_db(
+            fields=[
+                "access_token",
+                "refresh_token",
+                "token_emitido_em",
+                "token_expira_em",
+                "refresh_expira_em",
+                "status",
+                "tentativas_falha",
+                "ultimo_erro",
+            ]
+        )
+        return self.instancia.access_token != token_usado
 
     def _limite_para_o_limiter(self):
         """

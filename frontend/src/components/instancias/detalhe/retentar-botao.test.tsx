@@ -50,7 +50,7 @@ describe("RetentarBotao", () => {
     expect(screen.queryByRole("button")).not.toBeInTheDocument()
   })
 
-  it("sucesso: POST no endpoint de retentar, toast e a linha vira 'Cadastrado' no cache", async () => {
+  it("sucesso: POST, toast e cache inativo marcado para refetch sem substituir paginação", async () => {
     const fetchMock = vi.fn(() =>
       Promise.resolve(
         new Response(
@@ -73,11 +73,10 @@ describe("RetentarBotao", () => {
     )
     await screen.findByText("SKU MC511 cadastrado no Tiny.")
     await waitFor(() => {
-      const cache = client.getQueryData([
+      const cache = client.getQueryState([
         "instancias", "execucoes", "produtos", "loja-x", "7", filtros,
-      ]) as { results: ExecucaoProduto[] }
-      expect(cache.results[0].resultado).toBe("criado")
-      expect(cache.results[0].tiny_id).toBe("99")
+      ])
+      expect(cache?.isInvalidated).toBe(true)
     })
   })
 

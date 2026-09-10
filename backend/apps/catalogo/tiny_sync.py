@@ -20,13 +20,13 @@ Proteções (idênticas às validadas no piloto — ver README):
   - regra P@ (produto descontinuado) -> BLOQUEADO;
   - mesmo SKU em mais de um fornecedor na instância -> BLOQUEADO;
   - SKU já existe no Tiny e a Variacao não tem vínculo confirmado ->
-    BLOQUEADO (não assume propriedade de produto preexistente);
+    BLOQUEADO (exceto XBZ, que reconcilia composto e legado sem criar);
   - resposta ambígua do POST -> reconsulta por SKU exato; sem confirmação,
     NÃO marca como cadastrado;
   - imagens: idempotência por `Variacao.imagens_tiny_sincronizadas` (marcador
     das URLs ORIGINAIS do fornecedor), nunca por igualdade de URL;
-  - legado EK/EKK do Tiny nunca é tocado (este fluxo só cria SKUs do
-    espelho e só mexe em produtos que ele mesmo criou/vinculou);
+  - produtos dos demais fornecedores só são alterados por `tiny_id` ou
+    vínculo explicitamente confirmado; a reconciliação automática é XBZ;
   - um erro individual gera evento e NÃO interrompe o lote.
 """
 
@@ -190,8 +190,9 @@ def identidade_tiny(variacao) -> str:
     Identidade externa do produto no Tiny.
 
     `Variacao.sku` continua sendo a identidade interna/original. Só a XBZ
-    possui uma identidade externa diferente: `CodigoComposto`, preservado
-    tanto no payload bruto quanto nos atributos normalizados.
+    possui uma identidade externa diferente: o `codigo_composto` dos
+    atributos normalizados. O payload bruto é histórico da importação, não
+    uma segunda fonte de verdade para publicação.
     """
     interno = (variacao.sku or "").strip()
     if variacao.produto.fornecedor != Fornecedor.XBZ:
@@ -199,10 +200,7 @@ def identidade_tiny(variacao) -> str:
             raise IdentidadeTinyError("SKU vazio no espelho")
         return interno
 
-    bruto = variacao.payload_bruto or {}
-    composto = bruto.get("CodigoComposto")
-    if not composto:
-        composto = (variacao.atributos or {}).get("codigo_composto")
+    composto = (variacao.atributos or {}).get("codigo_composto")
     composto = str(composto or "").strip()
     if not composto:
         raise IdentidadeTinyError(
@@ -365,7 +363,7 @@ def fila_imagens(instancia, *, fornecedor=None, skus=None, limite=None):
 # ---------------------------------------------------------------------------
 
 
-def bloqueio_local(variacao, colisoes_por_sku) -> str | None:
+def bloqueio_local(variacao, colisoes_por_sku, *, permitir_sem_estoque=False) -> str | None:
     """
     Motivo de bloqueio determinável SEM falar com o Tiny (para o preview e
     como 1ª etapa da avaliação real). `None` = passou nas proteções locais.
@@ -378,7 +376,7 @@ def bloqueio_local(variacao, colisoes_por_sku) -> str | None:
         variacao.produto_id and variacao.produto.descontinuado
     ):
         return "regra P@ / produto descontinuado — nunca vai ao Tiny"
-    if variacao.estoque <= 0 or variacao.status == StatusVariacao.AGUARDANDO:
+    if not permitir_sem_estoque and (variacao.estoque <= 0 or variacao.status == StatusVariacao.AGUARDANDO):
         return f"estoque <= 0 (estoque={variacao.estoque}) — aguarda reposição"
     if sku in colisoes_por_sku:
         forns = ", ".join(colisoes_por_sku[sku])
@@ -387,7 +385,8 @@ def bloqueio_local(variacao, colisoes_por_sku) -> str | None:
 
 
 def avaliar_variacao(
-    cliente, instancia, variacao, colisoes_por_sku, *, vincular_skus=(), tiny_fornecedor_id=None
+    cliente, instancia, variacao, colisoes_por_sku, *, vincular_skus=(), tiny_fornecedor_id=None,
+    atualizar_cadastrada=False,
 ) -> Decisao:
     """
     Decisão completa (inclui o GET por SKU exato no Tiny). Chamada tanto pelo
@@ -399,13 +398,19 @@ def avaliar_variacao(
     afetada — só segue para a etapa de imagens).
     """
     vincular_skus = set(vincular_skus or ())
-    motivo_local = bloqueio_local(variacao, colisoes_por_sku)
+    tem_vinculo = bool((variacao.tiny_id or "").strip())
+    # Atualizar um vínculo pode zerar estoque. Identidade, P@ e colisões
+    # continuam obrigatórios, também quando a única etapa pendente é imagem.
+    motivo_local = bloqueio_local(variacao, colisoes_por_sku, permitir_sem_estoque=tem_vinculo)
     if motivo_local:
         return Decisao(ACAO_BLOQUEADO, motivo_local)
+    # Um vínculo existente nunca volta para busca/CREATE, mesmo após erro de PUT.
+    if tem_vinculo:
+        if variacao.status == StatusVariacao.CADASTRADO and not atualizar_cadastrada:
+            return Decisao(ACAO_JA_CADASTRADO, f"já vinculada (tiny_id={variacao.tiny_id})")
+        return Decisao(ACAO_ATUALIZAR_EXISTENTE, f"atualizar vínculo tiny_id={variacao.tiny_id}",
+                       tiny_existente={"id": variacao.tiny_id})
     sku = identidade_tiny(variacao)
-
-    if variacao.status == StatusVariacao.CADASTRADO and (variacao.tiny_id or "").strip():
-        return Decisao(ACAO_JA_CADASTRADO, f"já vinculada (tiny_id={variacao.tiny_id})")
 
     if not tiny_fornecedor_id:
         return Decisao(ACAO_BLOQUEADO, MOTIVO_SEM_TINY_FORNECEDOR_ID)
@@ -773,6 +778,8 @@ def _processar_variacao(
     resultado: "ResultadoSincronizacao",
     eventos: "EventosSincronizacao",
     dry_run: bool,
+    atualizar_cadastrada=False,
+    sincronizar_imagens=True,
 ) -> None:
     """
     UMA unidade de trabalho do cadastro no Tiny: avalia (proteções locais +
@@ -792,6 +799,7 @@ def _processar_variacao(
             colisoes,
             vincular_skus=vincular_skus,
             tiny_fornecedor_id=tiny_fornecedor_id,
+            atualizar_cadastrada=atualizar_cadastrada,
         )
     except Exception as exc:  # falha na avaliação (ex.: GET explodiu)
         resultado.erros += 1
@@ -811,7 +819,8 @@ def _processar_variacao(
         eventos.variacao_ja_cadastrada(variacao)
         # SKU já vinculado que voltou à fila só para concluir a etapa de
         # imagens (envio anterior falhou / nunca rodou). Nada é recriado.
-        _sincronizar_imagens_do_sku(cliente, variacao, resultado, eventos, dry_run=dry_run)
+        if sincronizar_imagens:
+            _sincronizar_imagens_do_sku(cliente, variacao, resultado, eventos, dry_run=dry_run)
         return
 
     if dry_run:
@@ -836,10 +845,12 @@ def _processar_variacao(
             resultado.vinculadas += 1
             eventos.variacao_vinculada(variacao, decisao.tiny_existente["id"])
         elif decisao.acao == ACAO_ATUALIZAR_EXISTENTE:
-            marcar_cadastrada(
-                variacao, decisao.tiny_existente["id"], preco_custo_publicado=None
-            )
-            _atualizar_variacao_vinculada(cliente, instancia, variacao, eventos=eventos)
+            if not variacao.tiny_id:
+                # Guarda a autoridade do ID antes do PUT. Falha parcial será
+                # retomada por este ID; nunca volta para criação.
+                variacao.tiny_id = str(decisao.tiny_existente["id"])
+                variacao.save(update_fields=["tiny_id", "atualizado_em"])
+            _atualizar_variacao_vinculada(cliente, instancia, variacao)
             resultado.vinculadas += 1
             eventos.variacao_vinculada(variacao, decisao.tiny_existente["id"])
     except Exception as exc:  # uma variação ruim não trava o lote
@@ -851,7 +862,8 @@ def _processar_variacao(
     # Etapa de imagens do MESMO SKU, imediatamente após o cadastro/vínculo
     # bem-sucedido. Faz parte da unidade de trabalho: no cadastro em massa uma
     # pausa só é atendida DEPOIS disto, no `controlador.checar()` do próximo SKU.
-    _sincronizar_imagens_do_sku(cliente, variacao, resultado, eventos, dry_run=dry_run)
+    if sincronizar_imagens:
+        _sincronizar_imagens_do_sku(cliente, variacao, resultado, eventos, dry_run=dry_run)
 
 
 def cadastrar_variacao_individual(
@@ -860,6 +872,7 @@ def cadastrar_variacao_individual(
     *,
     cliente: TinyApiClient | None = None,
     eventos: EventosSincronizacao | None = None,
+    atualizar_cadastrada=False,
 ) -> ResultadoSincronizacao:
     """
     Cadastra UMA variação (SKU) no Tiny pelo MESMO caminho de código do
@@ -870,8 +883,8 @@ def cadastrar_variacao_individual(
     imagens logo após criar.
 
     Diferenças do fluxo em massa: processa só esta variação, NÃO cria
-    `Execucao`, NÃO permite `--vincular-skus` (SKU já existente no Tiny ->
-    bloqueado, nunca vinculado automaticamente) e NÃO tem dry-run (quem
+    `Execucao`, NÃO permite `--vincular-skus` (só XBZ possui reconciliação
+    automática por composto/legado) e NÃO tem dry-run (quem
     chama já decidiu escrever).
 
     Devolve o `ResultadoSincronizacao` (contadores) — quem chama traduz
@@ -896,6 +909,7 @@ def cadastrar_variacao_individual(
         resultado=resultado,
         eventos=eventos,
         dry_run=False,
+        atualizar_cadastrada=atualizar_cadastrada,
     )
     return resultado
 
@@ -908,16 +922,12 @@ def atualizar_variacao_individual(
     eventos: EventosSincronizacao | None = None,
 ) -> ResultadoSincronizacao:
     """Atualiza uma variação já vinculada no Tiny, ou cadastra-a se pendente."""
-    if not (variacao.tiny_id or "").strip():
-        return cadastrar_variacao_individual(instancia, variacao, cliente=cliente, eventos=eventos)
-
-    eventos = eventos or EventosSincronizacao()
-    cliente = cliente or TinyApiClient(instancia, somente_leitura=False)
-    _atualizar_variacao_vinculada(cliente, instancia, variacao, eventos=eventos)
-    return ResultadoSincronizacao(fila=1, vinculadas=1)
+    return cadastrar_variacao_individual(
+        instancia, variacao, cliente=cliente, eventos=eventos, atualizar_cadastrada=True
+    )
 
 
-def _atualizar_variacao_vinculada(cliente, instancia, variacao, *, eventos):
+def _atualizar_variacao_vinculada(cliente, instancia, variacao):
     """Atualiza o produto já identificado por ``variacao.tiny_id``."""
 
     from .tiny_dados_produto import DadosProdutoError, montar_payload_atualizacao
@@ -949,12 +959,12 @@ def _atualizar_variacao_vinculada(cliente, instancia, variacao, *, eventos):
     variacao.estoque_tiny_sincronizado = variacao.estoque
     variacao.dados_tiny_sincronizados_em = timezone.now()
     variacao.ultimo_erro = ""
+    variacao.status = StatusVariacao.CADASTRADO
+    variacao.cadastrado_em = variacao.cadastrado_em or timezone.now()
     variacao.save(update_fields=[
         "preco_custo_tiny_sincronizado", "estoque_tiny_sincronizado",
-        "dados_tiny_sincronizados_em", "ultimo_erro", "atualizado_em",
+        "dados_tiny_sincronizados_em", "ultimo_erro", "atualizado_em", "status", "cadastrado_em",
     ])
-    resultado = ResultadoSincronizacao(fila=1, vinculadas=1)
-    _sincronizar_imagens_do_sku(cliente, variacao, resultado, eventos, dry_run=False)
 
 
 def _sincronizar_imagens_do_sku(cliente, variacao, resultado, eventos, *, dry_run: bool) -> None:

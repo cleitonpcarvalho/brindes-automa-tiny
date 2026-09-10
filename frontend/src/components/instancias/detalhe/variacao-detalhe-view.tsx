@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ErrorState } from "@/components/ui/empty-error-state"
 import { ApiError } from "@/lib/api/client"
+import { retornoProduto } from "@/lib/retorno-produto"
 import {
   useAtualizarVariacaoFornecedor,
   useAtualizarVariacaoTiny,
@@ -274,7 +275,7 @@ function DadosTecnicos({ dados }: { dados: VariacaoDetalhe }) {
   )
 }
 
-function Conteudo({ slug, dados }: { slug: string; dados: VariacaoDetalhe }) {
+function Conteudo({ slug, dados, voltar }: { slug: string; dados: VariacaoDetalhe; voltar: ReactNode }) {
   const galeria = listaDeTextos(dados.imagens)
   const imagens = galeria.length > 0 ? galeria : listaDeTextos(dados.produto_imagens)
   const mostrarNomeVariacao = Boolean(dados.nome) && dados.nome !== dados.produto_nome
@@ -282,13 +283,7 @@ function Conteudo({ slug, dados }: { slug: string; dados: VariacaoDetalhe }) {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3 border-b border-border pb-4">
-        <Link
-          href={`/instancias/${slug}?tab=produtos`}
-          className="flex w-fit items-center gap-1.5 text-caption-label text-muted-foreground transition-colors hover:text-foreground"
-        >
-          <ArrowLeft size={14} />
-          Voltar para Produtos
-        </Link>
+        {voltar}
 
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-title-page text-foreground">{dados.produto_nome || dados.nome || dados.sku}</h1>
@@ -388,19 +383,22 @@ function Conteudo({ slug, dados }: { slug: string; dados: VariacaoDetalhe }) {
 export function VariacaoDetalheView({
   slug,
   variacaoId,
+  retorno,
 }: {
   slug: string
   variacaoId: string
+  retorno?: string
 }) {
   const { data, isLoading, isError, error, refetch } = useVariacaoInstancia(slug, variacaoId)
+  const destino = retornoProduto(slug, retorno)
 
   const voltar = (
     <Link
-      href={`/instancias/${slug}?tab=produtos`}
+      href={destino.href}
       className="flex w-fit items-center gap-1.5 text-caption-label text-muted-foreground transition-colors hover:text-foreground"
     >
       <ArrowLeft size={14} />
-      Voltar para Produtos
+      {destino.rotulo}
     </Link>
   )
 
@@ -436,5 +434,5 @@ export function VariacaoDetalheView({
     )
   }
 
-  return <Conteudo slug={slug} dados={data} />
+  return <Conteudo slug={slug} dados={data} voltar={voltar} />
 }

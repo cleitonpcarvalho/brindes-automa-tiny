@@ -78,11 +78,11 @@ function mock(estado: Record<string, unknown>) {
   } as never)
 }
 
-function renderDetalhe() {
+function renderDetalhe(retorno?: string) {
   return render(
     <QueryClientProvider client={new QueryClient()}>
       <ToastProvider>
-        <VariacaoDetalheView slug="loja-x" variacaoId="42" />
+        <VariacaoDetalheView slug="loja-x" variacaoId="42" retorno={retorno} />
       </ToastProvider>
     </QueryClientProvider>,
   )
@@ -94,6 +94,20 @@ describe("VariacaoDetalheView", () => {
     vi.mocked(hooks.useAtualizarVariacaoFornecedor).mockReturnValue({ mutate: atualizarFornecedor, isPending: false } as never)
     vi.mocked(hooks.useAtualizarVariacaoTiny).mockReturnValue({ mutate: atualizarTiny, isPending: false } as never)
     vi.mocked(hooks.useStatusAtualizarVariacaoFornecedor).mockReturnValue({ data: undefined } as never)
+  })
+
+  it("volta para execução de origem mantendo filtros e página", () => {
+    mock({ data: detalhe() })
+    const retorno = "/instancias/loja-x/execucoes/10?busca=18700-DOU&resultado=erros&page=3"
+    renderDetalhe(retorno)
+    expect(screen.getByRole("link", { name: "Voltar para Execução" })).toHaveAttribute("href", retorno)
+    expect(screen.queryByRole("link", { name: "Voltar para Produtos" })).not.toBeInTheDocument()
+  })
+
+  it("acesso direto e retorno externo têm fallback para produtos", () => {
+    mock({ data: detalhe() })
+    renderDetalhe("https://malicioso.example/instancias/loja-x/execucoes/10")
+    expect(screen.getByRole("link", { name: "Voltar para Produtos" })).toHaveAttribute("href", "/instancias/loja-x?tab=produtos")
   })
 
   it("renderiza cabeçalho, informações principais e link de voltar", () => {

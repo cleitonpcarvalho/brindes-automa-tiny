@@ -591,7 +591,7 @@ def _retentar_um_do_lote(retentativa_id, execucao, instancia, variacao_id, clien
             )
             return
 
-        if (variacao.tiny_id or "").strip() or variacao.status == StatusVariacao.CADASTRADO:
+        if variacao.status == StatusVariacao.CADASTRADO:
             # idempotência: já foi cadastrado (retry individual, rodada anterior…)
             RetentativaLote.objects.filter(pk=retentativa_id).update(
                 processados=F("processados") + 1, ignorados=F("ignorados") + 1

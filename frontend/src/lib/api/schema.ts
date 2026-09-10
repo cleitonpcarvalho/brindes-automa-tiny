@@ -1044,6 +1044,7 @@ export interface components {
          *     para importações de espelho vêm derivados do status.
          */
         ExecucaoDetalhe: {
+            contadores_registrados?: Record<string, number>;
             id: number;
             fornecedor: string;
             tipo: string;
@@ -1067,6 +1068,10 @@ export interface components {
         };
         /** @description Uma linha da tabela de auditoria — o desfecho de UM SKU nesta execução. */
         ExecucaoProduto: {
+            resultado_historico?: components["schemas"]["EventoLogEnum"];
+            detalhe_historico?: string;
+            status_atual?: string | null;
+            reconciliado?: boolean;
             log_id: number;
             variacao_id: number | null;
             sku: string;

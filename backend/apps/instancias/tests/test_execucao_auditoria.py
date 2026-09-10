@@ -103,9 +103,14 @@ class ExecucaoDetalheResumoTests(AuditoriaBase):
         d = resp.data
         self.assertEqual(d["fornecedor"], "asia")
         self.assertEqual(d["estado"], "pausado")
-        self.assertEqual(d["total_cadastrados"], 421)
-        self.assertEqual(d["total_erros"], 6)
-        self.assertEqual(d["total_ignorados"], 710)
+        self.assertEqual(d["total_lidos"], 7)
+        self.assertEqual(d["total_cadastrados"], 4)
+        self.assertEqual(d["total_erros"], 2)
+        self.assertEqual(d["total_ignorados"], 1)
+        self.assertEqual(d["contadores_registrados"], {
+            "total_lidos": 1137, "total_cadastrados": 421,
+            "total_erros": 6, "total_ignorados": 710,
+        })
         # (421 + 6) / 1137
         self.assertAlmostEqual(d["progresso"], round(427 / 1137, 4), places=4)
         self.assertEqual(d["auditoria"]["cadastrados"], 3)

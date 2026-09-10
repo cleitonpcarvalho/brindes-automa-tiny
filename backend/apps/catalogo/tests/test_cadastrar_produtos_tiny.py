@@ -305,7 +305,10 @@ class DimensoesAnexosEGarantiaNoPayloadTests(TestCase):
     def test_garantia_e_incluida_quando_presente_nos_atributos(self, mock_buscar, mock_criar):
         instancia = _instancia_pronta()
         _variacao_pendente(
-            instancia, "SKU-GARANTIA", atributos={"garantia_do_produto": "Contra defeitos de fabricação"}
+            instancia, "SKU-GARANTIA", atributos={
+                "codigo_composto": "SKU-GARANTIA",
+                "garantia_do_produto": "Contra defeitos de fabricação",
+            }
         )
         mock_buscar.return_value = None
         mock_criar.return_value = {"id": 1}
@@ -459,7 +462,8 @@ class CorrespondenciaSoPorSkuExatoTests(TestCase):
     def test_sku_exato_existente_no_tiny_sem_vinculo_nao_e_tocado(self, mock_buscar, mock_criar):
         """Produto legado/preexistente com o mesmo SKU exato: nunca alterado sem vínculo confirmado."""
         instancia = _instancia_pronta()
-        variacao = _variacao_pendente(instancia, "EKKT-90395")  # forma do catálogo legado
+        # A exceção XBZ reconcilia automaticamente; os demais continuam conservadores.
+        variacao = _variacao_pendente(instancia, "EKKT-90395", fornecedor="asia")
         mock_buscar.return_value = {"id": 321, "sku": "EKKT-90395"}
 
         call_command("cadastrar_produtos_tiny", instancia.slug)

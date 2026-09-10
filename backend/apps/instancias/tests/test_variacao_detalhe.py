@@ -231,7 +231,8 @@ class VariacaoDetalheTests(TestCase):
 
     @patch("apps.instancias.views.atualizar_variacao_individual")
     def test_atualizar_no_tiny_reutiliza_fluxo_individual(self, atualizar):
-        atualizar.return_value = self.variacao
+        from apps.catalogo.tiny_sync import ResultadoSincronizacao
+        atualizar.return_value = ResultadoSincronizacao(vinculadas=1)
 
         resposta = self.client.post(
             f"/api/instancias/{self.instancia.slug}/produtos/{self.variacao.id}/atualizar-tiny/"

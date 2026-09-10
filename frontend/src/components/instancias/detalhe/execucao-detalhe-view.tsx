@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { ErrorState } from "@/components/ui/empty-error-state"
 import { useToast } from "@/components/ui/toast"
 import { ApiError } from "@/lib/api/client"
+import { invalidarSincronizacaoTiny } from "@/lib/api/invalidacao-tiny"
 import {
   useExecucaoDetalhe,
   useExecucaoLogsGerais,
@@ -53,9 +54,10 @@ function EstadoBadge({ estado }: { estado: string }) {
 
 function Resumo({ resumo }: { resumo: ExecucaoDetalhe }) {
   const pct = Math.round((resumo.progresso ?? 0) * 100)
-  const rotulo3 = resumo.estado in ROTULO_ESTADO_CADASTRO_TINY
-    ? rotuloRestantes(resumo.estado as CadastroTinyEstadoEnum)
-    : "não cadastrados"
+  const cadastroTiny = resumo.tipo === "cadastro_tiny"
+  const rotuloIgnorados = cadastroTiny ? "Ignorados / bloqueados"
+    : resumo.estado in ROTULO_ESTADO_CADASTRO_TINY
+      ? rotuloRestantes(resumo.estado as CadastroTinyEstadoEnum) : "não cadastrados"
 
   return (
     <Card>
@@ -64,6 +66,7 @@ function Resumo({ resumo }: { resumo: ExecucaoDetalhe }) {
           <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-code-inline text-foreground">
             {ROTULO_FORNECEDOR[resumo.fornecedor as keyof typeof ROTULO_FORNECEDOR] ?? resumo.fornecedor}
           </span>
+          <span className="text-caption-label text-muted-foreground">Estado da execução:</span>
           <EstadoBadge estado={resumo.estado} />
           <span className="text-caption-label text-muted-foreground">
             início {formatarTempoRelativo(resumo.iniciada_em)}
@@ -81,10 +84,10 @@ function Resumo({ resumo }: { resumo: ExecucaoDetalhe }) {
         )}
 
         <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Metrica rotulo="Total da fila" valor={resumo.total_lidos} />
+          <Metrica rotulo={cadastroTiny ? "Produtos com resultado" : "Total da fila"} valor={resumo.total_lidos} />
           <Metrica rotulo="Cadastrados" valor={resumo.total_cadastrados} destaque="success" />
           <Metrica rotulo="Erros" valor={resumo.total_erros} destaque={resumo.total_erros ? "error" : undefined} />
-          <Metrica rotulo={rotulo3} valor={resumo.total_ignorados} />
+          <Metrica rotulo={rotuloIgnorados} valor={resumo.total_ignorados} />
         </dl>
 
         <div className="flex flex-col gap-1">
@@ -98,8 +101,19 @@ function Resumo({ resumo }: { resumo: ExecucaoDetalhe }) {
               aria-valuemax={100}
             />
           </div>
-          <span className="text-caption-label text-muted-foreground">{pct}% processado</span>
+          <span className="text-caption-label text-muted-foreground">{pct}% processado{cadastroTiny ? " na fila registrada" : ""}</span>
         </div>
+        {cadastroTiny && <p className="text-caption-label text-muted-foreground">
+          Contagens e filtros consideram os produtos desta execução e seu estado conciliado no espelho.
+          O histórico de cada tentativa permanece nos logs.
+        </p>}
+        {cadastroTiny && resumo.contadores_registrados && (
+          <details className="text-caption-label text-muted-foreground">
+            <summary>Contadores registrados do fornecedor (última consolidação)</summary>
+            Fila: {resumo.contadores_registrados.total_lidos}; cadastrados: {resumo.contadores_registrados.total_cadastrados};
+            erros: {resumo.contadores_registrados.total_erros}; pendentes: {resumo.contadores_registrados.total_ignorados}.
+          </details>
+        )}
       </CardContent>
     </Card>
   )
@@ -181,19 +195,23 @@ function LogsTecnicos({ slug, execucaoId, total }: { slug: string; execucaoId: s
   )
 }
 
-export function ExecucaoDetalheView({ slug, execucaoId }: { slug: string; execucaoId: string }) {
-  const [buscaInput, setBuscaInput] = useState("")
-  const [busca, setBusca] = useState("")
-  const [resultado, setResultado] = useState<"" | "cadastrados" | "erros" | "bloqueados">("")
-  const [pagina, setPagina] = useState(1)
+export function ExecucaoDetalheView({ slug, execucaoId, queryInicial = "" }: {
+  slug: string; execucaoId: string; queryInicial?: string
+}) {
+  const parametros = new URLSearchParams(queryInicial)
+  const filtroInicial = FILTROS.find((f) => f.chave === parametros.get("resultado"))?.chave || ""
+  const [buscaInput, setBuscaInput] = useState(parametros.get("busca") || "")
+  const [busca, setBusca] = useState(buscaInput)
+  const [resultado, setResultado] = useState<"" | "cadastrados" | "erros" | "bloqueados">(filtroInicial)
+  const [pagina, setPagina] = useState(Math.max(1, Number.parseInt(parametros.get("page") || "1") || 1))
+  parametros.set("busca", busca)
+  parametros.set("resultado", resultado)
+  parametros.set("page", String(pagina))
 
   useEffect(() => {
     const t = setTimeout(() => setBusca(buscaInput), 300)
     return () => clearTimeout(t)
   }, [buscaInput])
-  useEffect(() => {
-    setPagina(1)
-  }, [busca, resultado])
 
   const queryClient = useQueryClient()
   const toast = useToast()
@@ -228,9 +246,7 @@ export function ExecucaoDetalheView({ slug, execucaoId }: { slug: string; execuc
       (st === "concluido" || st === "interrompido")
     ) {
       const d = loteProgresso.data
-      queryClient.invalidateQueries({
-        queryKey: ["instancias", "execucoes", "detalhe", slug, String(execucaoId)],
-      })
+      invalidarSincronizacaoTiny(queryClient, slug)
       queryClient.invalidateQueries({
         queryKey: ["instancias", "execucoes", "produtos", slug, String(execucaoId)],
       })
@@ -314,7 +330,7 @@ export function ExecucaoDetalheView({ slug, execucaoId }: { slug: string; execuc
             />
             <Input
               value={buscaInput}
-              onChange={(e) => setBuscaInput(e.target.value)}
+              onChange={(e) => { setBuscaInput(e.target.value); setPagina(1) }}
               placeholder="Buscar por SKU ou nome do produto"
               className="pl-8"
             />
@@ -325,7 +341,7 @@ export function ExecucaoDetalheView({ slug, execucaoId }: { slug: string; execuc
                 key={f.chave || "todos"}
                 variant={resultado === f.chave ? "secondary" : "ghost"}
                 size="sm"
-                onClick={() => setResultado(f.chave)}
+                onClick={() => { setResultado(f.chave); setPagina(1) }}
               >
                 {f.rotulo}
                 {f.chave === "erros" && aud.erros > 0 && (
@@ -389,6 +405,7 @@ export function ExecucaoDetalheView({ slug, execucaoId }: { slug: string; execuc
         <ExecucaoProdutosTabela
           slug={slug}
           execucaoId={execucaoId}
+          retornoExecucao={`/instancias/${slug}/execucoes/${execucaoId}?${parametros}`}
           itens={produtos.data?.results ?? []}
           isLoading={produtos.isLoading}
           isError={produtos.isError}

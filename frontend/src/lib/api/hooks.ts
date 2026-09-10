@@ -1,5 +1,7 @@
 "use client";
 
+import { invalidarSincronizacaoTiny } from "./invalidacao-tiny";
+
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, apiClient } from "./client";
 import type {
@@ -256,8 +258,9 @@ export function useAtualizarVariacaoTiny(slug: string) {
       ),
     onSuccess: (dados, variacaoId) => {
       queryClient.setQueryData(["instancias", "produtos", "detalhe", slug, String(variacaoId)], dados);
-      queryClient.invalidateQueries({ queryKey: ["instancias", "produtos", slug] });
+      return invalidarSincronizacaoTiny(queryClient, slug, variacaoId);
     },
+    onError: (_erro, variacaoId) => invalidarSincronizacaoTiny(queryClient, slug, variacaoId),
   });
 }
 
@@ -278,6 +281,7 @@ export function useCadastrarVariacaoTiny(slug: string) {
         `/instancias/${slug}/produtos/${variacaoId}/cadastro-tiny/`,
       ),
     onSuccess: (linha) => {
+      invalidarSincronizacaoTiny(queryClient, slug, linha.id);
       queryClient.setQueriesData<PaginatedVariacaoEspelhoList>(
         { queryKey: ["instancias", "produtos", slug] },
         (dados) =>
@@ -421,7 +425,6 @@ export function useExecucaoProdutoLogs(
  */
 export function useRetentarVariacaoExecucao(slug: string, execucaoId: string | number) {
   const queryClient = useQueryClient();
-  const id = String(execucaoId);
   return useMutation({
     retry: false,
     mutationFn: (variacaoId: number) =>
@@ -429,30 +432,13 @@ export function useRetentarVariacaoExecucao(slug: string, execucaoId: string | n
         `/instancias/${slug}/execucoes/${execucaoId}/produtos/${variacaoId}/retentar/`,
       ),
     onSuccess: (linha) => {
-      queryClient.setQueriesData<PaginatedExecucaoProdutoList>(
-        { queryKey: ["instancias", "execucoes", "produtos", slug, id] },
-        (dados) =>
-          dados?.results
-            ? {
-                ...dados,
-                results: dados.results.map((it) =>
-                  it.variacao_id === linha.variacao_id ? linha : it,
-                ),
-              }
-            : dados,
-      );
-      queryClient.invalidateQueries({
-        queryKey: ["instancias", "execucoes", "detalhe", slug, id],
-      });
-      queryClient.invalidateQueries({
-        queryKey: ["instancias", "execucoes", "produto-logs", slug, id, linha.variacao_id],
-      });
-      queryClient.invalidateQueries({ queryKey: ["instancias", "detalhe", slug] });
+      // Reconsulta também páginas filtradas: substituir uma linha de Erros
+      // por sucesso deixaria a contagem/paginação local inconsistente.
+      return invalidarSincronizacaoTiny(queryClient, slug, linha.variacao_id ?? undefined);
     },
-    onError: () => {
+    onError: (_erro, variacaoId) => {
       // 409 (corrida) / 422 — reconcilia a lista e o resumo com o servidor.
-      queryClient.invalidateQueries({ queryKey: ["instancias", "execucoes", "produtos", slug, id] });
-      queryClient.invalidateQueries({ queryKey: ["instancias", "execucoes", "detalhe", slug, id] });
+      return invalidarSincronizacaoTiny(queryClient, slug, variacaoId);
     },
   });
 }

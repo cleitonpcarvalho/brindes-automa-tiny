@@ -133,15 +133,33 @@ describe("ExecucaoProdutosTabela", () => {
   })
 
   it("'Ver produto' e o clique no SKU levam para a Variacao correta", () => {
+    const retorno = "/instancias/loja-x/execucoes/7?resultado=erros&page=3&busca=18700-DOU"
+    const destino = `/instancias/loja-x/produtos/99?${new URLSearchParams({ retorno })}`
     renderTabela({
+      retornoExecucao: retorno,
       itens: [linha({ variacao_id: 99, sku: "SKU-99", codigo_fornecedor: "SKU-99", sku_tiny: "SKU-99" })],
     })
     fireEvent.click(screen.getByRole("button", { name: "Ver produto" }))
-    expect(push).toHaveBeenCalledWith("/instancias/loja-x/produtos/99")
+    expect(push).toHaveBeenCalledWith(destino)
 
     push.mockClear()
     fireEvent.click(screen.getByRole("button", { name: /SKU-99/ }))
-    expect(push).toHaveBeenCalledWith("/instancias/loja-x/produtos/99")
+    expect(push).toHaveBeenCalledWith(destino)
+  })
+
+  it("sucesso posterior exibe estado/ID atuais e preserva erro 401 como histórico", () => {
+    renderTabela({ itens: [linha({
+      codigo_fornecedor: "X134074", sku_tiny: "18700-DOU", tiny_id: "924385783",
+      resultado: "vinculado", resultado_historico: "erro", reconciliado: true,
+      detalhe_historico: "Tiny retornou 401", detalhe_curto: "Cadastro confirmado posteriormente",
+    })] })
+    expect(screen.getByText("Já cadastrado")).toBeInTheDocument()
+    expect(screen.getByText("924385783")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /Tentar cadastrar/ })).not.toBeInTheDocument()
+    expect(screen.queryByText("Tiny retornou 401")).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Ver mensagem técnica completa" }))
+    expect(screen.getByText(/Resultado histórico desta execução: erro/)).toBeInTheDocument()
+    expect(screen.getByText(/Tiny retornou 401/)).toBeInTheDocument()
   })
 
   it("expandir a linha busca e mostra os logs técnicos daquele SKU", () => {

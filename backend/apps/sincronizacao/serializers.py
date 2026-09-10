@@ -84,6 +84,7 @@ class ExecucaoDetalheSerializer(serializers.Serializer):
     mensagem_erro = serializers.CharField(allow_blank=True)
     auditoria = AuditoriaResumoSerializer()
     logs_gerais_total = serializers.IntegerField()
+    contadores_registrados = serializers.DictField(child=serializers.IntegerField())
 
 
 class RetentativaLoteSerializer(serializers.ModelSerializer):
@@ -119,6 +120,10 @@ class ExecucaoProdutoSerializer(serializers.Serializer):
     sku_tiny = serializers.CharField()
     produto_nome = serializers.CharField()
     resultado = serializers.ChoiceField(choices=EventoLog.choices)
+    resultado_historico = serializers.ChoiceField(choices=EventoLog.choices)
+    detalhe_historico = serializers.CharField(allow_blank=True)
+    status_atual = serializers.CharField(allow_null=True)
+    reconciliado = serializers.BooleanField()
     tiny_id = serializers.CharField(allow_blank=True)
     mensagem = serializers.CharField()
     detalhe_curto = serializers.CharField(allow_blank=True)

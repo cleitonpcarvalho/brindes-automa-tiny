@@ -917,10 +917,17 @@ class AtualizarVariacaoTinyView(APIView):
                     status=status.HTTP_409_CONFLICT,
                 )
             try:
-                atualizar_variacao_individual(instancia, variacao)
+                coletor = _ColetorResultadoVariacao()
+                resultado = atualizar_variacao_individual(instancia, variacao, eventos=coletor)
             except Exception as exc:
                 return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
             variacao.refresh_from_db()
+            if resultado.bloqueadas:
+                return Response({"detail": coletor.motivo_bloqueio or "Sincronização bloqueada."},
+                                status=status.HTTP_409_CONFLICT)
+            if resultado.erros:
+                return Response({"detail": coletor.erro or variacao.ultimo_erro},
+                                status=status.HTTP_422_UNPROCESSABLE_ENTITY)
         return Response(VariacaoDetalheSerializer(variacao).data)
 
 
@@ -1166,7 +1173,18 @@ class ExecucaoDetalheView(APIView):
             "mensagem_erro": execucao.mensagem_erro,
             "auditoria": auditoria.resumo_auditoria(execucao),
             "logs_gerais_total": auditoria.logs_gerais(execucao).count(),
+            "contadores_registrados": {
+                "total_lidos": execucao.total_lidos,
+                "total_cadastrados": execucao.total_cadastrados,
+                "total_erros": execucao.total_erros,
+                "total_ignorados": execucao.total_ignorados,
+            },
         }
+        if execucao.tipo == TipoExecucao.CADASTRO_TINY:
+            resumo = dados["auditoria"]
+            dados.update(total_lidos=resumo["total"],
+                         total_cadastrados=resumo["cadastrados_e_vinculados"],
+                         total_erros=resumo["erros"], total_ignorados=resumo["bloqueados"])
         return Response(ExecucaoDetalheSerializer(dados).data)
 
 
@@ -1261,22 +1279,16 @@ class RetentarVariacaoExecucaoView(APIView):
         )
         fornecedor = variacao.produto.fornecedor
 
-        if (variacao.tiny_id or "").strip() or variacao.status == StatusVariacao.CADASTRADO:
+        if variacao.status == StatusVariacao.CADASTRADO:
             return Response(
                 {"detail": f"O SKU {variacao.sku} já está cadastrado no Tiny "
                  f"(tiny_id={variacao.tiny_id})."},
                 status=status.HTTP_409_CONFLICT,
             )
 
-        ultimo_desfecho = (
-            LogItem.objects.filter(
-                execucao=execucao, variacao=variacao, evento__in=EVENTOS_DESFECHO
-            )
-            .order_by("-criado_em", "-id")
-            .values_list("evento", flat=True)
-            .first()
-        )
-        if ultimo_desfecho != EventoLog.ERRO:
+        if not auditoria.linhas_de_auditoria(execucao, resultado="erros").filter(
+            variacao=variacao
+        ).exists():
             return Response(
                 {"detail": "Este SKU não está com erro nesta execução."},
                 status=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1299,7 +1311,7 @@ class RetentarVariacaoExecucaoView(APIView):
                 .select_related("produto")
                 .get(pk=variacao.pk)
             )
-            if (travada.tiny_id or "").strip() or travada.status == StatusVariacao.CADASTRADO:
+            if travada.status == StatusVariacao.CADASTRADO:
                 return Response(
                     {"detail": f"O SKU {travada.sku} já está cadastrado no Tiny "
                      f"(tiny_id={travada.tiny_id})."},

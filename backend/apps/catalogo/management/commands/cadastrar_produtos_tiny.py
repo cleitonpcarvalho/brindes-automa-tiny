@@ -8,18 +8,18 @@ from apps.instancias.tiny_client import TinyApiClient
 
 from ...tiny_sync import (
     ACAO_BLOQUEADO,
+    ACAO_ATUALIZAR_EXISTENTE,
     ACAO_CRIAR,
     ACAO_JA_CADASTRADO,
     ACAO_VINCULAR,
     MAX_ANEXOS_POR_PRODUTO,
     Decisao,
-    avaliar_variacao,
+    EventosSincronizacao,
+    ResultadoSincronizacao,
+    _processar_variacao,
     colisoes_cross_fornecedor,
-    criar_produto_no_tiny,
     fila_cadastro,
     imagens_utilizaveis,
-    marcar_cadastrada,
-    marcar_erro,
     montar_payload_produto,
     tiny_fornecedor_id_de,
 )
@@ -27,6 +27,7 @@ from ...tiny_sync import (
 # Rótulos de UI das ações — o comando imprime estes; a lógica de decisão
 # (neutra) vive em `apps.catalogo.tiny_sync`.
 _ROTULO_ACAO = {
+    ACAO_ATUALIZAR_EXISTENTE: "JA EXISTE NO TINY / SERIA ATUALIZADO",
     ACAO_CRIAR: "SERIA CRIADO",
     ACAO_VINCULAR: "JA EXISTE NO TINY / SERIA VINCULADO",
     ACAO_BLOQUEADO: "BLOQUEADO",
@@ -48,8 +49,9 @@ class Command(BaseCommand):
     """
     Cadastra no Tiny as variações pendentes de uma instância (uma Variacao = um produto).
 
-    Modelo operacional definitivo — determinístico por SKU:
-      SKU do fornecedor == SKU no espelho (Variacao.sku) == SKU no Tiny.
+    Modelo operacional determinístico pela identidade central Tiny:
+      XBZ: composto no Tiny, código X... estável no espelho;
+      demais fornecedores: SKU do espelho no Tiny, sem reconciliação automática.
     A correspondência com o catálogo do Tiny é feita EXCLUSIVAMENTE por SKU
     exato (`TinyApiClient.buscar_produto_por_sku`). Este fluxo NUNCA
     consulta o espelho `ProdutoTiny` e NUNCA casa por nome, NCM, descrição,
@@ -126,8 +128,8 @@ class Command(BaseCommand):
         colisoes = colisoes_cross_fornecedor(instancia)
         cliente = TinyApiClient(instancia, somente_leitura=dry_run)
 
-        contagem = {ACAO_CRIAR: 0, ACAO_VINCULAR: 0, ACAO_BLOQUEADO: 0, ACAO_JA_CADASTRADO: 0, "erro": 0}
-        sem_ncm = 0
+        resultado = ResultadoSincronizacao(fila=len(variacoes))
+        eventos = _EventosCommand(self, dry_run)
         # Id do contato-fornecedor no Tiny, resolvido UMA vez por fornecedor
         # (a fila vem ordenada por fornecedor) — nunca uma consulta por SKU.
         tiny_fornecedor_ids: dict[str, int | None] = {}
@@ -138,54 +140,35 @@ class Command(BaseCommand):
                 tiny_fornecedor_ids[fornecedor_da_variacao] = tiny_fornecedor_id_de(
                     instancia, fornecedor_da_variacao
                 )
-            decisao = avaliar_variacao(
+            _processar_variacao(
                 cliente,
                 instancia,
                 variacao,
                 colisoes,
                 vincular_skus=vincular_skus,
                 tiny_fornecedor_id=tiny_fornecedor_ids[fornecedor_da_variacao],
+                resultado=resultado,
+                eventos=eventos,
+                dry_run=dry_run,
+                sincronizar_imagens=False,
             )
-            self._imprimir_decisao(variacao, decisao, dry_run)
-            if decisao.acao == ACAO_CRIAR and not (variacao.ncm or "").strip():
-                sem_ncm += 1
-
-            if dry_run or decisao.acao in (ACAO_BLOQUEADO, ACAO_JA_CADASTRADO):
-                contagem[decisao.acao] += 1
-                continue
-
-            try:
-                if decisao.acao == ACAO_CRIAR:
-                    tiny_id = criar_produto_no_tiny(cliente, variacao, decisao.payload)
-                    marcar_cadastrada(
-                        variacao, tiny_id, preco_custo_publicado=variacao.preco_custo_tiny
-                    )
-                    contagem[ACAO_CRIAR] += 1
-                elif decisao.acao == ACAO_VINCULAR:
-                    marcar_cadastrada(
-                        variacao, decisao.tiny_existente["id"], preco_custo_publicado=None
-                    )
-                    contagem[ACAO_VINCULAR] += 1
-            except Exception as exc:  # TinySyncError incluso — uma variação ruim não trava o lote
-                contagem["erro"] += 1
-                marcar_erro(variacao, str(exc))
-                self.stderr.write(f"[{variacao.sku}] erro: {exc}")
 
         w("")
         w(self.style.SUCCESS(
             f"{'(dry-run) ' if dry_run else ''}"
-            f"Criadas/seriam criadas: {contagem[ACAO_CRIAR]} | vinculadas: {contagem[ACAO_VINCULAR]} | "
-            f"bloqueadas: {contagem[ACAO_BLOQUEADO]} | já cadastradas: {contagem[ACAO_JA_CADASTRADO]} | "
-            f"erros: {contagem['erro']}"
+            f"Criadas/seriam criadas: {resultado.criadas} | vinculadas: {resultado.vinculadas} | "
+            f"bloqueadas: {resultado.bloqueadas} | já cadastradas: {resultado.ja_cadastradas} | "
+            f"erros: {resultado.erros}"
         ))
+        sem_ncm = eventos.sem_ncm
         if sem_ncm:
             w(self.style.WARNING(
                 f"{sem_ncm} variação(ões) na ação CRIAR estão SEM NCM — pendência fiscal a "
                 "cobrar do fornecedor (não bloqueia o cadastro)."
             ))
-        if not dry_run and contagem[ACAO_CRIAR]:
+        if not dry_run and resultado.criadas:
             w(
-                f"{contagem[ACAO_CRIAR]} produto(s) criado(s) com estoque inicial = valor atual da "
+                f"{resultado.criadas} produto(s) criado(s) com estoque inicial = valor atual da "
                 f"Variacao. Ajustes futuros de estoque: `atualizar_estoque_tiny {instancia.slug}`."
             )
 
@@ -230,3 +213,18 @@ class Command(BaseCommand):
 
 def _lista(valor):
     return [s.strip() for s in (valor or "").split(",") if s.strip()]
+
+
+class _EventosCommand(EventosSincronizacao):
+    def __init__(self, command, dry_run):
+        self.command = command
+        self.dry_run = dry_run
+        self.sem_ncm = 0
+
+    def variacao_avaliada(self, variacao, decisao):
+        self.command._imprimir_decisao(variacao, decisao, self.dry_run)
+        if decisao.acao == ACAO_CRIAR and not (variacao.ncm or "").strip():
+            self.sem_ncm += 1
+
+    def variacao_erro(self, variacao, exc):
+        self.command.stderr.write(f"[{variacao.sku}] erro: {exc}")

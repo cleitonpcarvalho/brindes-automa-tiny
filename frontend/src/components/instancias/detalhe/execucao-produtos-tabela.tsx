@@ -34,6 +34,7 @@ interface Props {
   selecao?: SelecaoErros
   /** desabilita "Tentar novamente" individual enquanto um lote está rodando */
   retryBloqueado?: boolean
+  retornoExecucao?: string
 }
 
 function ehErroSelecionavel(l: ExecucaoProduto) {
@@ -50,6 +51,7 @@ export function ExecucaoProdutosTabela({
   temFiltros,
   selecao,
   retryBloqueado,
+  retornoExecucao,
 }: Props) {
   const router = useRouter()
   const [expandido, setExpandido] = useState<number | null>(null)
@@ -78,7 +80,7 @@ export function ExecucaoProdutosTabela({
             <TableHead className="w-8" />
             <TableHead>SKU Tiny / Produto</TableHead>
             <TableHead>Código fornecedor</TableHead>
-            <TableHead>Resultado</TableHead>
+            <TableHead>Situação conciliada</TableHead>
             <TableHead>Tiny ID</TableHead>
             <TableHead>Detalhe / erro</TableHead>
             <TableHead className="w-44 text-right">Ações</TableHead>
@@ -125,7 +127,9 @@ export function ExecucaoProdutosTabela({
               const aberto = expandido === linha.log_id
               const irParaProduto = () =>
                 linha.variacao_id != null &&
-                router.push(`/instancias/${slug}/produtos/${linha.variacao_id}`)
+                router.push(`/instancias/${slug}/produtos/${linha.variacao_id}?${new URLSearchParams({
+                  retorno: retornoExecucao || `/instancias/${slug}/execucoes/${execucaoId}`,
+                })}`)
               return (
                 <Fragment key={linha.log_id}>
                   <TableRow className={linha.resultado === "erro" ? "bg-error-subtle/30" : ""}>
@@ -162,7 +166,7 @@ export function ExecucaoProdutosTabela({
                         className="flex flex-col text-left disabled:cursor-default"
                       >
                         <span className="font-mono text-[13px] text-foreground hover:underline">
-                    {linha.sku_tiny || "—"}
+                          {linha.sku_tiny || "—"}
                         </span>
                         <span className="text-caption-label text-muted-foreground">
                           {linha.produto_nome || "(produto removido do espelho)"}
@@ -209,6 +213,10 @@ export function ExecucaoProdutosTabela({
                   {aberto && (
                     <TableRow className="hover:bg-transparent">
                       <TableCell colSpan={COLUNAS} className="whitespace-normal bg-muted/40">
+                        <p className="text-caption-label text-muted-foreground">
+                          Resultado histórico desta execução: {linha.resultado_historico || linha.resultado}
+                          {linha.detalhe_historico && ` — ${linha.detalhe_historico}`}
+                        </p>
                         <LogsTecnicosDoSku
                           slug={slug}
                           execucaoId={execucaoId}

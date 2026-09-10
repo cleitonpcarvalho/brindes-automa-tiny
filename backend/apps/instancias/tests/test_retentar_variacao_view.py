@@ -221,6 +221,7 @@ class RetentarVariacaoViewTests(TestCase):
 
     @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
     def test_sku_cujo_ultimo_desfecho_nao_e_erro_devolve_422(self, mock_criar):
+        Variacao.objects.filter(pk=self.variacao.pk).update(status=StatusVariacao.PENDENTE)
         LogItem.objects.create(
             execucao=self.execucao, variacao=self.variacao, nivel=NivelLog.INFO,
             evento=EventoLog.CRIADO, mensagem="SKU criado", detalhe={"tiny_id": "3"},

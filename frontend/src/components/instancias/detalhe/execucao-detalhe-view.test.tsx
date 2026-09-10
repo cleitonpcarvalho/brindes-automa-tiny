@@ -19,11 +19,11 @@ vi.mock("@/lib/api/hooks", () => ({
   useRetentarVariacaoExecucao: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
 }))
 
-function renderView(execucaoId = "12") {
+function renderView(execucaoId = "12", queryInicial = "") {
   return render(
     <QueryClientProvider client={new QueryClient()}>
       <ToastProvider>
-        <ExecucaoDetalheView slug="loja-x" execucaoId={execucaoId} />
+        <ExecucaoDetalheView slug="loja-x" execucaoId={execucaoId} queryInicial={queryInicial} />
       </ToastProvider>
     </QueryClientProvider>,
   )
@@ -39,14 +39,15 @@ function resumo(over: Partial<ExecucaoDetalhe> = {}): ExecucaoDetalhe {
     iniciada_em: "2026-01-01T00:00:00Z",
     finalizada_em: null,
     duracao_segundos: 1800,
-    total_lidos: 1137,
+    total_lidos: 427,
     total_cadastrados: 421,
     total_erros: 6,
-    total_ignorados: 710,
+    total_ignorados: 0,
+    contadores_registrados: { total_lidos: 1137, total_cadastrados: 421, total_erros: 6, total_ignorados: 710 },
     progresso: 0.3755,
     mensagem_erro: "",
     auditoria: {
-      total: 428,
+      total: 427,
       cadastrados: 421,
       vinculados: 0,
       cadastrados_e_vinculados: 421,
@@ -94,22 +95,32 @@ describe("ExecucaoDetalheView", () => {
     } as never)
   })
 
-  it("resumo: fornecedor, estado, fila, cadastrados, erros, 'a fazer' e barra", () => {
+  it("resumo e abas usam contadores conciliados; fila histórica aparece separada", () => {
     mockResumo({ data: resumo() })
     renderView()
 
     expect(screen.getByText("Pausado")).toBeInTheDocument()
-    expect(screen.getByText("1.137")).toBeInTheDocument() // fila
+    expect(screen.getByText("427")).toBeInTheDocument()
     expect(screen.getAllByText("421").length).toBeGreaterThan(0)
     expect(screen.getAllByText("6").length).toBeGreaterThan(0)
-    expect(screen.getByText("a fazer")).toBeInTheDocument() // pausado -> "a fazer"
+    expect(screen.getByText("Produtos com resultado")).toBeInTheDocument()
+    expect(screen.getByText("Contadores registrados do fornecedor (última consolidação)")).toBeInTheDocument()
     expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "38")
   })
 
-  it("execução concluída rotula o 3º número como 'não cadastrados'", () => {
+  it("execução concluída preserva a mesma semântica de bloqueados", () => {
     mockResumo({ data: resumo({ estado: "concluido", status: "sucesso" }) })
     renderView()
-    expect(screen.getByText("não cadastrados")).toBeInTheDocument()
+    expect(screen.getAllByText("Ignorados / bloqueados").length).toBeGreaterThan(0)
+  })
+
+  it("restaura filtro, busca e página vindos do retorno do produto", () => {
+    mockResumo({ data: resumo() })
+    renderView("10", "busca=18700-DOU&resultado=erros&page=3")
+    expect(hooks.useExecucaoProdutos).toHaveBeenLastCalledWith("loja-x", "10", {
+      busca: "18700-DOU", resultado: "erros", page: 3, pageSize: 25,
+    })
+    expect(screen.getByRole("textbox")).toHaveValue("18700-DOU")
   })
 
   it("badge segue o `estado` consolidado: retentativas zeraram os erros -> 'Concluído', sem 'Parcial'", () => {

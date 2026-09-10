@@ -220,8 +220,9 @@ export function useAtualizarVariacaoFornecedor(slug: string) {
       apiClient.post<AtualizacaoVariacaoFornecedor>(
         `/instancias/${slug}/produtos/${variacaoId}/atualizar-fornecedor/`,
       ),
-    onSuccess: (dados, variacaoId) => {
-      queryClient.setQueryData(["instancias", "produtos", "detalhe", slug, String(variacaoId)], dados);
+    onSuccess: () => {
+      // A resposta é a operação Celery, não o detalhe da variação. Mantê-la
+      // somente no estado da mutation evita sobrescrever o cache do produto.
       queryClient.invalidateQueries({ queryKey: ["instancias", "produtos", slug] });
     },
   });

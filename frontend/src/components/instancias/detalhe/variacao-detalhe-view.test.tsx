@@ -300,6 +300,39 @@ describe("VariacaoDetalheView", () => {
     expect(screen.getByRole("button", { name: "Atualizar no Tiny" })).toBeDisabled()
   })
 
+  it("mantém todos os dados do produto durante o polling da operação", () => {
+    vi.mocked(hooks.useStatusAtualizarVariacaoFornecedor).mockReturnValue({
+      data: { id: 9, variacao: 42, fornecedor: "xbz", status: "rodando", erro: "" },
+    } as never)
+    mock({ data: detalhe() })
+    renderDetalhe()
+
+    expect(screen.getByRole("heading", { name: "Caneca de porcelana" })).toBeInTheDocument()
+    expect(screen.getAllByText("X134066").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("18700-AZU").length).toBeGreaterThan(0)
+    expect(screen.getByText("tiny-123")).toBeInTheDocument()
+    expect(screen.getAllByText("R$ 19,90").length).toBeGreaterThan(0)
+    expect(screen.getAllByRole("button", { name: /Ver imagem/ })).toHaveLength(2)
+    expect(screen.getByRole("button", { name: "Atualizando…" })).toBeDisabled()
+  })
+
+  it("mantém os dados e mostra o erro real quando a operação termina com erro", async () => {
+    vi.mocked(hooks.useStatusAtualizarVariacaoFornecedor).mockReturnValue({
+      data: { id: 9, variacao: 42, fornecedor: "xbz", status: "erro", erro: "API XBZ indisponível" },
+    } as never)
+    atualizarFornecedor.mockImplementation((_id, opcoes) => opcoes.onSuccess({ id: 9 }))
+    mock({ data: detalhe() })
+    renderDetalhe()
+
+    screen.getByRole("button", { name: "Atualizar do fornecedor" }).click()
+
+    await waitFor(() => expect(screen.getByText("API XBZ indisponível")).toBeInTheDocument())
+    expect(screen.getByRole("heading", { name: "Caneca de porcelana" })).toBeInTheDocument()
+    expect(screen.getAllByText("X134066").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("18700-AZU").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("R$ 19,90").length).toBeGreaterThan(0)
+  })
+
   it("exibe o erro devolvido pelo backend no toast", async () => {
     atualizarFornecedor.mockImplementation((_id, opcoes) => opcoes.onError(new ApiError(502, "Fornecedor indisponível")))
     mock({ data: detalhe() })

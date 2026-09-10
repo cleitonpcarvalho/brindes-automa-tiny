@@ -88,6 +88,14 @@ describe("ExecucaoProdutosTabela", () => {
     expect(produto).not.toHaveTextContent("X134066")
   })
 
+  it("mantém SKU Tiny antes do código fornecedor na tabela", () => {
+    renderTabela({ itens: [linha({ codigo_fornecedor: "X134066", sku_tiny: "18700-AZU" })] })
+
+    const headers = screen.getAllByRole("columnheader")
+    expect(headers[1]).toHaveTextContent("SKU Tiny / Produto")
+    expect(headers[2]).toHaveTextContent("Código fornecedor")
+  })
+
   it("não usa o código fornecedor como fallback de SKU Tiny", () => {
     renderTabela({
       itens: [linha({ sku: "X134066", codigo_fornecedor: "X134066", sku_tiny: "" })],

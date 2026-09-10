@@ -117,6 +117,9 @@ class OrquestradorTests(TestCase):
         self.assertEqual(payload["fornecedores"][0]["codigoProdutoNoFornecedor"], "18700-AZU")
         self.assertEqual(payload["precos"]["preco"], 0.0)
         cliente.atualizar_estoque.assert_called_once()
+        cliente.criar_produto.assert_not_called()
+        v.refresh_from_db()
+        self.assertEqual(v.tiny_id, "123")
 
     def test_variacao_elegivel_e_criada_no_tiny(self):
         inst = _instancia()

@@ -76,8 +76,8 @@ export function ExecucaoProdutosTabela({
               </TableHead>
             )}
             <TableHead className="w-8" />
-            <TableHead>Código fornecedor</TableHead>
             <TableHead>SKU Tiny / Produto</TableHead>
+            <TableHead>Código fornecedor</TableHead>
             <TableHead>Resultado</TableHead>
             <TableHead>Tiny ID</TableHead>
             <TableHead>Detalhe / erro</TableHead>
@@ -154,9 +154,6 @@ export function ExecucaoProdutosTabela({
                         {aberto ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                       </button>
                     </TableCell>
-                    <TableCell className="align-top font-mono text-[13px] text-foreground">
-                      {linha.codigo_fornecedor || linha.sku || "—"}
-                    </TableCell>
                     <TableCell className="max-w-[280px] whitespace-normal align-top">
                       <button
                         type="button"
@@ -171,6 +168,9 @@ export function ExecucaoProdutosTabela({
                           {linha.produto_nome || "(produto removido do espelho)"}
                         </span>
                       </button>
+                    </TableCell>
+                    <TableCell className="align-top font-mono text-[13px] text-foreground">
+                      {linha.codigo_fornecedor || linha.sku || "—"}
                     </TableCell>
                     <TableCell className="align-top">
                       <div className="flex items-center gap-1.5">

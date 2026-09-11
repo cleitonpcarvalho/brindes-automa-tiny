@@ -4,6 +4,7 @@ from django.db.models import F, Q
 from apps.instancias.constants import Fornecedor
 from apps.instancias.models import Instancia
 from apps.instancias.tiny_client import TinyApiClient
+from apps.sincronizacao.locks import lock_instancia_tiny
 
 from ...models import StatusVariacao, Variacao
 
@@ -34,6 +35,13 @@ class Command(BaseCommand):
         instancia = self._obter_instancia(options["instancia_slug"])
         if not instancia.access_token:
             raise CommandError(f"Instância '{instancia.slug}' não está conectada ao Tiny.")
+
+        with lock_instancia_tiny(instancia.id) as adquirida:
+            if not adquirida:
+                raise CommandError("A conta Tiny desta instância está ocupada por outra propagação.")
+            return self._handle(*args, instancia=instancia, **options)
+
+    def _handle(self, *args, instancia, **options):
 
         cliente = TinyApiClient(instancia)
 

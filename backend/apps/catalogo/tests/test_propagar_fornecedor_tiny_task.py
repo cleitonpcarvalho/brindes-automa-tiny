@@ -294,16 +294,20 @@ class ErrosEProtecoesTests(_Base):
 
         mock_criar.assert_not_called()
 
-    @patch("apps.catalogo.tasks.lock_fornecedor")
+    @patch("apps.catalogo.tasks._reagendar_task_tiny")
+    @patch("apps.catalogo.tasks.lock_instancia_tiny")
     @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
     @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku", return_value=None)
-    def test_pula_se_a_trava_do_par_ja_esta_tomada(self, _mb, mock_criar, mock_lock):
+    def test_reagenda_se_a_conta_tiny_ja_esta_ocupada(
+        self, _mb, mock_criar, mock_lock, mock_reagendar
+    ):
         mock_lock.return_value.__enter__.return_value = False
         self._variacao("NOVO-LOCK")
 
         self._rodar()
 
         mock_criar.assert_not_called()
+        mock_reagendar.assert_called_once()
 
     @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
     def test_instancia_sem_token_nao_faz_nada(self, mock_criar):

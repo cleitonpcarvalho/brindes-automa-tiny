@@ -24,7 +24,7 @@ from apps.sincronizacao.models import (
     TipoExecucao,
 )
 from apps.sincronizacao import auditoria
-from apps.sincronizacao.locks import lock_fornecedor
+from apps.sincronizacao.locks import lock_fornecedor, lock_instancia_tiny
 
 from . import tiny_sync
 from .models import StatusVariacao, Variacao
@@ -40,6 +40,12 @@ from .tiny_sync import (
 )
 
 logger = logging.getLogger(__name__)
+TINY_LOCK_RETRY_COUNTDOWN = 30
+
+
+def _reagendar_task_tiny(task, args):
+    """Reenfileira sem manter worker, transação ou advisory lock ocupado."""
+    task.apply_async(args=args, countdown=TINY_LOCK_RETRY_COUNTDOWN)
 
 
 # ---------------------------------------------------------------------------
@@ -326,6 +332,20 @@ def consolidar_status_execucao(execucao: Execucao) -> bool:
 
 @shared_task
 def cadastrar_produtos_tiny_task(execucao_id, lease_token=None):
+    instancia_id = Execucao.objects.values_list("instancia_id", flat=True).get(pk=execucao_id)
+    with lock_instancia_tiny(instancia_id) as adquirida:
+        if not adquirida:
+            filtros = {"pk": execucao_id, "status": StatusExecucao.RODANDO}
+            if lease_token:
+                filtros["lease_token"] = lease_token
+            Execucao.objects.filter(**filtros).update(heartbeat_em=timezone.now())
+            logger.info("cadastro Tiny %s reagendado: conta da instância ocupada", execucao_id)
+            _reagendar_task_tiny(cadastrar_produtos_tiny_task, (execucao_id, lease_token))
+            return
+        _cadastrar_produtos_tiny_task(execucao_id, lease_token)
+
+
+def _cadastrar_produtos_tiny_task(execucao_id, lease_token=None):
     """
     Sincronização em massa de UM fornecedor com o Tiny, em background.
 
@@ -519,6 +539,21 @@ class EventosRetentativa(EventosExecucao):
 
 @shared_task
 def retentar_lote_task(retentativa_id, lease_token=None):
+    instancia_id = RetentativaLote.objects.values_list("execucao__instancia_id", flat=True).get(
+        pk=retentativa_id
+    )
+    with lock_instancia_tiny(instancia_id) as adquirida:
+        if not adquirida:
+            RetentativaLote.objects.filter(
+                pk=retentativa_id, status=StatusRetentativaLote.RODANDO
+            ).update(heartbeat_em=timezone.now())
+            logger.info("retentativa Tiny %s reagendada: conta da instância ocupada", retentativa_id)
+            _reagendar_task_tiny(retentar_lote_task, (retentativa_id, lease_token))
+            return
+        _retentar_lote_task(retentativa_id, lease_token)
+
+
+def _retentar_lote_task(retentativa_id, lease_token=None):
     """
     Processa um `RetentativaLote`: para cada `variacao_id` da fila (snapshot),
     SEQUENCIALMENTE, passa pelo MESMO fluxo do retry individual
@@ -722,11 +757,10 @@ def _reconciliar_retentativa_lote_stale(retentativa_id, limite=None):
 @contextmanager
 def _lock_propagacao_tiny(instancia_id, fornecedor):
     """
-    Trava compartilhada do par no PostgreSQL para não sobrepor propagação,
-    importação de espelho ou operação manual. O lock de sessão é liberado
-    automaticamente se o worker morrer.
+    Trava compartilhada da conta Tiny da instância. O lock de sessão é
+    liberado automaticamente se o worker morrer.
     """
-    with lock_fornecedor(instancia_id, fornecedor) as adquirida:
+    with lock_instancia_tiny(instancia_id) as adquirida:
         yield adquirida
 
 
@@ -763,9 +797,10 @@ def propagar_fornecedor_tiny_task(instancia_id, fornecedor):
     with _lock_propagacao_tiny(instancia_id, fornecedor) as adquirida:
         if not adquirida:
             logger.info(
-                "propagação Tiny %s/%s pulada: outra propagação do par em andamento",
+                "propagação Tiny %s/%s reagendada: conta da instância ocupada",
                 instancia.slug, fornecedor,
             )
+            _reagendar_task_tiny(propagar_fornecedor_tiny_task, (instancia_id, fornecedor))
             return
         if tiny_sync.execucao_cadastro_tiny_aberta(instancia, fornecedor) is not None:
             logger.info(

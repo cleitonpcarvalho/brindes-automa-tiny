@@ -20,6 +20,7 @@ from django.core.management.base import BaseCommand, CommandError
 from apps.instancias.constants import Fornecedor
 from apps.instancias.models import Instancia
 from apps.instancias.tiny_client import TinyApiClient
+from apps.sincronizacao.locks import lock_instancia_tiny
 
 from ...models import Variacao
 from ...tiny_dados_produto import comparar_campos, montar_payload_atualizacao
@@ -46,13 +47,22 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        instancia = self._obter_instancia(options["instancia"])
+        opcoes = {chave: valor for chave, valor in options.items() if chave != "instancia"}
+        if not options["executar"]:
+            return self._handle(*args, instancia=instancia, **opcoes)
+        with lock_instancia_tiny(instancia.id) as adquirida:
+            if not adquirida:
+                raise CommandError("A conta Tiny desta instância está ocupada por outra propagação.")
+            return self._handle(*args, instancia=instancia, **opcoes)
+
+    def _handle(self, *args, instancia, **options):
         w = self.stdout.write
         executar = options["executar"]
         sku = options["sku"]
         tiny_id = options["tiny_id"]
         fornecedor = options["fornecedor"]
 
-        instancia = self._obter_instancia(options["instancia"])
         if not instancia.access_token:
             raise CommandError(f"Instância '{instancia.slug}' não está conectada ao Tiny.")
 

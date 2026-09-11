@@ -1,12 +1,12 @@
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from threading import Barrier, Event
 
 from django.test import TestCase, TransactionTestCase
 
 from apps.instancias.models import Instancia
 
 from .models import Execucao, LogItem, NivelLog, StatusExecucao, TipoExecucao
-from .locks import lock_fornecedor
+from .locks import lock_fornecedor, lock_instancia_tiny
 
 
 class ExecucaoELogItemTests(TestCase):
@@ -88,4 +88,51 @@ class AdvisoryLockTests(TransactionTestCase):
                 raise RuntimeError("falha simulada")
 
         with lock_fornecedor(102, "somarcas") as acquired:
+            self.assertTrue(acquired)
+
+    def test_lock_tiny_da_mesma_instancia_exclui_fornecedores_diferentes(self):
+        pronto = Event()
+        liberar = Event()
+
+        def primeiro():
+            with lock_instancia_tiny(201) as acquired:
+                pronto.set()
+                liberar.wait(timeout=5)
+                return acquired
+
+        def segundo():
+            pronto.wait(timeout=5)
+            with lock_instancia_tiny(201) as acquired:
+                return acquired
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futuro_primeiro = executor.submit(primeiro)
+            futuro_segundo = executor.submit(segundo)
+            self.assertFalse(futuro_segundo.result(timeout=5))
+            liberar.set()
+            self.assertTrue(futuro_primeiro.result(timeout=5))
+
+    def test_locks_tiny_de_instancias_diferentes_continuam_paralelos(self):
+        barreira = Barrier(2)
+
+        def adquirir(instancia_id):
+            with lock_instancia_tiny(instancia_id) as acquired:
+                barreira.wait(timeout=5)
+                return acquired
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            resultados = list(executor.map(adquirir, (202, 203)))
+        self.assertEqual(resultados, [True, True])
+
+    def test_lock_tiny_e_liberado_normalmente_e_apos_excecao(self):
+        with lock_instancia_tiny(204) as acquired:
+            self.assertTrue(acquired)
+        with lock_instancia_tiny(204) as acquired:
+            self.assertTrue(acquired)
+
+        with self.assertRaises(RuntimeError):
+            with lock_instancia_tiny(205) as acquired:
+                self.assertTrue(acquired)
+                raise RuntimeError("falha simulada")
+        with lock_instancia_tiny(205) as acquired:
             self.assertTrue(acquired)

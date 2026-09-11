@@ -52,7 +52,7 @@ from apps.catalogo.tiny_sync import (
 )
 from apps.fornecedores.tasks import executar_sincronizacao_manual_task
 from apps.sincronizacao import auditoria
-from apps.sincronizacao.locks import lock_fornecedor
+from apps.sincronizacao.locks import lock_fornecedor, lock_instancia_tiny
 from apps.sincronizacao.models import (
     EVENTOS_DESFECHO,
     STATUS_EXECUCAO_ABERTOS,
@@ -925,8 +925,14 @@ class AtualizarVariacaoTinyView(APIView):
                     status=status.HTTP_409_CONFLICT,
                 )
             try:
-                coletor = _ColetorResultadoVariacao()
-                resultado = atualizar_variacao_individual(instancia, variacao, eventos=coletor)
+                with lock_instancia_tiny(instancia.id) as adquirida:
+                    if not adquirida:
+                        return Response(
+                            {"detail": "A conta Tiny desta instância está ocupada por outra propagação."},
+                            status=status.HTTP_409_CONFLICT,
+                        )
+                    coletor = _ColetorResultadoVariacao()
+                    resultado = atualizar_variacao_individual(instancia, variacao, eventos=coletor)
             except Exception as exc:
                 return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
             variacao.refresh_from_db()
@@ -1006,8 +1012,14 @@ class CadastrarVariacaoTinyView(APIView):
                     status=status.HTTP_409_CONFLICT,
                 )
 
-            coletor = _ColetorResultadoVariacao()
-            resultado = cadastrar_variacao_individual(instancia, travada, eventos=coletor)
+            with lock_instancia_tiny(instancia.id) as adquirida:
+                if not adquirida:
+                    return Response(
+                        {"detail": "A conta Tiny desta instância está ocupada por outra propagação."},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                coletor = _ColetorResultadoVariacao()
+                resultado = cadastrar_variacao_individual(instancia, travada, eventos=coletor)
             travada.refresh_from_db()
 
         if resultado.criadas or resultado.vinculadas:
@@ -1334,7 +1346,13 @@ class RetentarVariacaoExecucaoView(APIView):
                 detalhe={"origem": "retentativa_individual"},
             )
             eventos = EventosRetentativa(execucao)
-            resultado = cadastrar_variacao_individual(instancia, travada, eventos=eventos)
+            with lock_instancia_tiny(instancia.id) as adquirida:
+                if not adquirida:
+                    return Response(
+                        {"detail": "A conta Tiny desta instância está ocupada por outra propagação."},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                resultado = cadastrar_variacao_individual(instancia, travada, eventos=eventos)
             travada.refresh_from_db()
 
             if resultado.criadas or resultado.vinculadas:

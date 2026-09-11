@@ -9,6 +9,7 @@ from django.utils import timezone
 from apps.instancias.constants import Fornecedor
 from apps.instancias.models import Instancia
 from apps.instancias.tiny_client import TinyApiClient, TinyRateLimitError
+from apps.sincronizacao.locks import lock_instancia_tiny
 
 from ...models import StatusVariacao, Variacao
 from ...tiny_dados_produto import DadosProdutoError, montar_payload_atualizacao
@@ -67,6 +68,16 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         if options["dry_run"] and options["executar"]:
             raise CommandError("Passe --dry-run OU --executar, não os dois.")
+        instancia = self._instancia(options["instancia"])
+        opcoes = {chave: valor for chave, valor in options.items() if chave != "instancia"}
+        if not options["executar"]:
+            return self._handle(*args, instancia=instancia, **opcoes)
+        with lock_instancia_tiny(instancia.id) as adquirida:
+            if not adquirida:
+                raise CommandError("A conta Tiny desta instância está ocupada por outra propagação.")
+            return self._handle(*args, instancia=instancia, **opcoes)
+
+    def _handle(self, *args, instancia, **options):
         self._validar_opcoes(options)
         self._intervalo_requisicoes = options["intervalo_requisicoes"]
         self._tentativas_operacao_429 = options["tentativas_operacao_429"]
@@ -74,7 +85,6 @@ class Command(BaseCommand):
         self._ja_fez_requisicao = False
 
         executar = options["executar"]
-        instancia = self._instancia(options["instancia"])
         if not instancia.access_token:
             raise CommandError(f"Instância '{instancia.slug}' não está conectada ao Tiny.")
         fornecedor_id = tiny_fornecedor_id_de(instancia, Fornecedor.XBZ)

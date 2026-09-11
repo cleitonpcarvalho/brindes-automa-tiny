@@ -3,6 +3,7 @@ from django.core.management.base import BaseCommand, CommandError
 from apps.instancias.constants import Fornecedor
 from apps.instancias.models import Instancia
 from apps.instancias.tiny_client import TinyApiClient
+from apps.sincronizacao.locks import lock_instancia_tiny
 
 from ...tiny_sync import (
     IMG_ENVIADA,
@@ -62,6 +63,14 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         instancia = self._obter_instancia(options["instancia_slug"])
+        if options["dry_run"] or options["so_reconciliar"]:
+            return self._handle(*args, instancia=instancia, **options)
+        with lock_instancia_tiny(instancia.id) as adquirida:
+            if not adquirida:
+                raise CommandError("A conta Tiny desta instância está ocupada por outra propagação.")
+            return self._handle(*args, instancia=instancia, **options)
+
+    def _handle(self, *args, instancia, **options):
         if not instancia.access_token:
             raise CommandError(f"Instância '{instancia.slug}' não está conectada ao Tiny.")
 

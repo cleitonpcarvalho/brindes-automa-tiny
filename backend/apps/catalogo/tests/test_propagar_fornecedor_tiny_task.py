@@ -19,7 +19,13 @@ from django.utils import timezone
 
 from apps.instancias.models import CredencialFornecedor, Instancia
 from apps.instancias.tiny_client import TinyApiError
-from apps.sincronizacao.models import Execucao, StatusExecucao, TipoExecucao
+from apps.sincronizacao.models import (
+    Execucao,
+    RetentativaLote,
+    StatusExecucao,
+    StatusRetentativaLote,
+    TipoExecucao,
+)
 
 from ..models import Produto, StatusVariacao, Variacao
 from ..tasks import propagar_fornecedor_tiny_task
@@ -265,11 +271,34 @@ class ErrosEProtecoesTests(_Base):
 
         mock_criar.assert_not_called()
 
-    @patch("apps.catalogo.tasks.cliente_redis")
     @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
     @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku", return_value=None)
-    def test_pula_se_a_trava_do_par_ja_esta_tomada(self, _mb, mock_criar, mock_redis):
-        mock_redis.return_value = Mock(set=Mock(return_value=False))  # SET NX falhou
+    def test_pula_tudo_se_ha_retentativa_em_lote_ativa_para_o_par(self, _mb, mock_criar):
+        self._variacao("NOVO-RETENTATIVA")
+        execucao = Execucao.objects.create(
+            instancia=self.instancia,
+            fornecedor="asia",
+            tipo=TipoExecucao.CADASTRO_TINY,
+            status=StatusExecucao.RODANDO,
+            heartbeat_em=timezone.now(),
+        )
+        RetentativaLote.objects.create(
+            execucao=execucao,
+            status=StatusRetentativaLote.RODANDO,
+            heartbeat_em=timezone.now(),
+            total=1,
+            variacao_ids=[],
+        )
+
+        self._rodar()
+
+        mock_criar.assert_not_called()
+
+    @patch("apps.catalogo.tasks.lock_fornecedor")
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku", return_value=None)
+    def test_pula_se_a_trava_do_par_ja_esta_tomada(self, _mb, mock_criar, mock_lock):
+        mock_lock.return_value.__enter__.return_value = False
         self._variacao("NOVO-LOCK")
 
         self._rodar()

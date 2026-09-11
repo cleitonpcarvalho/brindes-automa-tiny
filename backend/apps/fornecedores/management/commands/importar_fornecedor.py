@@ -112,6 +112,8 @@ class Command(BaseCommand):
         )
 
         try:
+            execucao.heartbeat_em = timezone.now()
+            execucao.save(update_fields=["heartbeat_em"])
             if credencial is None:
                 # Caminho da sincronização manual (passo 10): a view já validou
                 # a credencial de forma síncrona antes de criar a Execucao e
@@ -345,6 +347,9 @@ class Command(BaseCommand):
         }
 
         for produto_normalizado in produtos_normalizados:
+            Execucao.objects.filter(pk=execucao.pk, status=StatusExecucao.RODANDO).update(
+                heartbeat_em=timezone.now()
+            )
             try:
                 produto = self._gravar_produto(instancia, fornecedor, produto_normalizado)
             except Exception as exc:

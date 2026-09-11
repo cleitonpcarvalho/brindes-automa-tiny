@@ -36,4 +36,8 @@ app.conf.beat_schedule = {
         "task": "apps.fornecedores.tasks.reconciliar_atualizacoes_fornecedor_stale",
         "schedule": crontab(minute="*/5"),
     },
+    "reconciliar-importacoes-fornecedor": {
+        "task": "apps.fornecedores.tasks.reconciliar_importacoes_fornecedor_stale",
+        "schedule": crontab(minute="*/5"),
+    },
 }

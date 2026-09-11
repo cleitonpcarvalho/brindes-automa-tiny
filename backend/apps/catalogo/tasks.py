@@ -13,7 +13,6 @@ from django.utils import timezone
 
 from apps.instancias.models import Instancia
 from apps.instancias.tiny_client import TinyApiClient
-from apps.instancias.tiny_throttle import cliente_redis
 from apps.sincronizacao.models import (
     EventoLog,
     Execucao,
@@ -24,6 +23,7 @@ from apps.sincronizacao.models import (
     StatusRetentativaLote,
     TipoExecucao,
 )
+from apps.sincronizacao.locks import lock_fornecedor
 
 from . import tiny_sync
 from .models import StatusVariacao, Variacao
@@ -713,40 +713,15 @@ def _reconciliar_retentativa_lote_stale(retentativa_id, limite=None):
 # (opt-in por cadência: CadenciaFornecedor.propagar_tiny)
 # ---------------------------------------------------------------------------
 
-PROPAGACAO_LOCK_TTL_SEGUNDOS = 30 * 60
-
-
 @contextmanager
 def _lock_propagacao_tiny(instancia_id, fornecedor):
     """
-    Trava best-effort (Redis `SET NX EX`) para não rodar duas propagações do
-    mesmo par em paralelo (dois ticks do beat, ou beat + retomada). Se o
-    Redis não responder, segue SEM trava — as três etapas são idempotentes
-    (guiadas por marcador/diff) e o passo de cadastro ainda é protegido por
-    `execucao_cadastro_tiny_aberta`.
+    Trava compartilhada do par no PostgreSQL para não sobrepor propagação,
+    importação de espelho ou operação manual. O lock de sessão é liberado
+    automaticamente se o worker morrer.
     """
-    chave = f"propagar-tiny:{instancia_id}:{fornecedor}"
-    cliente = None
-    try:
-        cliente = cliente_redis()
-        adquirida = bool(cliente.set(chave, "1", nx=True, ex=PROPAGACAO_LOCK_TTL_SEGUNDOS))
-    except Exception:
-        logger.warning(
-            "propagação Tiny %s/%s: Redis indisponível para a trava, seguindo sem ela",
-            instancia_id, fornecedor,
-        )
-        yield True
-        return
-    if not adquirida:
-        yield False
-        return
-    try:
-        yield True
-    finally:
-        try:
-            cliente.delete(chave)
-        except Exception:
-            pass
+    with lock_fornecedor(instancia_id, fornecedor) as adquirida:
+        yield adquirida
 
 
 @shared_task
@@ -789,6 +764,16 @@ def propagar_fornecedor_tiny_task(instancia_id, fornecedor):
         if tiny_sync.execucao_cadastro_tiny_aberta(instancia, fornecedor) is not None:
             logger.info(
                 "propagação Tiny %s/%s pulada: há um cadastro em massa aberto para o par",
+                instancia.slug, fornecedor,
+            )
+            return
+        if RetentativaLote.objects.filter(
+            execucao__instancia_id=instancia_id,
+            execucao__fornecedor=fornecedor,
+            status=StatusRetentativaLote.RODANDO,
+        ).exists():
+            logger.info(
+                "propagação Tiny %s/%s pulada: retentativa em lote ativa para o par",
                 instancia.slug, fornecedor,
             )
             return

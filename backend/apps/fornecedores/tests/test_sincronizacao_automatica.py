@@ -7,9 +7,10 @@ a propagação ao Tiny (`propagar_fornecedor_tiny_task`).
 
 from copy import deepcopy
 from datetime import timedelta
-from unittest.mock import patch
+from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import call, patch
 
-from django.test import TestCase
+from django.test import TestCase, TransactionTestCase
 from django.utils import timezone
 
 from apps.catalogo.models import Produto, Variacao
@@ -17,7 +18,11 @@ from apps.instancias.models import CredencialFornecedor, Instancia
 from apps.sincronizacao.models import Execucao, StatusExecucao, TipoExecucao
 
 from ..models import CadenciaFornecedor
-from ..tasks import sincronizar_fornecedor_task, verificar_e_disparar_sincronizacoes
+from ..tasks import (
+    reconciliar_importacoes_fornecedor_stale,
+    sincronizar_fornecedor_task,
+    verificar_e_disparar_sincronizacoes,
+)
 from .fixtures import SOMARCAS_ITEM_COM_ESTOQUE
 
 
@@ -83,6 +88,99 @@ class VerificarEDispararTests(TestCase):
         verificar_e_disparar_sincronizacoes()
 
         mock_delay.assert_called_once()
+
+    @patch("apps.fornecedores.tasks.sincronizar_fornecedor_task.delay")
+    def test_claim_repetido_da_mesma_cadencia_dispara_uma_so_vez(self, mock_delay):
+        self.cadencia.ativo = True
+        self.cadencia.proxima_execucao_em = timezone.now() - timedelta(minutes=1)
+        self.cadencia.save()
+
+        verificar_e_disparar_sincronizacoes()
+        verificar_e_disparar_sincronizacoes()
+
+        mock_delay.assert_called_once_with(self.instancia.id, "somarcas")
+
+    @patch("apps.fornecedores.tasks.sincronizar_fornecedor_task.delay")
+    def test_fornecedores_e_instancias_diferentes_nao_compartilham_claim(self, mock_delay):
+        outra = Instancia.objects.create(nome="Outra loja")
+        CredencialFornecedor.objects.create(
+            instancia=outra, fornecedor="spot", credenciais={"u": "y"}, ativo=True
+        )
+        self.cadencia.ativo = True
+        self.cadencia.save(update_fields=["ativo"])
+        CadenciaFornecedor.objects.filter(ativo=True).update(proxima_execucao_em=timezone.now())
+        CadenciaFornecedor.objects.filter(instancia=outra, fornecedor="spot").update(
+            ativo=True, proxima_execucao_em=timezone.now()
+        )
+
+        verificar_e_disparar_sincronizacoes()
+
+        self.assertCountEqual(mock_delay.call_args_list, [call(self.instancia.id, "somarcas"), call(outra.id, "spot")])
+
+    @patch("apps.fornecedores.tasks.call_command")
+    def test_task_defensiva_nao_inicia_importacao_ativa(self, mock_command):
+        Execucao.objects.create(
+            instancia=self.instancia,
+            fornecedor="somarcas",
+            tipo=TipoExecucao.INCREMENTAL,
+            status=StatusExecucao.RODANDO,
+            heartbeat_em=timezone.now(),
+        )
+
+        sincronizar_fornecedor_task(self.instancia.id, "somarcas")
+
+        mock_command.assert_not_called()
+
+    @patch("apps.fornecedores.tasks.call_command")
+    def test_importacao_interrompida_nao_bloqueia_nova_rodada(self, mock_command):
+        Execucao.objects.create(
+            instancia=self.instancia,
+            fornecedor="somarcas",
+            tipo=TipoExecucao.INCREMENTAL,
+            status=StatusExecucao.INTERROMPIDO,
+            finalizada_em=timezone.now(),
+        )
+
+        sincronizar_fornecedor_task(self.instancia.id, "somarcas")
+
+        mock_command.assert_called_once()
+
+    def test_reconciliador_marca_importacao_stale(self):
+        execucao = Execucao.objects.create(
+            instancia=self.instancia,
+            fornecedor="somarcas",
+            tipo=TipoExecucao.INCREMENTAL,
+            status=StatusExecucao.RODANDO,
+            heartbeat_em=timezone.now() - timedelta(minutes=31),
+        )
+
+        self.assertEqual(reconciliar_importacoes_fornecedor_stale(), 1)
+        execucao.refresh_from_db()
+        self.assertEqual(execucao.status, StatusExecucao.INTERROMPIDO)
+
+
+class ClaimConcorrenciaTests(TransactionTestCase):
+    reset_sequences = True
+
+    def setUp(self):
+        instancia = Instancia.objects.create(nome="Loja concorrente")
+        CredencialFornecedor.objects.create(
+            instancia=instancia, fornecedor="somarcas", credenciais={"u": "x"}, ativo=True
+        )
+        CadenciaFornecedor.objects.filter(instancia=instancia, fornecedor="somarcas").update(
+            ativo=True, proxima_execucao_em=timezone.now() - timedelta(minutes=1)
+        )
+        self.instancia_id = instancia.id
+
+    @patch("apps.fornecedores.tasks.sincronizar_fornecedor_task.delay")
+    def test_duas_execucoes_concorrentes_fazem_um_unico_disparo(self, mock_delay):
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(verificar_e_disparar_sincronizacoes) for _ in range(2)]
+            for future in futures:
+                future.result()
+
+        self.assertEqual(mock_delay.call_count, 1)
+        self.assertEqual(mock_delay.call_args.args, (self.instancia_id, "somarcas"))
 
 
 class SincronizarFornecedorTaskPropagacaoTests(TestCase):

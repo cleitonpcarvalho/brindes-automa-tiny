@@ -4,10 +4,12 @@ from celery import shared_task
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db.models import Q
+from django.db import transaction
 from django.utils import timezone
 
 from apps.instancias.models import Instancia
-from apps.sincronizacao.models import Execucao, StatusExecucao
+from apps.sincronizacao.models import Execucao, StatusExecucao, TipoExecucao
+from apps.sincronizacao.locks import lock_fornecedor
 
 from .models import (
     AtualizacaoVariacaoFornecedor,
@@ -18,6 +20,7 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 ATUALIZACAO_FORNECEDOR_STALE_SEGUNDOS = 1800
+ESPELHO_HEARTBEAT_TIMEOUT_SEGUNDOS = 1800
 
 
 @shared_task
@@ -75,6 +78,24 @@ def reconciliar_atualizacoes_fornecedor_stale():
 
 
 @shared_task
+def reconciliar_importacoes_fornecedor_stale():
+    """Libera execuções de espelho cujo worker morreu sem fechar a rodada."""
+    limite = timezone.now() - timezone.timedelta(seconds=ESPELHO_HEARTBEAT_TIMEOUT_SEGUNDOS)
+    return (
+        Execucao.objects.filter(
+            tipo__in=(TipoExecucao.CARGA_INICIAL, TipoExecucao.INCREMENTAL),
+            status=StatusExecucao.RODANDO,
+        )
+        .filter(Q(heartbeat_em__lt=limite) | Q(heartbeat_em__isnull=True, iniciada_em__lt=limite))
+        .update(
+        status=StatusExecucao.INTERROMPIDO,
+        mensagem_erro="A task Celery não enviou heartbeat dentro do prazo; importação interrompida.",
+        finalizada_em=timezone.now(),
+        )
+    )
+
+
+@shared_task
 def verificar_e_disparar_sincronizacoes():
     """
     Tick do Celery Beat (a cada 5 minutos): não sincroniza nada diretamente
@@ -83,14 +104,26 @@ def verificar_e_disparar_sincronizacoes():
     nunca fixa aqui.
     """
     agora = timezone.now()
-    cadencias = CadenciaFornecedor.objects.filter(ativo=True).select_related("instancia")
+    ids = CadenciaFornecedor.objects.filter(ativo=True).values_list("pk", flat=True)
 
-    for cadencia in cadencias:
-        if cadencia.proxima_execucao_em and cadencia.proxima_execucao_em > agora:
-            continue
-        sincronizar_fornecedor_task.delay(cadencia.instancia_id, cadencia.fornecedor)
-        cadencia.proxima_execucao_em = agora + timezone.timedelta(minutes=cadencia.intervalo_minutos)
-        cadencia.save(update_fields=["proxima_execucao_em"])
+    for cadencia_id in ids:
+        # O claim é curto e termina antes do enqueue. A API externa nunca roda
+        # dentro desta transação.
+        with transaction.atomic():
+            cadencia = (
+                CadenciaFornecedor.objects.select_for_update()
+                .filter(pk=cadencia_id, ativo=True)
+                .first()
+            )
+            if cadencia is None or (
+                cadencia.proxima_execucao_em and cadencia.proxima_execucao_em > agora
+            ):
+                continue
+            proxima = agora + timezone.timedelta(minutes=cadencia.intervalo_minutos)
+            CadenciaFornecedor.objects.filter(pk=cadencia.pk).update(proxima_execucao_em=proxima)
+            instancia_id, fornecedor = cadencia.instancia_id, cadencia.fornecedor
+
+        sincronizar_fornecedor_task.delay(instancia_id, fornecedor)
 
 
 @shared_task
@@ -107,22 +140,46 @@ def sincronizar_fornecedor_task(instancia_id, fornecedor):
     from apps.catalogo.tiny_sync import cadastro_tiny_bloqueia_espelho
 
     instancia = Instancia.objects.get(pk=instancia_id)
-    if cadastro_tiny_bloqueia_espelho(instancia, fornecedor):
-        logger.info(
-            "sincronização de espelho de %s/%s pulada: cadastro Tiny ativo",
-            instancia.slug,
-            fornecedor,
+    with lock_fornecedor(instancia_id, fornecedor) as adquirida:
+        if not adquirida:
+            logger.info(
+                "sincronização de espelho de %s/%s pulada: importação do par já está ativa",
+                instancia.slug, fornecedor,
+            )
+            return
+        if cadastro_tiny_bloqueia_espelho(instancia, fornecedor):
+            logger.info(
+                "sincronização de espelho de %s/%s pulada: cadastro Tiny ativo",
+                instancia.slug, fornecedor,
+            )
+            return
+        if Execucao.objects.filter(
+            instancia_id=instancia_id,
+            fornecedor=fornecedor,
+            tipo__in=(TipoExecucao.CARGA_INICIAL, TipoExecucao.INCREMENTAL),
+            status=StatusExecucao.RODANDO,
+        ).exists():
+            logger.info(
+                "sincronização de espelho de %s/%s pulada: execução anterior ainda está ativa",
+                instancia.slug, fornecedor,
+            )
+            return
+        execucao = Execucao.objects.create(
+            instancia_id=instancia_id,
+            fornecedor=fornecedor,
+            tipo=TipoExecucao.INCREMENTAL,
+            heartbeat_em=timezone.now(),
         )
-        return
-    try:
-        # A importação de espelho é sempre espelho-apenas: este comando não
-        # escreve no Tiny em nenhum modo.
-        call_command(
-            "importar_fornecedor", instancia.slug, fornecedor, tipo="incremental", mirror_only=True
-        )
-    except CommandError as exc:
-        logger.info("sincronização de %s/%s pulada: %s", instancia.slug, fornecedor, exc)
-        return
+        try:
+            # A importação de espelho é sempre espelho-apenas: este comando não
+            # escreve no Tiny em nenhum modo.
+            call_command(
+                "importar_fornecedor", instancia.slug, fornecedor, tipo="incremental",
+                execucao_id=execucao.id, mirror_only=True,
+            )
+        except CommandError as exc:
+            logger.info("sincronização de %s/%s pulada: %s", instancia.slug, fornecedor, exc)
+            return
 
     # Espelho atualizado. Se a cadência do par pediu explicitamente a
     # propagação ao Tiny (segundo opt-in, desligado por padrão), reflete
@@ -147,22 +204,29 @@ def executar_sincronizacao_manual_task(execucao_id):
     disso (ex.: argumento inválido).
     """
     execucao = Execucao.objects.select_related("instancia").get(pk=execucao_id)
-    try:
-        call_command(
-            "importar_fornecedor",
-            execucao.instancia.slug,
-            execucao.fornecedor,
-            tipo=execucao.tipo,
-            execucao_id=execucao.id,
-            mirror_only=True,
-        )
-    except Exception as exc:
-        logger.exception(
-            "sincronização manual de %s/%s falhou", execucao.instancia.slug, execucao.fornecedor
-        )
-        execucao.refresh_from_db()
-        if execucao.status == StatusExecucao.RODANDO:
-            execucao.status = StatusExecucao.FALHA
-            execucao.mensagem_erro = str(exc)
-            execucao.finalizada_em = timezone.now()
-            execucao.save()
+    with lock_fornecedor(execucao.instancia_id, execucao.fornecedor) as adquirida:
+        if not adquirida:
+            logger.info(
+                "sincronização manual de %s/%s aguardando importação já ativa",
+                execucao.instancia.slug, execucao.fornecedor,
+            )
+            return
+        try:
+            call_command(
+                "importar_fornecedor",
+                execucao.instancia.slug,
+                execucao.fornecedor,
+                tipo=execucao.tipo,
+                execucao_id=execucao.id,
+                mirror_only=True,
+            )
+        except Exception as exc:
+            logger.exception(
+                "sincronização manual de %s/%s falhou", execucao.instancia.slug, execucao.fornecedor
+            )
+            execucao.refresh_from_db()
+            if execucao.status == StatusExecucao.RODANDO:
+                execucao.status = StatusExecucao.FALHA
+                execucao.mensagem_erro = str(exc)
+                execucao.finalizada_em = timezone.now()
+                execucao.save()

@@ -16,6 +16,7 @@ Regras respeitadas aqui:
 
 import random
 import time
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import requests
 from django.core.exceptions import ImproperlyConfigured
@@ -408,6 +409,20 @@ class TinyApiClient:
         self._sleep(espera)
 
 
+def normalizar_url_http(url: str) -> str:
+    """Percent-encode apenas componentes não estruturais de uma URL.
+
+    O marcador local continua usando a URL original; esta transformação fica
+    restrita ao payload HTTP enviado ao Tiny. O caractere de escape percentual
+    é preservado para manter a função idempotente.
+    """
+    partes = urlsplit(url)
+    path = quote(partes.path, safe="/%:@!$&'()*+,;=-._~")
+    query = quote(partes.query, safe="/%:@!$'()*+,;=?&-._~")
+    fragment = quote(partes.fragment, safe="/%:@!$&'()*+,;=?-._~")
+    return urlunsplit((partes.scheme, partes.netloc, path, query, fragment))
+
+
 def _corpo_anexos(urls) -> list[dict]:
     """
     Body do `PUT /produtos/{id}/anexos` — ponto ÚNICO de definição do formato.
@@ -416,9 +431,9 @@ def _corpo_anexos(urls) -> list[dict]:
     hospedar a imagem (confirmado no MC511 — com `externo=true` a imagem não
     aparecia no ERP):
 
-        [{"url": "<url original do fornecedor>", "externo": false}, ...]
+        [{"url": "<url HTTP normalizada>", "externo": false}, ...]
     """
-    return [{"url": url, "externo": False} for url in urls]
+    return [{"url": normalizar_url_http(url), "externo": False} for url in urls]
 
 
 def _base_url_padrao():

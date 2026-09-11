@@ -294,6 +294,23 @@ class DryRunTests(TestCase):
 
 
 class ClienteAnexosTests(TestCase):
+    def test_normaliza_unicode_espaco_sem_codificar_estrutura(self):
+        from apps.instancias.tiny_client import normalizar_url_http
+
+        original = "https://host/produto m².webp?a=valor ²&b=1#parte ²"
+        self.assertEqual(
+            normalizar_url_http(original),
+            "https://host/produto%20m%C2%B2.webp?a=valor%20%C2%B2&b=1#parte%20%C2%B2",
+        )
+
+    def test_normalizacao_preserva_percent_encoding_e_eh_idempotente(self):
+        from apps.instancias.tiny_client import normalizar_url_http
+
+        url = "https://host/produto%20m%C2%B2.webp?a=%C2%B2"
+        normalizada = normalizar_url_http(url)
+        self.assertEqual(normalizada, url)
+        self.assertEqual(normalizar_url_http(normalizada), normalizada)
+
     def test_corpo_anexos_e_lista_direta_com_externo_false(self):
         from apps.instancias.tiny_client import _corpo_anexos
 
@@ -302,6 +319,14 @@ class ClienteAnexosTests(TestCase):
             [{"url": "https://a", "externo": False}, {"url": "https://b", "externo": False}],
         )
         self.assertEqual(_corpo_anexos([]), [])
+
+    def test_payload_de_anexos_normaliza_somente_a_url_enviada(self):
+        from apps.instancias.tiny_client import _corpo_anexos
+
+        self.assertEqual(
+            _corpo_anexos(["https://host/produto m².webp?x=1&y=2"]),
+            [{"url": "https://host/produto%20m%C2%B2.webp?x=1&y=2", "externo": False}],
+        )
 
     @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
     @patch("apps.instancias.tiny_client.requests.request")
@@ -319,13 +344,13 @@ class ClienteAnexosTests(TestCase):
 
         mock_request.side_effect = handler
         cliente = TinyApiClient(instancia, sleep_fn=lambda s: None)
-        cliente.sincronizar_anexos_produto(55, ["https://x/1.jpg", "https://x/2.jpg"])
+        cliente.sincronizar_anexos_produto(55, ["https://x/produto m².jpg", "https://x/2.jpg"])
 
         metodo, url, corpo = chamadas[0]
         self.assertEqual(metodo, "PUT")
         self.assertTrue(url.endswith("/produtos/55/anexos"))
         self.assertEqual(corpo, [
-            {"url": "https://x/1.jpg", "externo": False},
+            {"url": "https://x/produto%20m%C2%B2.jpg", "externo": False},
             {"url": "https://x/2.jpg", "externo": False},
         ])
 

@@ -9,7 +9,9 @@ from django.test import TestCase
 from django.utils import timezone
 
 from apps.instancias.models import Instancia
+from apps.catalogo.models import Produto, Variacao
 from apps.sincronizacao.models import (
+    EventoLog,
     Execucao,
     LogItem,
     StatusExecucao,
@@ -64,6 +66,44 @@ class ConsolidarStatusExecucaoTests(TestCase):
         self.assertFalse(consolidar_status_execucao(ex))
         ex.refresh_from_db()
         self.assertEqual(ex.status, StatusExecucao.PARCIAL)
+
+    def test_falha_de_imagem_impede_reclassificacao_incorreta(self):
+        ex = _execucao()
+        variacao = Variacao.objects.create(
+            produto=Produto.objects.create(
+                instancia=ex.instancia, fornecedor="asia", codigo_pai="pai-img", nome="Imagem"
+            ),
+            sku="IMG-1", nome="Imagem", preco="10.00", estoque=1,
+        )
+        LogItem.objects.create(
+            execucao=ex, variacao=variacao, evento=EventoLog.IMAGENS_ERRO, nivel="erro",
+            mensagem="Falha no anexo", detalhe={"erro": "anexo recusado"},
+        )
+
+        self.assertFalse(consolidar_status_execucao(ex))
+        ex.refresh_from_db()
+        self.assertEqual(ex.status, StatusExecucao.PARCIAL)
+
+    def test_falha_de_imagem_resolvida_pode_ser_consolidada(self):
+        ex = _execucao()
+        variacao = Variacao.objects.create(
+            produto=Produto.objects.create(
+                instancia=ex.instancia, fornecedor="asia", codigo_pai="pai-img-ok", nome="Imagem OK"
+            ),
+            sku="IMG-OK", nome="Imagem OK", preco="10.00", estoque=1,
+        )
+        LogItem.objects.create(
+            execucao=ex, variacao=variacao, evento=EventoLog.IMAGENS_ERRO, nivel="erro",
+            mensagem="Falha no anexo", detalhe={"erro": "temporário"},
+        )
+        LogItem.objects.create(
+            execucao=ex, variacao=variacao, evento=EventoLog.IMAGENS, nivel="info",
+            mensagem="Imagens sincronizadas", detalhe={},
+        )
+
+        self.assertTrue(consolidar_status_execucao(ex))
+        ex.refresh_from_db()
+        self.assertEqual(ex.status, StatusExecucao.SUCESSO)
 
     def test_ja_sucesso_nao_faz_nada(self):
         ex = _execucao(status=StatusExecucao.SUCESSO)

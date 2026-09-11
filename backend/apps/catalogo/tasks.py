@@ -23,6 +23,7 @@ from apps.sincronizacao.models import (
     StatusRetentativaLote,
     TipoExecucao,
 )
+from apps.sincronizacao import auditoria
 from apps.sincronizacao.locks import lock_fornecedor
 
 from . import tiny_sync
@@ -286,7 +287,12 @@ def consolidar_status_execucao(execucao: Execucao) -> bool:
     if execucao.finalizada_em is None:
         return False
 
-    concluiu_tudo = execucao.total_erros == 0 and execucao.total_ignorados == 0
+    resumo = auditoria.resumo_auditoria(execucao)
+    concluiu_tudo = (
+        execucao.total_erros == 0
+        and execucao.total_ignorados == 0
+        and resumo["falhas_secundarias"] == 0
+    )
     novo_status = StatusExecucao.SUCESSO if concluiu_tudo else StatusExecucao.PARCIAL
     if novo_status == execucao.status:
         return False

@@ -1,7 +1,7 @@
 from .models import StatusExecucao, TipoExecucao
 
 
-def _motivo_status(execucao):
+def _motivo_status(execucao, *, auditoria_resumo=None):
     if execucao.mensagem_erro:
         return execucao.mensagem_erro
     if execucao.status == StatusExecucao.INTERROMPIDO:
@@ -12,9 +12,15 @@ def _motivo_status(execucao):
         return "Execução em processo de pausa."
     if execucao.status == StatusExecucao.PARCIAL:
         if execucao.tipo == TipoExecucao.CADASTRO_TINY:
+            falhas_secundarias = (auditoria_resumo or {}).get("falhas_secundarias", 0)
+            detalhe_secundario = (
+                f" e {falhas_secundarias} falha(s) secundária(s) (imagem/anexo)"
+                if falhas_secundarias else ""
+            )
             return (
                 f"Execução parcial: {execucao.total_erros or 0} erro(s) e "
-                f"{execucao.total_ignorados or 0} item(ns) ignorado(s) ou pendente(s)."
+                f"{execucao.total_ignorados or 0} item(ns) ignorado(s) ou pendente(s)"
+                f"{detalhe_secundario}."
             )
         return f"Importação parcial: {execucao.total_erros or 0} erro(s) registrado(s)."
     if execucao.status == StatusExecucao.FALHA:
@@ -36,8 +42,10 @@ def montar_semantica_execucao(execucao, *, auditoria_resumo=None):
     if logs_individuais is None:
         logs_individuais = execucao.logs.filter(variacao__isnull=False).count()
 
+    resumo_para_motivo = auditoria_resumo
     if execucao.tipo == TipoExecucao.CADASTRO_TINY:
         resumo = auditoria_resumo or _auditoria_cadastro(execucao)
+        resumo_para_motivo = resumo
         metricas = [
             {"chave": "total_fila", "rotulo": "Total da fila", "valor": resumo["total"]},
             {
@@ -52,6 +60,12 @@ def montar_semantica_execucao(execucao, *, auditoria_resumo=None):
                 "valor": resumo["bloqueados"],
             },
         ]
+        if resumo.get("falhas_secundarias", 0):
+            metricas.append({
+                "chave": "falhas_secundarias",
+                "rotulo": "Falhas secundárias (imagem/anexo)",
+                "valor": resumo["falhas_secundarias"],
+            })
         total = resumo["total"]
         concluido = resumo["cadastrados_e_vinculados"] + resumo["erros"] + resumo["bloqueados"]
         progresso = round(min(concluido / total, 1.0), 4) if total else None
@@ -87,7 +101,7 @@ def montar_semantica_execucao(execucao, *, auditoria_resumo=None):
         "metricas": metricas,
         "progresso": progresso,
         "progresso_rotulo": progresso_rotulo,
-        "motivo_status": _motivo_status(execucao),
+        "motivo_status": _motivo_status(execucao, auditoria_resumo=resumo_para_motivo),
         "logs_individuais_total": logs_individuais,
         "mensagem_logs": (
             "Logs individuais por SKU disponíveis."

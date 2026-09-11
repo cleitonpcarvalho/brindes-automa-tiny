@@ -169,6 +169,10 @@ def resumo_auditoria(execucao) -> dict:
     )
     cadastrados = contagem.get(EventoLog.CRIADO, 0)
     vinculados = contagem.get(EventoLog.VINCULADO, 0)
+    imagens = _imagens_por_variacao(
+        execucao,
+        list(execucao.logs.filter(variacao__isnull=False).values_list("variacao_id", flat=True).distinct()),
+    )
     return {
         "total": sum(contagem.values()),
         "cadastrados": cadastrados,
@@ -176,6 +180,9 @@ def resumo_auditoria(execucao) -> dict:
         "cadastrados_e_vinculados": cadastrados + vinculados,
         "bloqueados": contagem.get(EventoLog.BLOQUEADO, 0),
         "erros": contagem.get(EventoLog.ERRO, 0),
+        # Só a falha de imagem mais recente por SKU permanece pendente. Uma
+        # tentativa posterior registrada como IMAGENS resolve o erro anterior.
+        "falhas_secundarias": sum(1 for resultado in imagens.values() if resultado == "erro"),
     }
 
 

@@ -63,6 +63,24 @@ def _execucao(instancia, fornecedor="xbz", **kwargs):
 class CadastrarProdutosTinyTaskTests(TestCase):
     @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
     @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku", return_value=None)
+    def test_quatro_de_quatro_sem_erros_ou_pendencias_fecha_como_sucesso(self, _mb, mock_criar):
+        inst = _instancia()
+        for i in range(4):
+            _variacao(inst, f"OK-{i}", fornecedor="asia")
+        mock_criar.side_effect = [{"id": i + 1, "sku": f"OK-{i}"} for i in range(4)]
+        execucao = _execucao(inst, fornecedor="asia")
+
+        cadastrar_produtos_tiny_task(execucao.id)
+
+        execucao.refresh_from_db()
+        self.assertEqual(execucao.status, StatusExecucao.SUCESSO)
+        self.assertEqual(
+            (execucao.total_lidos, execucao.total_cadastrados, execucao.total_erros, execucao.total_ignorados),
+            (4, 4, 0, 0),
+        )
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku", return_value=None)
     def test_task_processa_a_fila_e_fecha_a_execucao(self, _mb, mock_criar):
         inst = _instancia()
         v1 = _variacao(inst, "T-1")

@@ -149,6 +149,30 @@ class ExecucaoDetalheResumoTests(AuditoriaBase):
         self.assertNotIn("Cadastrados", [m["rotulo"] for m in d["resumo"]["metricas"]])
         self.assertEqual(d["resumo"]["mensagem_logs"], "Esta execução não possui processamento individual por SKU.")
 
+    def test_falha_de_imagem_permanece_visivel_mesmo_com_todos_skus_cadastrados(self):
+        v = self.criadas[0]
+        self.execucao.status = StatusExecucao.PARCIAL
+        self.execucao.finalizada_em = timezone.now()
+        self.execucao.total_lidos = 4
+        self.execucao.total_cadastrados = 4
+        self.execucao.total_erros = 0
+        self.execucao.total_ignorados = 0
+        self.execucao.save()
+        _log(
+            self.execucao,
+            EventoLog.IMAGENS_ERRO,
+            f"Falha ao sincronizar imagens do SKU {v.sku}",
+            variacao=v,
+            nivel=NivelLog.ERRO,
+            erro="anexo recusado pelo Tiny",
+        )
+
+        d = self.client.get(self._url()).data
+        metricas = {m["chave"]: m["valor"] for m in d["resumo"]["metricas"]}
+        self.assertEqual(metricas["cadastrados"], 4)
+        self.assertEqual(metricas["falhas_secundarias"], 1)
+        self.assertIn("falha(s) secundária(s)", d["resumo"]["motivo_status"])
+
     def test_exige_autenticacao(self):
         self.assertEqual(APIClient().get(self._url()).status_code, status.HTTP_401_UNAUTHORIZED)
 

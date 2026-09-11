@@ -217,6 +217,9 @@ class CadastroTinyEstadoSerializer(serializers.Serializer):
     progresso = serializers.FloatField()  # 0..1 (processados / universo cadastrável)
     atualizada_em = serializers.DateTimeField(allow_null=True)
     mensagem_erro = serializers.CharField(allow_blank=True)
+    motivo_status = serializers.CharField(allow_blank=True)
+    bloqueados = serializers.IntegerField()
+    falhas_secundarias = serializers.IntegerField()
     # ações coerentes com o estado — a UI não mostra o que não estiver aqui:
     pode_iniciar = serializers.BooleanField()
     pode_pausar = serializers.BooleanField()
@@ -263,6 +266,7 @@ def _resumo_cadastro_tiny(instancia, fornecedor):
         lidos = cadastrados = erros = ignorados = 0
         atualizada_em = None
         mensagem_erro = ""
+        auditoria_resumo = {"bloqueados": 0, "falhas_secundarias": 0}
     else:
         lidos = execucao.total_lidos
         cadastrados = execucao.total_cadastrados
@@ -270,6 +274,14 @@ def _resumo_cadastro_tiny(instancia, fornecedor):
         ignorados = execucao.total_ignorados
         atualizada_em = execucao.finalizada_em or execucao.heartbeat_em or execucao.iniciada_em
         mensagem_erro = execucao.mensagem_erro
+        from apps.sincronizacao import auditoria
+        auditoria_resumo = auditoria.resumo_auditoria(execucao)
+
+    from apps.sincronizacao.semantica_execucao import montar_semantica_execucao
+    motivo_status = montar_semantica_execucao(
+        execucao,
+        auditoria_resumo=auditoria_resumo,
+    )["motivo_status"] if execucao else ""
 
     processados = cadastrados + erros
     universo = max(lidos, processados)
@@ -285,6 +297,9 @@ def _resumo_cadastro_tiny(instancia, fornecedor):
         "progresso": round(progresso, 4),
         "atualizada_em": atualizada_em,
         "mensagem_erro": mensagem_erro,
+        "motivo_status": motivo_status,
+        "bloqueados": auditoria_resumo.get("bloqueados", 0),
+        "falhas_secundarias": auditoria_resumo.get("falhas_secundarias", 0),
         "pode_iniciar": estado in (ESTADO_PRONTO, "concluido", "parcial"),
         "pode_pausar": estado == "sincronizando",
         "pode_retomar": estado in ("pausado", "interrompido"),

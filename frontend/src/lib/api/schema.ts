@@ -945,6 +945,10 @@ export interface components {
             cadastrados_e_vinculados: number;
             bloqueados: number;
             erros: number;
+            falhas_secundarias: number;
+            bloqueios_sku_existente_tiny: number;
+            bloqueios_cross_fornecedor: number;
+            bloqueios_outra_regra: number;
         };
         /**
          * @description Corpo real da action `autorizar` — documentado à parte porque, sem
@@ -971,6 +975,9 @@ export interface components {
             /** Format: date-time */
             atualizada_em: string | null;
             mensagem_erro: string;
+            motivo_status: string;
+            bloqueados: number;
+            falhas_secundarias: number;
             pode_iniciar: boolean;
             pode_pausar: boolean;
             pode_retomar: boolean;

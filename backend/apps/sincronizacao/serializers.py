@@ -83,6 +83,9 @@ class AuditoriaResumoSerializer(serializers.Serializer):
     bloqueados = serializers.IntegerField()
     erros = serializers.IntegerField()
     falhas_secundarias = serializers.IntegerField()
+    bloqueios_sku_existente_tiny = serializers.IntegerField()
+    bloqueios_cross_fornecedor = serializers.IntegerField()
+    bloqueios_outra_regra = serializers.IntegerField()
 
 
 class ExecucaoDetalheSerializer(serializers.Serializer):

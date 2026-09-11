@@ -53,6 +53,10 @@ function resumo(over: Partial<ExecucaoDetalhe> = {}): ExecucaoDetalhe {
       cadastrados_e_vinculados: 421,
       bloqueados: 0,
       erros: 6,
+      falhas_secundarias: 0,
+      bloqueios_sku_existente_tiny: 0,
+      bloqueios_cross_fornecedor: 0,
+      bloqueios_outra_regra: 0,
     },
     logs_gerais_total: 3,
     ...over,
@@ -135,8 +139,12 @@ describe("ExecucaoDetalheView", () => {
           cadastrados: 1240,
           vinculados: 0,
           cadastrados_e_vinculados: 1240,
-          bloqueados: 0,
-          erros: 0,
+        bloqueados: 0,
+        erros: 0,
+        falhas_secundarias: 0,
+        bloqueios_sku_existente_tiny: 0,
+        bloqueios_cross_fornecedor: 0,
+        bloqueios_outra_regra: 0,
         },
       }),
     })
@@ -145,10 +153,11 @@ describe("ExecucaoDetalheView", () => {
     expect(screen.queryByText("Parcial / com erros")).not.toBeInTheDocument()
   })
 
-  it("badge continua 'Parcial / com erros' enquanto o `estado` for parcial", () => {
+  it("badge parcial não afirma erro técnico sem olhar os contadores", () => {
     mockResumo({ data: resumo({ estado: "parcial", status: "parcial", total_erros: 3 }) })
     renderView()
-    expect(screen.getByText("Parcial / com erros")).toBeInTheDocument()
+    expect(screen.getByText("Parcial")).toBeInTheDocument()
+    expect(screen.queryByText("Parcial / com erros")).not.toBeInTheDocument()
   })
 
   it("filtros de resultado com contagem nos rótulos", () => {

@@ -159,6 +159,16 @@ def _detalhe_curto(log) -> str:
     return ""
 
 
+def _classificar_bloqueio(log) -> str:
+    """Classifica bloqueios estruturados sem transformar todo bloqueio em erro."""
+    motivo = _detalhe_curto(log).lower()
+    if "sku já existe no tiny" in motivo:
+        return "sku_existente_tiny"
+    if "mesmo sku em mais de um fornecedor" in motivo:
+        return "colisao_cross_fornecedor"
+    return "outra_regra"
+
+
 def resumo_auditoria(execucao) -> dict:
     """Contagem de SKUs por resultado nesta execução (para as abas de filtro)."""
     contagem = dict(
@@ -173,6 +183,17 @@ def resumo_auditoria(execucao) -> dict:
         execucao,
         list(execucao.logs.filter(variacao__isnull=False).values_list("variacao_id", flat=True).distinct()),
     )
+    bloqueios = [
+        log for log in linhas_de_auditoria(execucao)
+        if getattr(log, "resultado_atual", None) == EventoLog.BLOQUEADO
+    ]
+    classificacao_bloqueios = {
+        "sku_existente_tiny": 0,
+        "colisao_cross_fornecedor": 0,
+        "outra_regra": 0,
+    }
+    for log in bloqueios:
+        classificacao_bloqueios[_classificar_bloqueio(log)] += 1
     return {
         "total": sum(contagem.values()),
         "cadastrados": cadastrados,
@@ -180,6 +201,9 @@ def resumo_auditoria(execucao) -> dict:
         "cadastrados_e_vinculados": cadastrados + vinculados,
         "bloqueados": contagem.get(EventoLog.BLOQUEADO, 0),
         "erros": contagem.get(EventoLog.ERRO, 0),
+        "bloqueios_sku_existente_tiny": classificacao_bloqueios["sku_existente_tiny"],
+        "bloqueios_cross_fornecedor": classificacao_bloqueios["colisao_cross_fornecedor"],
+        "bloqueios_outra_regra": classificacao_bloqueios["outra_regra"],
         # Só a falha de imagem mais recente por SKU permanece pendente. Uma
         # tentativa posterior registrada como IMAGENS resolve o erro anterior.
         "falhas_secundarias": sum(1 for resultado in imagens.values() if resultado == "erro"),
@@ -229,6 +253,14 @@ def resumo_tentativa_cadastro(execucao) -> dict | None:
         .distinct("variacao_id")
         .values_list("evento", flat=True)
     )
+    bloqueios = logs.filter(evento=EventoLog.BLOQUEADO)
+    bloqueios_classificados = {
+        "sku_existente_tiny": 0,
+        "colisao_cross_fornecedor": 0,
+        "outra_regra": 0,
+    }
+    for log in bloqueios:
+        bloqueios_classificados[_classificar_bloqueio(log)] += 1
     return {
         "total_fila": total_fila,
         "processados": len(ids_processados),
@@ -237,6 +269,9 @@ def resumo_tentativa_cadastro(execucao) -> dict | None:
         "vinculados": contagem.get(EventoLog.VINCULADO, 0),
         "bloqueados": contagem.get(EventoLog.BLOQUEADO, 0),
         "erros": contagem.get(EventoLog.ERRO, 0),
+        "bloqueios_sku_existente_tiny": bloqueios_classificados["sku_existente_tiny"],
+        "bloqueios_cross_fornecedor": bloqueios_classificados["colisao_cross_fornecedor"],
+        "bloqueios_outra_regra": bloqueios_classificados["outra_regra"],
         "falhas_secundarias": sum(1 for evento in imagens if evento == EventoLog.IMAGENS_ERRO),
         "inicio_id": inicio.id,
         "retomada": retomada,

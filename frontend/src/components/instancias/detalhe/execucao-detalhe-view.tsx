@@ -65,6 +65,9 @@ function Resumo({ resumo }: { resumo: ExecucaoDetalhe }) {
   const progresso = semantica?.progresso ?? resumo.progresso
   const temPercentual = progresso != null
   const pct = temPercentual ? Math.round(progresso * 100) : 0
+  const falhaTecnica = resumo.status === "falha" ||
+    (resumo.auditoria?.erros ?? 0) > 0 ||
+    (resumo.auditoria?.falhas_secundarias ?? 0) > 0
 
   return (
     <Card>
@@ -85,7 +88,7 @@ function Resumo({ resumo }: { resumo: ExecucaoDetalhe }) {
         </div>
 
         {semantica?.motivo_status && resumo.status !== "sucesso" && (
-          <p className="rounded-md bg-error-subtle/40 px-3 py-2 text-body-default text-error">
+          <p className={`rounded-md px-3 py-2 text-body-default ${falhaTecnica ? "bg-error-subtle/40 text-error" : "bg-warning-subtle text-warning"}`}>
             {semantica.motivo_status}
           </p>
         )}

@@ -77,8 +77,14 @@ export function FornecedorCadastroTiny({ slug, fornecedor, estado }: Props) {
               continuar de onde parou.
             </p>
           )}
-          {estado.estado === "parcial" && estado.mensagem_erro && (
-            <p className="text-caption-label text-error">{estado.mensagem_erro}</p>
+          {estado.estado === "parcial" && (estado.mensagem_erro || estado.motivo_status) && (
+            <p
+              className={`text-caption-label ${
+                estado.total_erros > 0 || estado.falhas_secundarias > 0 ? "text-error" : "text-warning"
+              }`}
+            >
+              {estado.mensagem_erro || estado.motivo_status}
+            </p>
           )}
           {acaoErro && <p className="text-caption-label text-error">{acaoErro}</p>}
         </div>
@@ -139,6 +145,11 @@ function Progresso({ estado }: { estado: CadastroTinyEstado }) {
           <strong className="text-foreground">{formatarNumero(estado.total_ignorados)}</strong>{" "}
           {rotuloRestantes(estado.estado)}
         </span>
+        {!!estado.bloqueados && (
+          <span>
+            <strong className="text-foreground">{formatarNumero(estado.bloqueados)}</strong> bloqueados por segurança
+          </span>
+        )}
       </div>
       <div className="h-1.5 w-56 max-w-full overflow-hidden rounded-full bg-muted">
         <div

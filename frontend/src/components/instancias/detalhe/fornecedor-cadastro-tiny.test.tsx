@@ -41,6 +41,9 @@ function estadoBase(estado: CadastroTinyEstadoEnum, over: Partial<CadastroTinyEs
     progresso: 0.42,
     atualizada_em: "2026-01-01T00:00:00Z",
     mensagem_erro: "",
+    motivo_status: "",
+    bloqueados: 0,
+    falhas_secundarias: 0,
     ...flags,
     ...over,
   }

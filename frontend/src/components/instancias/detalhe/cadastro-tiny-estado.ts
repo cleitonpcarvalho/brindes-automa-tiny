@@ -12,7 +12,7 @@ export const ROTULO_ESTADO_CADASTRO_TINY: Record<CadastroTinyEstadoEnum, string>
   pausado: "Pausado",
   interrompido: "Interrompido",
   concluido: "Concluído",
-  parcial: "Parcial / com erros",
+  parcial: "Parcial",
 }
 
 export const VARIANTE_ESTADO_CADASTRO_TINY: Record<

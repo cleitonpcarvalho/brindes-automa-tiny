@@ -14,13 +14,28 @@ def _motivo_status(execucao, *, auditoria_resumo=None, tentativa_resumo=None):
         if execucao.tipo == TipoExecucao.CADASTRO_TINY:
             fonte = tentativa_resumo or auditoria_resumo or {}
             falhas_secundarias = fonte.get("falhas_secundarias", 0)
+            bloqueados = fonte.get("bloqueados", 0)
+            erros = fonte.get("erros", 0)
+            if not erros and not falhas_secundarias and bloqueados:
+                colisao_sku = fonte.get("bloqueios_sku_existente_tiny", 0)
+                colisao_cross = fonte.get("bloqueios_cross_fornecedor", 0)
+                if colisao_sku == bloqueados:
+                    motivo = "por colisão com SKU já existente no Tiny"
+                elif colisao_cross == bloqueados:
+                    motivo = "por colisão cross-fornecedor"
+                else:
+                    motivo = "por regra de segurança"
+                return (
+                    f"Execução concluída sem erro técnico: {bloqueados} item(ns) bloqueado(s) "
+                    f"{motivo}; revisão manual necessária."
+                )
             detalhe_secundario = (
                 f" e {falhas_secundarias} falha(s) secundária(s) (imagem/anexo)"
                 if falhas_secundarias else ""
             )
             return (
-                f"Execução parcial: {fonte.get('erros', 0)} erro(s) e "
-                f"{fonte.get('bloqueados', 0)} item(ns) ignorado(s) ou pendente(s)"
+                f"Execução parcial: {erros} erro(s) e "
+                f"{bloqueados} item(ns) ignorado(s) ou pendente(s)"
                 f"{detalhe_secundario}."
             )
         return f"Importação parcial: {execucao.total_erros or 0} erro(s) registrado(s)."

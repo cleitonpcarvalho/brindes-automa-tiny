@@ -1200,9 +1200,7 @@ export interface components {
             total_atualizados: number;
             total_erros: number;
             mensagem_erro: string;
-            resumo: {
-                [key: string]: unknown;
-            };
+            resumo: components["schemas"]["ExecucaoSemantica"];
         };
         ExecucaoSemantica: {
             metricas: components["schemas"]["ExecucaoMetrica"][];

@@ -14,7 +14,7 @@ const TAMANHO_PAGINA = 20
 
 const FORNECEDORES: FornecedorEnum[] = ["xbz", "asia", "somarcas", "spot"]
 
-const STATUS: StatusExecucao[] = ["rodando", "sucesso", "parcial", "falha"]
+const STATUS: StatusExecucao[] = ["rodando", "pausando", "pausado", "sucesso", "parcial", "interrompido", "falha"]
 
 export function ExecucoesTab({ slug }: { slug: string }) {
   const [fornecedor, setFornecedor] = useState<FornecedorEnum | "">("")

@@ -3,7 +3,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { formatarDuracao, formatarTempoRelativo } from "@/lib/format"
+import { formatarDataHora, formatarDuracao, formatarTempoRelativo } from "@/lib/format"
 import { ROTULO_FORNECEDOR } from "../cor-fornecedor"
 import { ROTULO_TIPO, badgeStatus, resultadoTexto } from "./execucao-formato"
 import type { Execucao } from "@/lib/api/types"
@@ -95,7 +95,10 @@ export function ExecucoesHistoricoTabela({ slug, itens, isLoading, isError, onRe
                     <Badge variant={badge.variant}>{badge.rotulo}</Badge>
                   </TableCell>
                   <TableCell className="font-mono text-[13px] text-foreground">
-                    {formatarTempoRelativo(execucao.iniciada_em)}
+                    <span title={formatarDataHora(execucao.iniciada_em, true)}>
+                      {formatarDataHora(execucao.iniciada_em)}
+                      <span className="ml-1 text-muted-foreground">({formatarTempoRelativo(execucao.iniciada_em)})</span>
+                    </span>
                   </TableCell>
                   <TableCell className="text-right font-mono text-[13px] text-muted-foreground">
                     {formatarDuracao(execucao.duracao_segundos)}

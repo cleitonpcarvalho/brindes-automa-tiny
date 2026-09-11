@@ -21,14 +21,13 @@ import {
   usePararRetentarLote,
   useRetentarLoteProgresso,
 } from "@/lib/api/hooks"
-import { formatarDuracao, formatarNumero, formatarTempoRelativo } from "@/lib/format"
+import { formatarDataHora, formatarDuracao, formatarNumero, formatarTempoRelativo } from "@/lib/format"
 import { PaginationFooter } from "@/components/instancias/pagination-footer"
 import { ROTULO_FORNECEDOR } from "../cor-fornecedor"
 import { badgeStatus } from "./execucao-formato"
 import {
   ROTULO_ESTADO_CADASTRO_TINY,
   VARIANTE_ESTADO_CADASTRO_TINY,
-  rotuloRestantes,
 } from "./cadastro-tiny-estado"
 import { ExecucaoProdutosTabela } from "./execucao-produtos-tabela"
 import { RetentarLoteBarra } from "./retentar-lote-barra"
@@ -53,11 +52,19 @@ function EstadoBadge({ estado }: { estado: string }) {
 }
 
 function Resumo({ resumo }: { resumo: ExecucaoDetalhe }) {
-  const pct = Math.round((resumo.progresso ?? 0) * 100)
   const cadastroTiny = resumo.tipo === "cadastro_tiny"
-  const rotuloIgnorados = cadastroTiny ? "Ignorados / bloqueados"
-    : resumo.estado in ROTULO_ESTADO_CADASTRO_TINY
-      ? rotuloRestantes(resumo.estado as CadastroTinyEstadoEnum) : "não cadastrados"
+  const semantica = resumo.resumo
+  const metricas = semantica?.metricas ?? (cadastroTiny
+    ? [
+        { chave: "total_fila", rotulo: "Produtos com resultado", valor: resumo.total_lidos ?? 0 },
+        { chave: "cadastrados", rotulo: "Cadastrados", valor: resumo.total_cadastrados ?? 0 },
+        { chave: "erros", rotulo: "Erros", valor: resumo.total_erros ?? 0 },
+        { chave: "ignorados", rotulo: "Ignorados / bloqueados", valor: resumo.total_ignorados ?? 0 },
+      ]
+    : [])
+  const progresso = semantica?.progresso ?? resumo.progresso
+  const temPercentual = progresso != null
+  const pct = temPercentual ? Math.round(progresso * 100) : 0
 
   return (
     <Card>
@@ -69,40 +76,48 @@ function Resumo({ resumo }: { resumo: ExecucaoDetalhe }) {
           <span className="text-caption-label text-muted-foreground">Estado da execução:</span>
           <EstadoBadge estado={resumo.estado} />
           <span className="text-caption-label text-muted-foreground">
-            início {formatarTempoRelativo(resumo.iniciada_em)}
+            Início: {formatarDataHora(resumo.iniciada_em, true)} ({formatarTempoRelativo(resumo.iniciada_em)})
           </span>
           <span className="text-caption-label text-muted-foreground">·</span>
           <span className="text-caption-label text-muted-foreground">
-            duração {formatarDuracao(resumo.duracao_segundos)}
+            Término: {formatarDataHora(resumo.finalizada_em, true)} · Duração: {formatarDuracao(resumo.duracao_segundos)}
           </span>
         </div>
 
-        {resumo.mensagem_erro && (
+        {semantica?.motivo_status && resumo.status !== "sucesso" && (
           <p className="rounded-md bg-error-subtle/40 px-3 py-2 text-body-default text-error">
-            {resumo.mensagem_erro}
+            {semantica.motivo_status}
           </p>
         )}
 
-        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Metrica rotulo={cadastroTiny ? "Produtos com resultado" : "Total da fila"} valor={resumo.total_lidos} />
-          <Metrica rotulo="Cadastrados" valor={resumo.total_cadastrados} destaque="success" />
-          <Metrica rotulo="Erros" valor={resumo.total_erros} destaque={resumo.total_erros ? "error" : undefined} />
-          <Metrica rotulo={rotuloIgnorados} valor={resumo.total_ignorados} />
+        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+          {metricas.map((metrica) => (
+            <Metrica
+              key={metrica.chave}
+              rotulo={metrica.rotulo}
+              valor={metrica.valor}
+              destaque={metrica.chave === "cadastrados" ? "success" : metrica.chave === "erros" && metrica.valor ? "error" : undefined}
+            />
+          ))}
         </dl>
 
-        <div className="flex flex-col gap-1">
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-            <div
-              className="h-full rounded-full bg-primary transition-[width]"
-              style={{ width: `${pct}%` }}
-              role="progressbar"
-              aria-valuenow={pct}
-              aria-valuemin={0}
-              aria-valuemax={100}
-            />
+        {temPercentual ? (
+          <div className="flex flex-col gap-1">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-primary transition-[width]"
+                style={{ width: `${pct}%` }}
+                role="progressbar"
+                aria-valuenow={pct}
+                aria-valuemin={0}
+                aria-valuemax={100}
+              />
+            </div>
+            <span className="text-caption-label text-muted-foreground">{semantica?.progresso_rotulo ?? `${pct}% processado`}</span>
           </div>
-          <span className="text-caption-label text-muted-foreground">{pct}% processado{cadastroTiny ? " na fila registrada" : ""}</span>
-        </div>
+        ) : (
+          <span className="text-caption-label text-muted-foreground">{semantica?.progresso_rotulo ?? "Sem percentual disponível"}</span>
+        )}
         {cadastroTiny && <p className="text-caption-label text-muted-foreground">
           Contagens e filtros consideram os produtos desta execução e seu estado conciliado no espelho.
           O histórico de cada tentativa permanece nos logs.
@@ -309,6 +324,9 @@ export function ExecucaoDetalheView({ slug, execucaoId, queryInicial = "" }: {
   const totalPaginas = produtos.data ? Math.max(1, Math.ceil(produtos.data.count / TAMANHO_PAGINA)) : 1
   const temFiltros = Boolean(busca || resultado)
   const aud = resumo.data.auditoria
+  const possuiLogsIndividuais = resumo.data.resumo
+    ? resumo.data.resumo.logs_individuais_total > 0
+    : resumo.data.tipo === "cadastro_tiny"
 
   return (
     <div className="flex flex-col gap-6">
@@ -321,7 +339,7 @@ export function ExecucaoDetalheView({ slug, execucaoId, queryInicial = "" }: {
 
       <Resumo resumo={resumo.data} />
 
-      <div className="flex flex-col gap-3">
+      {possuiLogsIndividuais ? <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-[220px] max-w-sm flex-1">
             <Search
@@ -445,7 +463,11 @@ export function ExecucaoDetalheView({ slug, execucaoId, queryInicial = "" }: {
             rotuloItens="SKUs"
           />
         )}
-      </div>
+      </div> : (
+        <p className="rounded-xl border border-border bg-card px-4 py-6 text-center text-caption-label text-muted-foreground">
+          {resumo.data.resumo?.mensagem_logs ?? "Esta execução não possui processamento individual por SKU."}
+        </p>
+      )}
 
       <LogsTecnicos slug={slug} execucaoId={execucaoId} total={resumo.data.logs_gerais_total} />
     </div>

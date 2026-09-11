@@ -1,6 +1,23 @@
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema_field
 
 from .models import EventoLog, Execucao, LogItem, RetentativaLote
+from .semantica_execucao import montar_semantica_execucao
+
+
+class ExecucaoMetricaSerializer(serializers.Serializer):
+    chave = serializers.CharField()
+    rotulo = serializers.CharField()
+    valor = serializers.IntegerField()
+
+
+class ExecucaoSemanticaSerializer(serializers.Serializer):
+    metricas = ExecucaoMetricaSerializer(many=True)
+    progresso = serializers.FloatField(allow_null=True)
+    progresso_rotulo = serializers.CharField()
+    motivo_status = serializers.CharField(allow_blank=True)
+    logs_individuais_total = serializers.IntegerField()
+    mensagem_logs = serializers.CharField()
 
 
 class ExecucaoSerializer(serializers.ModelSerializer):
@@ -16,6 +33,7 @@ class ExecucaoSerializer(serializers.ModelSerializer):
 
     duracao_segundos = serializers.FloatField(read_only=True, allow_null=True)
     total_logs = serializers.IntegerField(read_only=True)
+    resumo = serializers.SerializerMethodField()
 
     class Meta:
         model = Execucao
@@ -35,7 +53,12 @@ class ExecucaoSerializer(serializers.ModelSerializer):
             "total_erros",
             "mensagem_erro",
             "total_logs",
+            "resumo",
         ]
+
+    @extend_schema_field(ExecucaoSemanticaSerializer)
+    def get_resumo(self, obj):
+        return montar_semantica_execucao(obj)
 
 
 class LogItemSerializer(serializers.ModelSerializer):
@@ -80,11 +103,12 @@ class ExecucaoDetalheSerializer(serializers.Serializer):
     total_cadastrados = serializers.IntegerField()
     total_erros = serializers.IntegerField()
     total_ignorados = serializers.IntegerField()
-    progresso = serializers.FloatField()
+    progresso = serializers.FloatField(allow_null=True)
     mensagem_erro = serializers.CharField(allow_blank=True)
     auditoria = AuditoriaResumoSerializer()
     logs_gerais_total = serializers.IntegerField()
     contadores_registrados = serializers.DictField(child=serializers.IntegerField())
+    resumo = ExecucaoSemanticaSerializer()
 
 
 class RetentativaLoteSerializer(serializers.ModelSerializer):

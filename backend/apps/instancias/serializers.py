@@ -6,6 +6,8 @@ from apps.catalogo.models import StatusVariacao, Variacao
 from apps.catalogo.tiny_sync import ESTADO_PRONTO, estado_cadastro_tiny
 from apps.fornecedores.services import listar_cadencias_com_defaults
 from apps.sincronizacao.models import Execucao, StatusExecucao, TipoExecucao
+from apps.sincronizacao.semantica_execucao import montar_semantica_execucao
+from apps.sincronizacao.serializers import ExecucaoSemanticaSerializer
 
 from .constants import CAMPOS_POR_FORNECEDOR, Fornecedor
 from .mascaramento import mascarar_credenciais
@@ -131,6 +133,7 @@ def _resumo_execucao_fornecedor(execucao):
         "total_ignorados": execucao.total_ignorados,
         "total_erros": execucao.total_erros,
         "mensagem_erro": execucao.mensagem_erro,
+        "resumo": montar_semantica_execucao(execucao),
     }
 
 
@@ -309,6 +312,7 @@ class ExecucaoResumidaSerializer(serializers.Serializer):
     total_atualizados = serializers.IntegerField()
     total_erros = serializers.IntegerField()
     mensagem_erro = serializers.CharField()
+    resumo = ExecucaoSemanticaSerializer()
 
 
 class InstanciaDetalheSerializer(InstanciaSerializer):

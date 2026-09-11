@@ -1,5 +1,5 @@
 import { Badge } from "@/components/ui/badge"
-import { formatarDuracao, formatarTempoRelativo } from "@/lib/format"
+import { formatarDataHora, formatarDuracao, formatarTempoRelativo } from "@/lib/format"
 import { ROTULO_FORNECEDOR } from "../cor-fornecedor"
 import { ROTULO_TIPO, badgeStatus, resultadoTexto } from "./execucao-formato"
 import type { ExecucaoResumida } from "@/lib/api/types"
@@ -34,7 +34,10 @@ export function ExecucoesTabela({ execucoes }: { execucoes: ExecucaoResumida[] }
                   className={`h-10 text-body-default ${execucao.status === "falha" ? "bg-error-subtle/40" : ""}`}
                 >
                   <td className="px-3 font-mono text-[13px] text-foreground">
-                    {formatarTempoRelativo(execucao.iniciada_em)}
+                    <span title={formatarDataHora(execucao.iniciada_em, true)}>
+                      {formatarDataHora(execucao.iniciada_em)}
+                      <span className="ml-1 text-muted-foreground">({formatarTempoRelativo(execucao.iniciada_em)})</span>
+                    </span>
                   </td>
                   <td className="px-3">
                     <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-code-inline text-foreground">

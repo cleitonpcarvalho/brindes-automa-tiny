@@ -533,6 +533,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/instancias/{slug}/execucoes/{execucao_id}/retentar-lote/parar/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Solicita a parada cooperativa da retentativa em lote mais recente. */
+        post: operations["instancias_execucoes_retentar_lote_parar_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/instancias/{slug}/fornecedores/{fornecedor}/cadastro-tiny/": {
         parameters: {
             query?: never;
@@ -734,6 +751,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/instancias/{slug}/produtos/{variacao_id}/atualizar-fornecedor/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Enfileira a atualização individual; a rede nunca roda no ciclo HTTP. */
+        post: operations["instancias_produtos_atualizar_fornecedor_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/instancias/{slug}/produtos/{variacao_id}/atualizar-fornecedor/{operacao_id}/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Consulta o estado persistido de uma atualização individual. */
+        get: operations["instancias_produtos_atualizar_fornecedor_retrieve"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/instancias/{slug}/produtos/{variacao_id}/atualizar-tiny/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Cadastra ou atualiza somente uma variação no Tiny. */
+        post: operations["instancias_produtos_atualizar_tiny_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/instancias/{slug}/produtos/{variacao_id}/cadastro-tiny/": {
         parameters: {
             query?: never;
@@ -849,6 +917,27 @@ export interface components {
             abertos: number;
             requerem_acao: number;
         };
+        AtualizacaoVariacaoFornecedor: {
+            readonly id: number;
+            readonly variacao: number;
+            readonly fornecedor: components["schemas"]["FornecedorEnum"];
+            readonly status: components["schemas"]["AtualizacaoVariacaoFornecedorStatusEnum"];
+            readonly erro: string;
+            /** Format: date-time */
+            readonly criado_em: string;
+            /** Format: date-time */
+            readonly iniciado_em: string | null;
+            /** Format: date-time */
+            readonly finalizado_em: string | null;
+        };
+        /**
+         * @description * `rodando` - Rodando
+         *     * `sucesso` - Sucesso
+         *     * `erro` - Erro
+         *     * `interrompido` - Interrompido
+         * @enum {string}
+         */
+        AtualizacaoVariacaoFornecedorStatusEnum: "rodando" | "sucesso" | "erro" | "interrompido";
         AuditoriaResumo: {
             total: number;
             cadastrados: number;
@@ -1018,6 +1107,7 @@ export interface components {
             total_erros?: number;
             mensagem_erro?: string;
             readonly total_logs: number;
+            readonly resumo: components["schemas"]["ExecucaoSemantica"];
         };
         ExecucaoAtividade: {
             id: number;
@@ -1044,7 +1134,6 @@ export interface components {
          *     para importações de espelho vêm derivados do status.
          */
         ExecucaoDetalhe: {
-            contadores_registrados?: Record<string, number>;
             id: number;
             fornecedor: string;
             tipo: string;
@@ -1061,17 +1150,22 @@ export interface components {
             total_erros: number;
             total_ignorados: number;
             /** Format: double */
-            progresso: number;
+            progresso: number | null;
             mensagem_erro: string;
             auditoria: components["schemas"]["AuditoriaResumo"];
             logs_gerais_total: number;
+            contadores_registrados: {
+                [key: string]: number;
+            };
+            resumo: components["schemas"]["ExecucaoSemantica"];
+        };
+        ExecucaoMetrica: {
+            chave: string;
+            rotulo: string;
+            valor: number;
         };
         /** @description Uma linha da tabela de auditoria — o desfecho de UM SKU nesta execução. */
         ExecucaoProduto: {
-            resultado_historico?: components["schemas"]["EventoLogEnum"];
-            detalhe_historico?: string;
-            status_atual?: string | null;
-            reconciliado?: boolean;
             log_id: number;
             variacao_id: number | null;
             sku: string;
@@ -1079,6 +1173,10 @@ export interface components {
             sku_tiny: string;
             produto_nome: string;
             resultado: components["schemas"]["EventoLogEnum"];
+            resultado_historico: components["schemas"]["EventoLogEnum"];
+            detalhe_historico: string;
+            status_atual: string | null;
+            reconciliado: boolean;
             tiny_id: string;
             mensagem: string;
             detalhe_curto: string;
@@ -1102,6 +1200,18 @@ export interface components {
             total_atualizados: number;
             total_erros: number;
             mensagem_erro: string;
+            resumo: {
+                [key: string]: unknown;
+            };
+        };
+        ExecucaoSemantica: {
+            metricas: components["schemas"]["ExecucaoMetrica"][];
+            /** Format: double */
+            progresso: number | null;
+            progresso_rotulo: string;
+            motivo_status: string;
+            logs_individuais_total: number;
+            mensagem_logs: string;
         };
         ExecucoesContagem: {
             total: number;
@@ -1497,6 +1607,7 @@ export interface components {
             erros?: number;
             /** @description SKU que já estava cadastrado quando o lote chegou nele. */
             ignorados?: number;
+            /** @description Solicitação cooperativa para parar antes do próximo item. */
             parada_solicitada?: boolean;
             /** Format: date-time */
             readonly criado_em: string;
@@ -1612,8 +1723,8 @@ export interface components {
             /** Format: date-time */
             readonly produto_atualizado_em_fornecedor: string | null;
             sku: string;
-            codigo_fornecedor: string;
-            sku_tiny: string;
+            readonly codigo_fornecedor: string;
+            readonly sku_tiny: string;
             nome: string;
             /** @description NCM brasileiro. Na Spot o campo de origem é o 'Taric': o normalizador (apps/fornecedores/spot.py, _ncm_do_taric) aproveita só quando ele tem 8 dígitos (~95,5% da amostra) e nunca trunca os códigos CN10/TARIC da UE de 9-10 dígitos; o valor cru fica sempre em atributos['taric']. Backfill dos registros antigos: backfill_ncm_spot. */
             ncm?: string;
@@ -1681,16 +1792,6 @@ export interface components {
             imagens_tiny_sincronizadas?: unknown;
             hash_conteudo?: string;
         };
-        AtualizacaoVariacaoFornecedor: {
-            readonly id: number;
-            readonly variacao: number;
-            readonly fornecedor: components["schemas"]["FornecedorEnum"];
-            readonly status: "rodando" | "sucesso" | "erro" | "interrompido";
-            readonly erro: string;
-            readonly criado_em: string;
-            readonly iniciado_em: string | null;
-            readonly finalizado_em: string | null;
-        };
         /**
          * @description Uma linha da aba "Produtos" do detalhe da instância.
          *
@@ -1707,8 +1808,8 @@ export interface components {
             readonly produto_nome: string;
             readonly produto_descontinuado: boolean;
             sku: string;
-            codigo_fornecedor: string;
-            sku_tiny: string;
+            readonly codigo_fornecedor: string;
+            readonly sku_tiny: string;
             nome: string;
             cor?: string;
             tamanho?: string;
@@ -2418,6 +2519,28 @@ export interface operations {
             };
         };
     };
+    instancias_execucoes_retentar_lote_parar_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                execucao_id: number;
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetentativaLote"];
+                };
+            };
+        };
+    };
     instancias_fornecedores_cadastro_tiny_create: {
         parameters: {
             query?: never;
@@ -2589,6 +2712,73 @@ export interface operations {
         };
     };
     instancias_produtos_retrieve: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                variacao_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VariacaoDetalhe"];
+                };
+            };
+        };
+    };
+    instancias_produtos_atualizar_fornecedor_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                variacao_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AtualizacaoVariacaoFornecedor"];
+                };
+            };
+        };
+    };
+    instancias_produtos_atualizar_fornecedor_retrieve: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operacao_id: number;
+                slug: string;
+                variacao_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AtualizacaoVariacaoFornecedor"];
+                };
+            };
+        };
+    };
+    instancias_produtos_atualizar_tiny_create: {
         parameters: {
             query?: never;
             header?: never;

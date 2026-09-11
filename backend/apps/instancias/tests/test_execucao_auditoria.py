@@ -111,14 +111,43 @@ class ExecucaoDetalheResumoTests(AuditoriaBase):
             "total_lidos": 1137, "total_cadastrados": 421,
             "total_erros": 6, "total_ignorados": 710,
         })
-        # (421 + 6) / 1137
-        self.assertAlmostEqual(d["progresso"], round(427 / 1137, 4), places=4)
+        # A execução de cadastro usa o universo real dos logs conciliados:
+        # os 7 SKUs tiveram desfecho, portanto está 100% concluída.
+        self.assertEqual(d["progresso"], 1.0)
+        self.assertEqual(d["resumo"]["progresso_rotulo"], "100%")
         self.assertEqual(d["auditoria"]["cadastrados"], 3)
         self.assertEqual(d["auditoria"]["vinculados"], 1)
         self.assertEqual(d["auditoria"]["bloqueados"], 1)
         self.assertEqual(d["auditoria"]["erros"], 2)
         self.assertEqual(d["auditoria"]["total"], 7)
         self.assertEqual(d["logs_gerais_total"], 2)
+
+    def test_importacao_incremental_usa_metricas_do_espelho_e_nao_do_tiny(self):
+        LogItem.objects.filter(execucao=self.execucao).delete()
+        self.execucao.tipo = TipoExecucao.INCREMENTAL
+        self.execucao.status = StatusExecucao.SUCESSO
+        self.execucao.total_lidos = 1323
+        self.execucao.total_novos = 4
+        self.execucao.total_atualizados = 1318
+        self.execucao.total_ignorados = 1
+        self.execucao.total_erros = 0
+        self.execucao.finalizada_em = timezone.now()
+        self.execucao.save()
+
+        d = self.client.get(self._url()).data
+        self.assertEqual(d["progresso"], 1.0)
+        self.assertEqual(
+            [(m["rotulo"], m["valor"]) for m in d["resumo"]["metricas"]],
+            [
+                ("Itens lidos", 1323),
+                ("Novos", 4),
+                ("Atualizados", 1318),
+                ("Ignorados / sem alteração", 1),
+                ("Erros", 0),
+            ],
+        )
+        self.assertNotIn("Cadastrados", [m["rotulo"] for m in d["resumo"]["metricas"]])
+        self.assertEqual(d["resumo"]["mensagem_logs"], "Esta execução não possui processamento individual por SKU.")
 
     def test_exige_autenticacao(self):
         self.assertEqual(APIClient().get(self._url()).status_code, status.HTTP_401_UNAUTHORIZED)

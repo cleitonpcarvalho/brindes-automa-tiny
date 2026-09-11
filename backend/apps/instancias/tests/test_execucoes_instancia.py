@@ -137,6 +137,23 @@ class ExecucoesInstanciaTests(TestCase):
         self.assertIsNone(linha["duracao_segundos"])
         self.assertIsNone(linha["finalizada_em"])
 
+    def test_lista_expoe_a_mesma_semantica_de_metricas_do_detalhe(self):
+        execucao = _execucao(
+            self.instancia,
+            tipo=TipoExecucao.INCREMENTAL,
+            total_lidos=1323,
+            total_novos=4,
+            total_atualizados=1318,
+            total_ignorados=1,
+            total_erros=0,
+        )
+        linha = self.client.get(self._url()).data["results"][0]
+        metricas = [(m["rotulo"], m["valor"]) for m in linha["resumo"]["metricas"]]
+        self.assertEqual(metricas[0], ("Itens lidos", 1323))
+        self.assertNotIn("Cadastrados", [m[0] for m in metricas])
+        self.assertEqual(linha["resumo"]["progresso_rotulo"], "100%")
+        self.assertEqual(linha["id"], execucao.id)
+
     def test_sem_n_mais_1(self):
         for _ in range(3):
             execucao = _execucao(self.instancia)

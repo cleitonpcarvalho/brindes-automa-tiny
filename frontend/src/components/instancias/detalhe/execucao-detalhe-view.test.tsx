@@ -188,6 +188,63 @@ describe("ExecucaoDetalheView", () => {
     expect(screen.getByText("Sucesso")).toBeInTheDocument()
   })
 
+  it("importação concluída mostra leitura do espelho, 100% e mensagem neutra de logs", () => {
+    mockResumo({
+      data: resumo({
+        tipo: "incremental",
+        status: "sucesso",
+        estado: "sucesso",
+        finalizada_em: "2026-01-01T00:02:46Z",
+        total_lidos: 1323,
+        progresso: 1,
+        resumo: {
+          metricas: [
+            { chave: "lidos", rotulo: "Itens lidos", valor: 1323 },
+            { chave: "novos", rotulo: "Novos", valor: 4 },
+            { chave: "atualizados", rotulo: "Atualizados", valor: 1318 },
+            { chave: "ignorados", rotulo: "Ignorados / sem alteração", valor: 1 },
+            { chave: "erros", rotulo: "Erros", valor: 0 },
+          ],
+          progresso: 1,
+          progresso_rotulo: "100%",
+          motivo_status: "Execução concluída com sucesso.",
+          logs_individuais_total: 0,
+          mensagem_logs: "Esta execução não possui processamento individual por SKU.",
+        },
+      }),
+    })
+    renderView()
+    expect(screen.getByText("1.323")).toBeInTheDocument()
+    expect(screen.getByText("100%")).toBeInTheDocument()
+    expect(screen.getAllByText("Esta execução não possui processamento individual por SKU.").length).toBeGreaterThan(0)
+    expect(screen.queryByText("Cadastrados")).not.toBeInTheDocument()
+  })
+
+  it("execução em andamento sem denominador não inventa percentual nem término", () => {
+    mockResumo({
+      data: resumo({
+        tipo: "incremental",
+        status: "rodando",
+        estado: "rodando",
+        finalizada_em: null,
+        duracao_segundos: null,
+        progresso: null,
+        resumo: {
+          metricas: [{ chave: "lidos", rotulo: "Itens lidos", valor: 12 }],
+          progresso: null,
+          progresso_rotulo: "Sem percentual disponível",
+          motivo_status: "",
+          logs_individuais_total: 0,
+          mensagem_logs: "Esta execução não possui processamento individual por SKU.",
+        },
+      }),
+    })
+    renderView()
+    expect(screen.getByText("Sem percentual disponível")).toBeInTheDocument()
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument()
+    expect(screen.getByText(/Término: —/)).toBeInTheDocument()
+  })
+
   // ---- retentativa em lote ----
 
   it("a barra de lote só aparece no filtro 'Erros' e 'selecionar todos' dispara o lote", () => {

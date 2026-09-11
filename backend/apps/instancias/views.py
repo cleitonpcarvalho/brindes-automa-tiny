@@ -72,6 +72,7 @@ from apps.sincronizacao.serializers import (
     LogItemSerializer,
     RetentativaLoteSerializer,
 )
+from apps.sincronizacao.semantica_execucao import montar_semantica_execucao
 
 from .constants import CAMPOS_POR_FORNECEDOR, Fornecedor
 from .listagem import (
@@ -1063,7 +1064,10 @@ class ExecucoesInstanciaView(generics.ListAPIView):
         instancia = get_object_or_404(Instancia, slug=self.kwargs["slug"])
         queryset = (
             Execucao.objects.filter(instancia=instancia)
-            .annotate(total_logs=Count("logs"))
+            .annotate(
+                total_logs=Count("logs"),
+                logs_individuais_total=Count("logs", filter=Q(logs__variacao__isnull=False)),
+            )
             .order_by("-iniciada_em", "-id")
         )
 
@@ -1136,14 +1140,6 @@ def _obter_execucao_ou_404(slug, execucao_id):
     )
 
 
-def _progresso_execucao(execucao) -> float:
-    lidos = execucao.total_lidos or 0
-    processados = (execucao.total_cadastrados or 0) + (execucao.total_erros or 0)
-    if lidos <= 0:
-        return 1.0 if execucao.finalizada_em else 0.0
-    return round(min(processados / lidos, 1.0), 4)
-
-
 class ExecucaoDetalheView(APIView):
     """
     GET /api/instancias/<slug>/execucoes/<execucao_id>/ — resumo da execução
@@ -1158,6 +1154,8 @@ class ExecucaoDetalheView(APIView):
     @extend_schema(responses=ExecucaoDetalheSerializer)
     def get(self, request, slug, execucao_id):
         execucao = _obter_execucao_ou_404(slug, execucao_id)
+        resumo_auditoria = auditoria.resumo_auditoria(execucao)
+        semantica = montar_semantica_execucao(execucao, auditoria_resumo=resumo_auditoria)
         estado = (
             estado_cadastro_tiny(execucao)
             if execucao.tipo == TipoExecucao.CADASTRO_TINY
@@ -1176,10 +1174,11 @@ class ExecucaoDetalheView(APIView):
             "total_cadastrados": execucao.total_cadastrados,
             "total_erros": execucao.total_erros,
             "total_ignorados": execucao.total_ignorados,
-            "progresso": _progresso_execucao(execucao),
+            "progresso": semantica["progresso"],
             "mensagem_erro": execucao.mensagem_erro,
-            "auditoria": auditoria.resumo_auditoria(execucao),
+            "auditoria": resumo_auditoria,
             "logs_gerais_total": auditoria.logs_gerais(execucao).count(),
+            "resumo": semantica,
             "contadores_registrados": {
                 "total_lidos": execucao.total_lidos,
                 "total_cadastrados": execucao.total_cadastrados,

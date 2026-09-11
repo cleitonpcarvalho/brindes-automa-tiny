@@ -17,7 +17,10 @@ export type FornecedorEnum = components["schemas"]["FornecedorEnum"];
 export type CorFornecedor = components["schemas"]["CorFornecedorEnum"];
 export type FornecedorDetalhe = components["schemas"]["FornecedorDetalhe"];
 export type ProdutosDetalheContagem = components["schemas"]["ProdutosDetalheContagem"];
-export type ExecucaoResumida = components["schemas"]["ExecucaoResumida"];
+export type ExecucaoSemantica = components["schemas"]["ExecucaoSemantica"];
+export type ExecucaoResumida = Omit<components["schemas"]["ExecucaoResumida"], "resumo"> & {
+  resumo?: ExecucaoSemantica;
+};
 
 export type VariacaoEspelho = components["schemas"]["VariacaoEspelho"];
 export type PaginatedVariacaoEspelhoList = components["schemas"]["PaginatedVariacaoEspelhoList"];
@@ -28,14 +31,26 @@ export type StatusVariacao = components["schemas"]["StatusVariacaoEnum"];
 export type ConfiguracoesInstancia = components["schemas"]["ConfiguracoesInstancia"];
 export type PatchedConfiguracoesInstancia = components["schemas"]["PatchedConfiguracoesInstancia"];
 
-export type Execucao = components["schemas"]["Execucao"];
+export type Execucao = Omit<components["schemas"]["Execucao"], "resumo"> & {
+  resumo?: ExecucaoSemantica;
+};
 export type PaginatedExecucaoList = components["schemas"]["PaginatedExecucaoList"];
 export type TipoExecucao = components["schemas"]["TipoExecucaoEnum"];
 export type LogItem = components["schemas"]["LogItem"];
 export type PaginatedLogItemList = components["schemas"]["PaginatedLogItemList"];
 export type NivelLog = components["schemas"]["NivelLogEnum"];
-export type ExecucaoDetalhe = components["schemas"]["ExecucaoDetalhe"];
-export type ExecucaoProduto = components["schemas"]["ExecucaoProduto"];
+export type ExecucaoDetalhe = Omit<components["schemas"]["ExecucaoDetalhe"], "resumo"> & {
+  resumo?: ExecucaoSemantica;
+};
+export type ExecucaoProduto = Omit<
+  components["schemas"]["ExecucaoProduto"],
+  "resultado_historico" | "detalhe_historico" | "status_atual" | "reconciliado"
+> & {
+  resultado_historico?: components["schemas"]["EventoLogEnum"];
+  detalhe_historico?: string;
+  status_atual?: string | null;
+  reconciliado?: boolean;
+};
 export type RetentativaLote = components["schemas"]["RetentativaLote"];
 export type PaginatedExecucaoProdutoList = components["schemas"]["PaginatedExecucaoProdutoList"];
 export type EventoLog = components["schemas"]["EventoLogEnum"];

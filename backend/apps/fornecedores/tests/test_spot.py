@@ -100,7 +100,7 @@ class ImagensSpotTests(TestCase):
     nunca entram. Dedupe por URL, no máximo 5.
     """
 
-    BASE = "https://www.spotgifts.com.br/fotos/produtos"
+    BASE = "https://cdnbr.spotgifts.com.br/products/1000x1000"
 
     def _imagens(self, opcional, produto=None, base=BASE):
         config = {"url_base_imagens": base} if base else {}
@@ -159,6 +159,23 @@ class ImagensSpotTests(TestCase):
         )
         self.assertEqual(self._imagens(op), [f"{self.BASE}/11110_105.jpg"])
 
+    def test_imagens_opcionais_sao_complementares_e_deduplicadas(self):
+        op = self._op(
+            AllImageList="11110_105.jpg",
+            OptionalImage1="11110_105-extra.jpg",
+            OptionalImage2="11110_105.jpg",
+        )
+        self.assertEqual(
+            self._imagens(op),
+            [f"{self.BASE}/11110_105.jpg", f"{self.BASE}/11110_105-extra.jpg"],
+        )
+
+    def test_base_com_ou_sem_barra_produz_a_mesma_url(self):
+        op = self._op(AllImageList="11110_105.jpg")
+        sem_barra = self._imagens(op, base=self.BASE.rstrip("/"))
+        com_barra = self._imagens(op, base=self.BASE)
+        self.assertEqual(sem_barra, com_barra)
+
     def test_limita_a_cinco_imagens(self):
         angulos = ", ".join(f"11110_105-{s}.jpg" for s in "abcdefgh")
         op = self._op(AllImageList=f"11110_105.jpg, {angulos}")
@@ -173,6 +190,9 @@ class ImagensSpotTests(TestCase):
 
 class NcmDoTaricUnitTests(TestCase):
     """`_ncm_do_taric`: só-dígitos, e só devolve se sobrarem exatamente 8."""
+
+    def test_taric_oficial_de_exemplo_vira_ncm(self):
+        self.assertEqual(_ncm_do_taric("4016.92.00"), "40169200")
 
     def test_oito_digitos_crus(self):
         self.assertEqual(_ncm_do_taric("96081000"), "96081000")

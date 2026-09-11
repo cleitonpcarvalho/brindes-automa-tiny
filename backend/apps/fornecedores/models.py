@@ -9,11 +9,10 @@ from apps.instancias.models import Instancia
 class ConfiguracaoFornecedor(models.Model):
     """
     Configuração não sensível por fornecedor (não é credencial — isso fica
-    em CredencialFornecedor). Hoje existe só para a pendência da Spot: as
-    imagens vêm apenas como nome de arquivo, sem host nem caminho. Fica
-    vazio até o fornecedor confirmar a URL base — enquanto vazio, o
-    normalizador da Spot (apps/fornecedores/spot.py) não monta nenhuma URL
-    de imagem.
+    em CredencialFornecedor). Hoje existe principalmente para a Spot: as
+    imagens vêm apenas como nome de arquivo, sem host nem caminho. A URL
+    oficial é aplicada pela migration de configuração; enquanto vazio, o
+    normalizador da Spot não monta URL de imagem.
     """
 
     fornecedor = models.CharField(max_length=20, choices=Fornecedor.choices, unique=True)

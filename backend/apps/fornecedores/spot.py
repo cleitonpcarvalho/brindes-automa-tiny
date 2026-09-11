@@ -62,6 +62,9 @@ def _nomes_de_imagem_spot(opcional: dict, produto_bruto: dict) -> list[str]:
     """Nomes de arquivo candidatos, na ordem em que a Spot os entrega."""
     bruto = opcional.get("AllImageList") or produto_bruto.get("AllImageList") or ""
     nomes = [n.strip() for n in bruto.split(",") if n and n.strip()]
+    for campo in ("OptionalImage1", "OptionalImage2"):
+        valor = opcional.get(campo) or produto_bruto.get(campo) or ""
+        nomes.extend(n.strip() for n in valor.split(",") if n and n.strip())
     if not nomes:
         principal = (opcional.get("MainImage") or produto_bruto.get("MainImage") or "").strip()
         nomes = [principal] if principal else []

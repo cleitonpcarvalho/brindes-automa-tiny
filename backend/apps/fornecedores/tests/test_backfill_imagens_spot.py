@@ -8,7 +8,7 @@ from apps.catalogo.models import Produto, StatusVariacao, Variacao
 from apps.fornecedores.models import ConfiguracaoFornecedor
 from apps.instancias.models import Instancia
 
-BASE = "https://www.spotgifts.com.br/fotos/produtos"
+BASE = "https://cdnbr.spotgifts.com.br/products/1000x1000"
 
 
 def _opcional(**extra):
@@ -85,15 +85,15 @@ class BackfillImagensSpotTests(TestCase):
     def test_variacao_ja_correta_conta_como_inalterada(self):
         self._variacao(imagens=[f"{BASE}/11110_105.jpg", f"{BASE}/11110_105-logo.jpg"])
         saida = self._run()
-        self.assertIn("inalteradas: 1", saida)
-        self.assertIn("Atualizadas: 0", saida)
+        self.assertIn("URLs já corretas: 1", saida)
+        self.assertIn("URLs corrigidas: 0", saida)
 
     def test_variacao_sem_payload_bruto_e_pulada(self):
         variacao = self._variacao(payload_bruto={})
         saida = self._run()
         variacao.refresh_from_db()
         self.assertEqual(variacao.imagens, [])
-        self.assertIn("sem payload_bruto: 1", saida)
+        self.assertIn("casos não reconhecidos: 1", saida)
 
     def test_nao_altera_nenhum_outro_dado_da_variacao(self):
         variacao = self._variacao(
@@ -128,6 +128,32 @@ class BackfillImagensSpotTests(TestCase):
             variacao.imagens,
             [f"{BASE}/11110_105.jpg", f"{BASE}/11110_105-logo.jpg"],
         )
+
+    def test_corrigir_imagem_invalida_marca_anexo_antigo_como_pendente(self):
+        antiga = "https://www.spotgifts.com.br/fotos/produtos/11110_105.jpg"
+        variacao = self._variacao(
+            imagens=[antiga],
+            imagens_tiny_sincronizadas=[antiga],
+        )
+
+        self._run()
+
+        variacao.refresh_from_db()
+        self.assertEqual(variacao.imagens, [f"{BASE}/11110_105.jpg", f"{BASE}/11110_105-logo.jpg"])
+        self.assertEqual(variacao.imagens_tiny_sincronizadas, [])
+
+    def test_sem_imagem_nao_apaga_imagem_existente(self):
+        existente = "https://cdnbr.spotgifts.com.br/products/1000x1000/existente.jpg"
+        variacao = self._variacao(
+            imagens=[existente],
+            payload_bruto={"Sku": "11110-105", "ProdReference": "11110"},
+        )
+
+        saida = self._run()
+
+        variacao.refresh_from_db()
+        self.assertEqual(variacao.imagens, [existente])
+        self.assertIn("sem imagem: 1", saida)
 
     def test_so_toca_em_variacoes_da_spot(self):
         outro = Produto.objects.create(

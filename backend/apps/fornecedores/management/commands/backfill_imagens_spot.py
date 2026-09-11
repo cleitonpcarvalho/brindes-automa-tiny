@@ -19,10 +19,11 @@ class Command(BaseCommand):
     existentes (mesmo hash => "ignorado"). Este comando preenche as imagens
     dessas variações sem depender de reimportação.
 
-    Escopo do que é tocado: SÓ `Variacao.imagens` (e `atualizado_em`). O
-    `save()` roda com `update_fields` restrito — status, estoque, preço,
-    NCM, cor, `tiny_id`, `hash_conteudo`, `payload_bruto` e qualquer outro
-    campo ficam exatamente como estavam.
+    Escopo do que é tocado: `Variacao.imagens`, o marcador de anexos
+    `imagens_tiny_sincronizadas` (somente para remover URLs antigas) e
+    `atualizado_em`. O `save()` roda com `update_fields` restrito — status,
+    estoque, preço, NCM, cor, `tiny_id`, `hash_conteudo`, `payload_bruto` e
+    qualquer outro campo ficam exatamente como estavam.
 
     Opções:
       --dry-run           não grava nada, só relata o que mudaria;
@@ -42,7 +43,7 @@ class Command(BaseCommand):
         if not url_base:
             raise CommandError(
                 "ConfiguracaoFornecedor.url_base_imagens para 'spot' está vazio — "
-                "aplique a migration 0004_config_spot_url_base_imagens (ou configure "
+                "aplique a migration 0007_corrige_url_spot_oficial (ou configure "
                 "a URL base no admin) antes de rodar o backfill."
             )
 
@@ -61,31 +62,53 @@ class Command(BaseCommand):
         if options["limite"]:
             fila = fila[: options["limite"]]
 
-        atualizadas = inalteradas = sem_payload = 0
+        analisadas = corretas = corrigiveis = corrigidas = sem_imagem = nao_reconhecidas = erros = 0
         for variacao in fila:
-            opcional = variacao.payload_bruto or {}
-            produto_bruto = variacao.produto.payload_bruto or {}
-            if not opcional:
-                sem_payload += 1
-                w(f"{variacao.sku}: sem payload_bruto salvo — pulado")
-                continue
+            analisadas += 1
+            try:
+                opcional = variacao.payload_bruto or {}
+                produto_bruto = variacao.produto.payload_bruto or {}
+                if not opcional:
+                    nao_reconhecidas += 1
+                    w(f"{variacao.sku}: sem payload_bruto salvo — não reconhecido")
+                    continue
 
-            novas = imagens_spot_da_variacao(opcional, produto_bruto, url_base)
-            atuais = list(variacao.imagens or [])
-            if novas == atuais:
-                inalteradas += 1
-                continue
+                novas = imagens_spot_da_variacao(opcional, produto_bruto, url_base)
+                atuais = list(variacao.imagens or [])
+                if not novas:
+                    sem_imagem += 1
+                    continue
+                if novas == atuais:
+                    corretas += 1
+                    continue
 
-            atualizadas += 1
-            w(f"[instancia {variacao.produto.instancia_id}] {variacao.sku}: "
-              f"{len(atuais)} -> {len(novas)} imagem(ns)")
-            if not dry_run:
-                variacao.imagens = novas
-                variacao.save(update_fields=["imagens", "atualizado_em"])
+                corrigiveis += 1
+                w(f"[instancia {variacao.produto.instancia_id}] {variacao.sku}: "
+                  f"{len(atuais)} -> {len(novas)} imagem(ns)")
+                if not dry_run:
+                    # Remove do marcador local URLs que deixaram de ser as
+                    # URLs desejadas. O fluxo específico de anexos do Tiny
+                    # reenviará somente quando for executado posteriormente.
+                    marcadores = [
+                        url for url in (variacao.imagens_tiny_sincronizadas or [])
+                        if url in novas
+                    ]
+                    variacao.imagens = novas
+                    variacao.imagens_tiny_sincronizadas = marcadores
+                    variacao.save(update_fields=[
+                        "imagens", "imagens_tiny_sincronizadas", "atualizado_em"
+                    ])
+                    corrigidas += 1
+            except Exception as exc:
+                erros += 1
+                w(self.style.ERROR(f"{variacao.sku}: erro no backfill — {exc}"))
+                continue
 
         w("")
         w(self.style.SUCCESS(
             f"{'(dry-run) ' if dry_run else ''}"
-            f"Atualizadas: {atualizadas} | inalteradas: {inalteradas} | "
-            f"sem payload_bruto: {sem_payload}"
+            f"Variações analisadas: {analisadas} | URLs já corretas: {corretas} | "
+            f"URLs corrigíveis: {corrigiveis} | URLs corrigidas: {corrigidas} | "
+            f"sem imagem: {sem_imagem} | casos não reconhecidos: {nao_reconhecidas} | "
+            f"erros: {erros}"
         ))

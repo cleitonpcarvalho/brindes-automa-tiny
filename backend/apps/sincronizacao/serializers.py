@@ -82,6 +82,7 @@ class AuditoriaResumoSerializer(serializers.Serializer):
     cadastrados_e_vinculados = serializers.IntegerField()
     bloqueados = serializers.IntegerField()
     erros = serializers.IntegerField()
+    falhas_secundarias = serializers.IntegerField()
 
 
 class ExecucaoDetalheSerializer(serializers.Serializer):

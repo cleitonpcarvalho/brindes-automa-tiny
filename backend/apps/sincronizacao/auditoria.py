@@ -186,6 +186,63 @@ def resumo_auditoria(execucao) -> dict:
     }
 
 
+def resumo_tentativa_cadastro(execucao) -> dict | None:
+    """Resume a tentativa mais recente, inclusive quando a Execucao foi retomada."""
+    inicio = (
+        execucao.logs.filter(
+            evento=EventoLog.GERAL,
+            mensagem="Sincronização com o Tiny iniciada",
+        )
+        .order_by("-id")
+        .first()
+    )
+    if inicio is None:
+        return None
+
+    retomada = execucao.logs.filter(
+        evento=EventoLog.GERAL,
+        mensagem="Sincronização com o Tiny iniciada",
+        id__lt=inicio.id,
+    ).exists()
+
+    detalhe = inicio.detalhe if isinstance(inicio.detalhe, dict) else {}
+    try:
+        total_fila = int(detalhe.get("fila") or 0)
+    except (TypeError, ValueError):
+        total_fila = 0
+
+    logs = execucao.logs.filter(id__gt=inicio.id, variacao__isnull=False)
+    ids_processados = set(logs.values_list("variacao_id", flat=True))
+    operacoes_imagem = set(
+        logs.filter(detalhe__operacao="imagem_pendente")
+        .values_list("variacao_id", flat=True)
+    )
+    contagem = dict(
+        logs.filter(evento__in=EVENTOS_DESFECHO)
+        .values("evento")
+        .annotate(n=Count("variacao_id", distinct=True))
+        .values_list("evento", "n")
+    )
+    imagens = (
+        logs.filter(evento__in=(EventoLog.IMAGENS, EventoLog.IMAGENS_ERRO))
+        .order_by("variacao_id", "-id")
+        .distinct("variacao_id")
+        .values_list("evento", flat=True)
+    )
+    return {
+        "total_fila": total_fila,
+        "processados": len(ids_processados),
+        "operacoes_imagem": len(operacoes_imagem),
+        "cadastrados": contagem.get(EventoLog.CRIADO, 0),
+        "vinculados": contagem.get(EventoLog.VINCULADO, 0),
+        "bloqueados": contagem.get(EventoLog.BLOQUEADO, 0),
+        "erros": contagem.get(EventoLog.ERRO, 0),
+        "falhas_secundarias": sum(1 for evento in imagens if evento == EventoLog.IMAGENS_ERRO),
+        "inicio_id": inicio.id,
+        "retomada": retomada,
+    }
+
+
 def logs_gerais(execucao):
     """
     Logs que NÃO são de um SKU específico (início, pausa, conclusão, falha,

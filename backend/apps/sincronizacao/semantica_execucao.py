@@ -1,7 +1,7 @@
 from .models import StatusExecucao, TipoExecucao
 
 
-def _motivo_status(execucao, *, auditoria_resumo=None):
+def _motivo_status(execucao, *, auditoria_resumo=None, tentativa_resumo=None):
     if execucao.mensagem_erro:
         return execucao.mensagem_erro
     if execucao.status == StatusExecucao.INTERROMPIDO:
@@ -12,14 +12,15 @@ def _motivo_status(execucao, *, auditoria_resumo=None):
         return "Execução em processo de pausa."
     if execucao.status == StatusExecucao.PARCIAL:
         if execucao.tipo == TipoExecucao.CADASTRO_TINY:
-            falhas_secundarias = (auditoria_resumo or {}).get("falhas_secundarias", 0)
+            fonte = tentativa_resumo or auditoria_resumo or {}
+            falhas_secundarias = fonte.get("falhas_secundarias", 0)
             detalhe_secundario = (
                 f" e {falhas_secundarias} falha(s) secundária(s) (imagem/anexo)"
                 if falhas_secundarias else ""
             )
             return (
-                f"Execução parcial: {execucao.total_erros or 0} erro(s) e "
-                f"{execucao.total_ignorados or 0} item(ns) ignorado(s) ou pendente(s)"
+                f"Execução parcial: {fonte.get('erros', 0)} erro(s) e "
+                f"{fonte.get('bloqueados', 0)} item(ns) ignorado(s) ou pendente(s)"
                 f"{detalhe_secundario}."
             )
         return f"Importação parcial: {execucao.total_erros or 0} erro(s) registrado(s)."
@@ -43,32 +44,47 @@ def montar_semantica_execucao(execucao, *, auditoria_resumo=None):
         logs_individuais = execucao.logs.filter(variacao__isnull=False).count()
 
     resumo_para_motivo = auditoria_resumo
+    tentativa_resumo = None
     if execucao.tipo == TipoExecucao.CADASTRO_TINY:
+        from . import auditoria
+
         resumo = auditoria_resumo or _auditoria_cadastro(execucao)
+        tentativa_resumo = auditoria.resumo_tentativa_cadastro(execucao)
+        if tentativa_resumo and not tentativa_resumo["retomada"]:
+            tentativa_resumo = None
         resumo_para_motivo = resumo
+        fonte = tentativa_resumo or {
+            "total_fila": resumo["total"],
+            "processados": resumo["total"],
+            "cadastrados": resumo["cadastrados_e_vinculados"],
+            "vinculados": 0,
+            "bloqueados": resumo["bloqueados"],
+            "erros": resumo["erros"],
+            "falhas_secundarias": resumo.get("falhas_secundarias", 0),
+        }
         metricas = [
-            {"chave": "total_fila", "rotulo": "Total da fila", "valor": resumo["total"]},
+            {"chave": "total_fila", "rotulo": "Total da fila desta tentativa", "valor": fonte["total_fila"]},
+            {"chave": "processados", "rotulo": "Itens processados nesta tentativa", "valor": fonte["processados"]},
             {
                 "chave": "cadastrados",
-                "rotulo": "Cadastrados",
-                "valor": resumo["cadastrados_e_vinculados"],
+                "rotulo": "Novos/vinculados nesta tentativa",
+                "valor": fonte["cadastrados"] + fonte.get("vinculados", 0),
             },
-            {"chave": "erros", "rotulo": "Erros", "valor": resumo["erros"]},
+            {"chave": "erros", "rotulo": "Erros", "valor": fonte["erros"]},
             {
                 "chave": "ignorados",
                 "rotulo": "Ignorados / bloqueados",
-                "valor": resumo["bloqueados"],
+                "valor": fonte["bloqueados"],
             },
         ]
-        if resumo.get("falhas_secundarias", 0):
+        if fonte.get("falhas_secundarias", 0):
             metricas.append({
                 "chave": "falhas_secundarias",
                 "rotulo": "Falhas secundárias (imagem/anexo)",
-                "valor": resumo["falhas_secundarias"],
+                "valor": fonte["falhas_secundarias"],
             })
-        total = resumo["total"]
-        concluido = resumo["cadastrados_e_vinculados"] + resumo["erros"] + resumo["bloqueados"]
-        progresso = round(min(concluido / total, 1.0), 4) if total else None
+        total = fonte["total_fila"]
+        progresso = round(min(fonte["processados"] / total, 1.0), 4) if total else None
     else:
         metricas = [
             {"chave": "lidos", "rotulo": "Itens lidos", "valor": execucao.total_lidos or 0},
@@ -101,11 +117,20 @@ def montar_semantica_execucao(execucao, *, auditoria_resumo=None):
         "metricas": metricas,
         "progresso": progresso,
         "progresso_rotulo": progresso_rotulo,
-        "motivo_status": _motivo_status(execucao, auditoria_resumo=resumo_para_motivo),
+        "motivo_status": _motivo_status(
+            execucao,
+            auditoria_resumo=resumo_para_motivo,
+            tentativa_resumo=tentativa_resumo,
+        ),
         "logs_individuais_total": logs_individuais,
         "mensagem_logs": (
-            "Logs individuais por SKU disponíveis."
-            if logs_individuais
-            else "Esta execução não possui processamento individual por SKU."
+            (
+                f"{tentativa_resumo['processados']} SKU(s) processado(s) nesta tentativa; "
+                "a fila retomada continha operações de imagem."
+                if tentativa_resumo and tentativa_resumo["operacoes_imagem"]
+                else "Logs individuais por SKU disponíveis."
+                if logs_individuais
+                else "Esta execução não possui processamento individual por SKU."
+            )
         ),
     }

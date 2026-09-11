@@ -201,6 +201,18 @@ class EventosExecucao(EventosSincronizacao):
             tiny_id=str(tiny_id),
         )
 
+    def variacao_ja_cadastrada(self, variacao):
+        # Unidade real da tentativa quando a fila contém um SKU já cadastrado
+        # cuja pendência é somente a sincronização de imagens.
+        self._log(
+            NivelLog.INFO,
+            f"SKU {variacao.sku} já cadastrado no Tiny; retomando imagens",
+            variacao=variacao,
+            origem="cadastro_tiny",
+            operacao="imagem_pendente",
+            tiny_id=str(variacao.tiny_id or ""),
+        )
+
     def variacao_bloqueada(self, variacao, motivo):
         self._log(
             NivelLog.AVISO,

@@ -1199,10 +1199,24 @@ class ExecucaoDetalheView(APIView):
             },
         }
         if execucao.tipo == TipoExecucao.CADASTRO_TINY:
-            resumo = dados["auditoria"]
-            dados.update(total_lidos=resumo["total"],
-                         total_cadastrados=resumo["cadastrados_e_vinculados"],
-                         total_erros=resumo["erros"], total_ignorados=resumo["bloqueados"])
+            tentativa = auditoria.resumo_tentativa_cadastro(execucao)
+            if tentativa and not tentativa["retomada"]:
+                tentativa = None
+            if tentativa:
+                dados.update(
+                    total_lidos=tentativa["total_fila"],
+                    total_cadastrados=tentativa["cadastrados"] + tentativa["vinculados"],
+                    total_erros=tentativa["erros"],
+                    total_ignorados=tentativa["bloqueados"],
+                )
+            else:
+                resumo = dados["auditoria"]
+                dados.update(
+                    total_lidos=resumo["total"],
+                    total_cadastrados=resumo["cadastrados_e_vinculados"],
+                    total_erros=resumo["erros"],
+                    total_ignorados=resumo["bloqueados"],
+                )
         return Response(ExecucaoDetalheSerializer(dados).data)
 
 

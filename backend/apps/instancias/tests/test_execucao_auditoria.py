@@ -97,6 +97,45 @@ class AuditoriaBase(TestCase):
 
 
 class ExecucaoDetalheResumoTests(AuditoriaBase):
+    def test_retomada_de_fila_de_imagens_usa_contadores_da_tentativa(self):
+        # A retomada permanece na mesma Execucao e a fila contém seis SKUs já
+        # cadastrados, retornados somente para concluir imagens.
+        LogItem.objects.filter(execucao=self.execucao).delete()
+        _log(self.execucao, EventoLog.GERAL, "Sincronização com o Tiny iniciada", fornecedor="asia", fila=1137)
+        _log(self.execucao, EventoLog.GERAL, "Execução reconhecida como interrompida", timeout_segundos=600)
+        _log(self.execucao, EventoLog.GERAL, "Sincronização com o Tiny iniciada", fornecedor="asia", fila=6)
+        for i in range(6):
+            v = _variacao(self.instancia, f"IMG-{i}")
+            v.status = StatusVariacao.CADASTRADO
+            v.tiny_id = str(1000 + i)
+            v.save(update_fields=["status", "tiny_id"])
+            _log(
+                self.execucao,
+                EventoLog.GERAL,
+                f"SKU {v.sku} já cadastrado no Tiny; retomando imagens",
+                variacao=v,
+                origem="cadastro_tiny",
+                operacao="imagem_pendente",
+            )
+            _log(
+                self.execucao,
+                EventoLog.IMAGENS_ERRO,
+                f"Falha ao sincronizar imagens do SKU {v.sku}",
+                variacao=v,
+                nivel=NivelLog.ERRO,
+                erro="anexo recusado",
+            )
+
+        d = self.client.get(self._url()).data
+        metricas = {m["chave"]: m["valor"] for m in d["resumo"]["metricas"]}
+        self.assertEqual(self.execucao.id, d["id"])
+        self.assertEqual(metricas["total_fila"], 6)
+        self.assertEqual(metricas["processados"], 6)
+        self.assertEqual(metricas["cadastrados"], 0)
+        self.assertEqual(metricas["falhas_secundarias"], 6)
+        self.assertNotIn("nenhum SKU", d["resumo"]["mensagem_logs"])
+        self.assertIn("operações de imagem", d["resumo"]["mensagem_logs"])
+
     def test_resumo_traz_status_progresso_e_contagem_por_resultado(self):
         resp = self.client.get(self._url())
         self.assertEqual(resp.status_code, status.HTTP_200_OK)

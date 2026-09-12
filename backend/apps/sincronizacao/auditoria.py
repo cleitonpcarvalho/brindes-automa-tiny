@@ -263,6 +263,8 @@ def resumo_estado_atual(instancia, fornecedor=None) -> dict:
             variacao__isnull=False,
             evento__in=EVENTOS_DESFECHO,
         )
+        .filter(Q(variacao__tiny_id__isnull=True) | Q(variacao__tiny_id=""))
+        .exclude(variacao__status=StatusVariacao.CADASTRADO)
         .order_by("variacao_id", "-criado_em", "-id")
         .distinct("variacao_id")
         .select_related("variacao__produto")

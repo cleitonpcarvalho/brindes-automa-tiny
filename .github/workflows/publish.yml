@@ -52,8 +52,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.component }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+          # O cache GHA falhou no pós-build com `not_found`, embora a imagem
+          # já tivesse sido publicada no GHCR. Desativado temporariamente para
+          # que uma falha de cache não impeça o deploy válido.
 
   deploy:
     # Só roda se as DUAS imagens (matriz backend + frontend) publicarem com

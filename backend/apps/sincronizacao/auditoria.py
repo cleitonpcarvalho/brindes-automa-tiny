@@ -10,7 +10,7 @@ campo `LogItem.evento` (estruturado). Nenhuma interpretação de texto livre.
 from django.db.models import Case, CharField, Count, F, Q, Subquery, Value, When
 
 from apps.catalogo.models import StatusVariacao, Variacao
-from apps.catalogo.tiny_sync import imagens_utilizaveis, sku_tiny_para_exibicao
+from apps.catalogo.tiny_sync import sku_tiny_para_exibicao
 
 from .models import EVENTOS_DESFECHO, EventoLog, LogItem, TipoExecucao
 
@@ -230,41 +230,36 @@ def resumo_estado_atual(instancia, fornecedor=None) -> dict:
             pendentes=Count(
                 "id", filter=Q(status=StatusVariacao.PENDENTE, estoque__gt=0)
             ),
+            imagens_pendentes=Count(
+                "id",
+                filter=(
+                    Q(status=StatusVariacao.CADASTRADO)
+                    & Q(tiny_id__isnull=False)
+                    & ~Q(tiny_id="")
+                    & ~Q(imagens=[])
+                    & Q(imagens_tiny_sincronizadas=[])
+                ),
+            ),
         )
     ):
         resultado[linha["produto__fornecedor"]] = {
             "erros": linha["erros"],
             "pendentes": linha["pendentes"],
-            "imagens_pendentes": 0,
+            "imagens_pendentes": linha["imagens_pendentes"],
             "bloqueados": 0,
         }
 
-    candidatos = base.filter(
-        status=StatusVariacao.CADASTRADO,
-        tiny_id__isnull=False,
-    ).exclude(tiny_id="").exclude(imagens=[])
-    for variacao in candidatos.only(
-        "id", "produto_id", "imagens", "imagens_tiny_sincronizadas"
-    ).select_related("produto"):
-        desejadas = imagens_utilizaveis(variacao)
-        if desejadas and not set(desejadas).issubset(
-            set(variacao.imagens_tiny_sincronizadas or [])
-        ):
-            estado = resultado.setdefault(
-                variacao.produto.fornecedor,
-                {"erros": 0, "pendentes": 0, "imagens_pendentes": 0, "bloqueados": 0},
-            )
-            estado["imagens_pendentes"] += 1
+    ids_sem_vinculo = base.filter(
+        ~Q(status=StatusVariacao.CADASTRADO),
+    ).filter(Q(tiny_id__isnull=True) | Q(tiny_id="")).values("id")
 
     logs = (
         LogItem.objects.filter(
             execucao__instancia=instancia,
             execucao__tipo=TipoExecucao.CADASTRO_TINY,
-            variacao__isnull=False,
+            variacao_id__in=Subquery(ids_sem_vinculo),
             evento__in=EVENTOS_DESFECHO,
         )
-        .filter(Q(variacao__tiny_id__isnull=True) | Q(variacao__tiny_id=""))
-        .exclude(variacao__status=StatusVariacao.CADASTRADO)
         .order_by("variacao_id", "-criado_em", "-id")
         .distinct("variacao_id")
         .select_related("variacao__produto")

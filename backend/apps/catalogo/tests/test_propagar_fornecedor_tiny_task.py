@@ -5,7 +5,8 @@ depois de uma importação de espelho quando a cadência do par tem
 
   1. produtos novos elegíveis + imagens -> cadastro em massa (com Execucao);
   2. estoque que mudou -> `atualizar_estoque_tiny --fornecedor`;
-  3. custo / descrição / dados que mudaram -> `corrigir_dados_produto_tiny --executar`.
+  3. dados de produtos existentes não são propagados automaticamente;
+     `corrigir_dados_produto_tiny` permanece manual.
 
 Cada etapa é guiada por marcador de drift: nada que já esteja em dia é
 reescrito.
@@ -173,7 +174,7 @@ class DriftTests(_Base):
     @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_estoque")
     @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_produto", return_value=_get_tiny(222, "CUSTO-1"))
     @patch("apps.instancias.tiny_client.TinyApiClient.obter_produto")
-    def test_custo_que_mudou_e_corrigido(self, mock_get, mock_put, mock_estoque):
+    def test_custo_que_mudou_nao_e_reprocessado_automaticamente(self, mock_get, mock_put, mock_estoque):
         v = self._cadastrada(
             "CUSTO-1", tiny_id="222", preco=Decimal("18.00"),
             preco_custo_tiny_sincronizado=Decimal("12.00"),
@@ -182,24 +183,24 @@ class DriftTests(_Base):
 
         self._rodar()
 
-        mock_put.assert_called_once()
+        mock_put.assert_not_called()
         v.refresh_from_db()
-        self.assertEqual(v.preco_custo_tiny_sincronizado, Decimal("18.00"))
+        self.assertEqual(v.preco_custo_tiny_sincronizado, Decimal("12.00"))
         mock_estoque.assert_not_called()
 
     @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_estoque")
     @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_produto", return_value=_get_tiny(333, "DESC-1"))
     @patch("apps.instancias.tiny_client.TinyApiClient.obter_produto")
-    def test_descricao_que_mudou_e_corrigida(self, mock_get, mock_put, _me):
+    def test_descricao_que_mudou_nao_e_reprocessada_automaticamente(self, mock_get, mock_put, _me):
         # marcador de dados zerado pela importação (descrição mudou no fornecedor)
         v = self._cadastrada("DESC-1", tiny_id="333", dados_tiny_sincronizados_em=None)
         mock_get.return_value = _get_tiny(333, "DESC-1")
 
         self._rodar()
 
-        mock_put.assert_called_once()
+        mock_put.assert_not_called()
         v.refresh_from_db()
-        self.assertIsNotNone(v.dados_tiny_sincronizados_em)
+        self.assertIsNone(v.dados_tiny_sincronizados_em)
 
     @patch("apps.instancias.tiny_client.TinyApiClient.sincronizar_anexos_produto", return_value={})
     @patch("apps.instancias.tiny_client.TinyApiClient.anexos_do_produto", return_value=[])
@@ -230,21 +231,24 @@ class ErrosEProtecoesTests(_Base):
     @patch("apps.instancias.tiny_client.TinyApiClient.obter_produto")
     @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_estoque",
            side_effect=RuntimeError("Tiny 500"))
-    def test_erro_do_tiny_numa_etapa_nao_impede_as_outras(self, mock_estoque, mock_get, mock_put):
-        # estoque vai falhar; custo deve ser corrigido mesmo assim
+    def test_erro_do_tiny_no_estoque_nao_inicia_backfill_de_dados(
+        self, mock_estoque, mock_get, mock_put
+    ):
+        # estoque vai falhar; o backfill de dados não faz parte do automático.
         v = self._cadastrada(
             "MIX-1", tiny_id="555", estoque=9, estoque_tiny_sincronizado=1,
             preco=Decimal("20.00"), preco_custo_tiny_sincronizado=Decimal("10.00"),
         )
         mock_get.return_value = _get_tiny(555, "MIX-1")
-        mock_put.return_value = _get_tiny(555, "MIX-1")
 
         self._rodar()  # não levanta
 
         mock_estoque.assert_called_once()  # tentou
         v.refresh_from_db()
         self.assertEqual(v.estoque_tiny_sincronizado, 1)          # não avançou (erro)
-        self.assertEqual(v.preco_custo_tiny_sincronizado, Decimal("20.00"))  # etapa 3 seguiu
+        self.assertEqual(v.preco_custo_tiny_sincronizado, Decimal("10.00"))
+        mock_get.assert_not_called()
+        mock_put.assert_not_called()
 
     @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_produto")
     @patch("apps.instancias.tiny_client.TinyApiClient.obter_produto")

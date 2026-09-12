@@ -10,6 +10,7 @@ from apps.sincronizacao.models import Execucao, StatusExecucao, TipoExecucao
 
 from ..models import Instancia
 from ..serializers import InstanciaDetalheSerializer
+from apps.sincronizacao.semantica_execucao import montar_semantica_execucao
 
 
 def _cadastro_tiny(instancia, fornecedor="xbz"):
@@ -49,6 +50,20 @@ class EstadoCadastroTinyNoDetalheTests(TestCase):
         self.assertTrue(ct["pode_pausar"])
         self.assertFalse(ct["pode_retomar"])
         self.assertAlmostEqual(ct["progresso"], 0.3, places=3)
+
+    def test_resumo_parcial_sem_total_nao_quebra_o_detalhe(self):
+        execucao = _execucao(
+            self.instancia,
+            status=StatusExecucao.RODANDO,
+            total_lidos=10,
+            total_cadastrados=3,
+        )
+        semantica = montar_semantica_execucao(
+            execucao,
+            auditoria_resumo={"erros": 0, "pendentes": 2, "imagens_pendentes": 1, "bloqueados": 0},
+        )
+        self.assertEqual(semantica["metricas"][0]["valor"], 10)
+        self.assertEqual(semantica["progresso"], 1.0)
 
     def test_rodando_com_heartbeat_expirado_aparece_interrompido(self):
         _execucao(

@@ -69,12 +69,18 @@ def montar_semantica_execucao(execucao, *, auditoria_resumo=None):
             tentativa_resumo = None
         resumo_para_motivo = resumo
         fonte = tentativa_resumo or {
-            "total_fila": resumo["total"],
-            "processados": resumo["total"],
-            "cadastrados": resumo["cadastrados_e_vinculados"],
+            # O serializer do detalhe também pode fornecer o resumo atual do
+            # espelho, que não possui as chaves históricas da auditoria.
+            # Nessa situação, os contadores persistidos da execução são o
+            # fallback seguro; a leitura da UI nunca deve gerar HTTP 500.
+            "total_fila": resumo.get("total", execucao.total_lidos or 0),
+            "processados": resumo.get("processados", execucao.total_lidos or 0),
+            "cadastrados": resumo.get(
+                "cadastrados_e_vinculados", execucao.total_cadastrados or 0
+            ),
             "vinculados": 0,
-            "bloqueados": resumo["bloqueados"],
-            "erros": resumo["erros"],
+            "bloqueados": resumo.get("bloqueados", 0),
+            "erros": resumo.get("erros", execucao.total_erros or 0),
             "falhas_secundarias": resumo.get("falhas_secundarias", 0),
         }
         metricas = [

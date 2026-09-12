@@ -27,7 +27,7 @@ def _status_execucao_subquery(fornecedor):
     )
 
 
-def _contagem_variacoes_subquery(status=None):
+def _contagem_variacoes_subquery(status=None, fornecedor=None, estoque_gt_zero=False, imagens_pendentes=False):
     """
     Contagem de Variacao da instância da linha, opcionalmente filtrada por
     status. Agregação feita dentro da própria subquery (`.values(...)
@@ -38,6 +38,16 @@ def _contagem_variacoes_subquery(status=None):
     qs = Variacao.objects.filter(produto__instancia=OuterRef("pk"))
     if status is not None:
         qs = qs.filter(status=status)
+    if fornecedor is not None:
+        qs = qs.filter(produto__fornecedor=fornecedor)
+    if estoque_gt_zero:
+        qs = qs.filter(estoque__gt=0)
+    if imagens_pendentes:
+        qs = qs.filter(
+            status=StatusVariacao.CADASTRADO,
+            tiny_id__isnull=False,
+            imagens_tiny_sincronizadas=[],
+        ).exclude(tiny_id="").exclude(imagens=[])
     qs = qs.order_by().values("produto__instancia").annotate(total=Count("id")).values("total")
     return Coalesce(Subquery(qs, output_field=IntegerField()), 0)
 
@@ -53,6 +63,19 @@ def queryset_listagem():
     )
     for valor, _rotulo in Fornecedor.choices:
         queryset = queryset.annotate(**{f"status_execucao_{valor}": _status_execucao_subquery(valor)})
+        queryset = queryset.annotate(
+            **{
+                f"erros_atuais_{valor}": _contagem_variacoes_subquery(
+                    StatusVariacao.ERRO, fornecedor=valor
+                ),
+                f"pendentes_atuais_{valor}": _contagem_variacoes_subquery(
+                    StatusVariacao.PENDENTE, fornecedor=valor, estoque_gt_zero=True
+                ),
+                f"imagens_pendentes_atuais_{valor}": _contagem_variacoes_subquery(
+                    fornecedor=valor, imagens_pendentes=True
+                ),
+            }
+        )
 
     queryset = queryset.prefetch_related(
         Prefetch(

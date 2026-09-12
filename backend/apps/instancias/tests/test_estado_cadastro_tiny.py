@@ -4,7 +4,7 @@ from datetime import timedelta
 from django.test import TestCase
 from django.utils import timezone
 
-from apps.catalogo.models import Produto, Variacao
+from apps.catalogo.models import Produto, StatusVariacao, Variacao
 from apps.sincronizacao.models import EventoLog, LogItem, NivelLog
 from apps.sincronizacao.models import Execucao, StatusExecucao, TipoExecucao
 
@@ -101,9 +101,81 @@ class EstadoCadastroTinyNoDetalheTests(TestCase):
             total_ignorados=2,
         )
         ct = _cadastro_tiny(self.instancia)
-        self.assertEqual(ct["estado"], "parcial")
+        # Sem pendência atual no espelho, uma execução parcial antiga não
+        # mantém o fornecedor permanentemente em atenção.
+        self.assertEqual(ct["estado"], "concluido")
         self.assertTrue(ct["pode_iniciar"])
-        self.assertEqual(ct["total_erros"], 1)
+        self.assertEqual(ct["total_erros"], 0)
+
+    def test_falha_de_imagem_historica_resolvida_nao_aparece_no_estado_atual(self):
+        execucao = _execucao(
+            self.instancia,
+            status=StatusExecucao.PARCIAL,
+            finalizada_em=timezone.now(),
+            total_lidos=1,
+            total_cadastrados=1,
+            total_ignorados=0,
+        )
+        produto = Produto.objects.create(
+            instancia=self.instancia,
+            fornecedor="xbz",
+            codigo_pai="P-IMG",
+            nome="Produto com imagem",
+        )
+        variacao = Variacao.objects.create(
+            produto=produto,
+            sku="IMG-1",
+            nome="Produto com imagem",
+            preco="10.00",
+            estoque=1,
+            status=StatusVariacao.CADASTRADO,
+            tiny_id="123",
+            imagens=["https://cdn.example/imagem.jpg"],
+            imagens_tiny_sincronizadas=["https://cdn.example/imagem.jpg"],
+        )
+        LogItem.objects.create(
+            execucao=execucao,
+            variacao=variacao,
+            nivel=NivelLog.ERRO,
+            evento=EventoLog.IMAGENS_ERRO,
+            mensagem="Falha antiga de imagem",
+            detalhe={"erro": "origem indisponível"},
+        )
+
+        ct = _cadastro_tiny(self.instancia)
+        self.assertEqual(ct["estado"], "concluido")
+        self.assertEqual(ct["falhas_secundarias"], 0)
+
+    def test_pendencia_atual_de_imagem_mantem_atencao(self):
+        execucao = _execucao(
+            self.instancia,
+            status=StatusExecucao.SUCESSO,
+            finalizada_em=timezone.now(),
+            total_lidos=1,
+            total_cadastrados=1,
+        )
+        produto = Produto.objects.create(
+            instancia=self.instancia,
+            fornecedor="xbz",
+            codigo_pai="P-IMG-PEND",
+            nome="Produto com imagem pendente",
+        )
+        variacao = Variacao.objects.create(
+            produto=produto,
+            sku="IMG-PEND-1",
+            nome="Produto com imagem pendente",
+            preco="10.00",
+            estoque=1,
+            status=StatusVariacao.CADASTRADO,
+            tiny_id="124",
+            imagens=["https://cdn.example/imagem.jpg"],
+            imagens_tiny_sincronizadas=[],
+        )
+
+        ct = _cadastro_tiny(self.instancia)
+        self.assertEqual(ct["estado"], "parcial")
+        self.assertEqual(ct["falhas_secundarias"], 1)
+        self.assertIn("imagem(ns)", ct["motivo_status"])
 
     def test_card_explica_colisao_legada_sem_chamar_de_erro(self):
         execucao = _execucao(

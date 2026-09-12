@@ -9,10 +9,10 @@ campo `LogItem.evento` (estruturado). Nenhuma interpretação de texto livre.
 
 from django.db.models import Case, CharField, Count, F, Q, Subquery, Value, When
 
-from apps.catalogo.models import StatusVariacao
-from apps.catalogo.tiny_sync import sku_tiny_para_exibicao
+from apps.catalogo.models import StatusVariacao, Variacao
+from apps.catalogo.tiny_sync import imagens_utilizaveis, sku_tiny_para_exibicao
 
-from .models import EVENTOS_DESFECHO, EventoLog, LogItem
+from .models import EVENTOS_DESFECHO, EventoLog, LogItem, TipoExecucao
 
 # filtro da UI -> conjunto de eventos de desfecho
 RESULTADO_FILTROS = {
@@ -208,6 +208,86 @@ def resumo_auditoria(execucao) -> dict:
         # tentativa posterior registrada como IMAGENS resolve o erro anterior.
         "falhas_secundarias": sum(1 for resultado in imagens.values() if resultado == "erro"),
     }
+
+
+def resumo_estado_atual(instancia, fornecedor=None) -> dict:
+    """Resume pendências atuais do espelho, sem usar contadores históricos.
+
+    Logs são usados somente para bloqueios: para cada variação vale o último
+    desfecho estruturado persistido, e um bloqueio só continua aplicável
+    enquanto a variação não estiver cadastrada/vinculada. Erros e imagens são
+    derivados dos campos atuais da ``Variacao``.
+    """
+    base = Variacao.objects.filter(produto__instancia=instancia)
+    if fornecedor:
+        base = base.filter(produto__fornecedor=fornecedor)
+
+    resultado = {}
+    for linha in (
+        base.values("produto__fornecedor")
+        .annotate(
+            erros=Count("id", filter=Q(status=StatusVariacao.ERRO)),
+            pendentes=Count(
+                "id", filter=Q(status=StatusVariacao.PENDENTE, estoque__gt=0)
+            ),
+        )
+    ):
+        resultado[linha["produto__fornecedor"]] = {
+            "erros": linha["erros"],
+            "pendentes": linha["pendentes"],
+            "imagens_pendentes": 0,
+            "bloqueados": 0,
+        }
+
+    candidatos = base.filter(
+        status=StatusVariacao.CADASTRADO,
+        tiny_id__isnull=False,
+    ).exclude(tiny_id="").exclude(imagens=[])
+    for variacao in candidatos.only(
+        "id", "produto_id", "imagens", "imagens_tiny_sincronizadas"
+    ).select_related("produto"):
+        desejadas = imagens_utilizaveis(variacao)
+        if desejadas and not set(desejadas).issubset(
+            set(variacao.imagens_tiny_sincronizadas or [])
+        ):
+            estado = resultado.setdefault(
+                variacao.produto.fornecedor,
+                {"erros": 0, "pendentes": 0, "imagens_pendentes": 0, "bloqueados": 0},
+            )
+            estado["imagens_pendentes"] += 1
+
+    logs = (
+        LogItem.objects.filter(
+            execucao__instancia=instancia,
+            execucao__tipo=TipoExecucao.CADASTRO_TINY,
+            variacao__isnull=False,
+            evento__in=EVENTOS_DESFECHO,
+        )
+        .order_by("variacao_id", "-criado_em", "-id")
+        .distinct("variacao_id")
+        .select_related("variacao__produto")
+    )
+    if fornecedor:
+        logs = logs.filter(execucao__fornecedor=fornecedor)
+    for log in logs:
+        variacao = log.variacao
+        if (
+            log.evento == EventoLog.BLOQUEADO
+            and variacao.status != StatusVariacao.CADASTRADO
+            and not (variacao.tiny_id or "").strip()
+        ):
+            estado = resultado.setdefault(
+                variacao.produto.fornecedor,
+                {"erros": 0, "pendentes": 0, "imagens_pendentes": 0, "bloqueados": 0},
+            )
+            estado["bloqueados"] += 1
+
+    if fornecedor:
+        return resultado.get(
+            fornecedor,
+            {"erros": 0, "pendentes": 0, "imagens_pendentes": 0, "bloqueados": 0},
+        )
+    return resultado
 
 
 def resumo_tentativa_cadastro(execucao) -> dict | None:

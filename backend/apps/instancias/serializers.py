@@ -118,6 +118,19 @@ def _cor_fornecedor(status_execucao, credencial_ativa):
     }.get(status_execucao, "nao_configurado")
 
 
+def _cor_fornecedor_atual(status_execucao, credencial_ativa, estado_atual):
+    """Cor baseada no estado persistido atual, não em uma rodada antiga."""
+    if not credencial_ativa:
+        return "nao_configurado"
+    if status_execucao in (StatusExecucao.RODANDO, StatusExecucao.PAUSANDO):
+        return "atencao"
+    if any(estado_atual.get(chave, 0) for chave in ("erros",)):
+        return "erro"
+    if any(estado_atual.get(chave, 0) for chave in ("pendentes", "imagens_pendentes", "bloqueados")):
+        return "atencao"
+    return "ok"
+
+
 def _resumo_execucao_fornecedor(execucao):
     if execucao is None:
         return None
@@ -158,7 +171,16 @@ class InstanciaListagemSerializer(InstanciaSerializer):
             credencial.fornecedor for credencial in obj.credenciais_fornecedor.all() if credencial.ativo
         }
         return {
-            valor: _cor_fornecedor(getattr(obj, f"status_execucao_{valor}"), valor in credenciais_ativas)
+            valor: _cor_fornecedor_atual(
+                getattr(obj, f"status_execucao_{valor}"),
+                valor in credenciais_ativas,
+                {
+                    "erros": getattr(obj, f"erros_atuais_{valor}", 0),
+                    "pendentes": getattr(obj, f"pendentes_atuais_{valor}", 0),
+                    "imagens_pendentes": getattr(obj, f"imagens_pendentes_atuais_{valor}", 0),
+                    "bloqueados": 0,
+                },
+            )
             for valor, _rotulo in Fornecedor.choices
         }
 
@@ -241,7 +263,7 @@ class FornecedorDetalheSerializer(serializers.Serializer):
     cadastro_tiny = CadastroTinyEstadoSerializer()
 
 
-def _resumo_cadastro_tiny(instancia, fornecedor):
+def _resumo_cadastro_tiny(instancia, fornecedor, *, estado_atual=None):
     """
     Estado da sincronização em massa com o Tiny para (instância, fornecedor),
     com checagem de heartbeat em tempo de leitura. Considera a Execucao
@@ -254,7 +276,9 @@ def _resumo_cadastro_tiny(instancia, fornecedor):
         .order_by("-iniciada_em")
         .first()
     )
-    estado = estado_cadastro_tiny(execucao)
+    from apps.sincronizacao import auditoria
+
+    estado_atual = estado_atual or auditoria.resumo_estado_atual(instancia, fornecedor)
     aberta = execucao is not None and execucao.status in (
         StatusExecucao.RODANDO,
         StatusExecucao.PAUSANDO,
@@ -266,22 +290,47 @@ def _resumo_cadastro_tiny(instancia, fornecedor):
         lidos = cadastrados = erros = ignorados = 0
         atualizada_em = None
         mensagem_erro = ""
-        auditoria_resumo = {"bloqueados": 0, "falhas_secundarias": 0}
     else:
         lidos = execucao.total_lidos
         cadastrados = execucao.total_cadastrados
-        erros = execucao.total_erros
-        ignorados = execucao.total_ignorados
         atualizada_em = execucao.finalizada_em or execucao.heartbeat_em or execucao.iniciada_em
         mensagem_erro = execucao.mensagem_erro
-        from apps.sincronizacao import auditoria
-        auditoria_resumo = auditoria.resumo_auditoria(execucao)
+    erros = estado_atual["erros"]
+    ignorados = estado_atual["bloqueados"] + estado_atual["pendentes"]
+    falhas_secundarias = estado_atual["imagens_pendentes"]
+    auditoria_resumo = {
+        "bloqueados": estado_atual["bloqueados"],
+        "falhas_secundarias": falhas_secundarias,
+        "erros": erros,
+    }
 
     from apps.sincronizacao.semantica_execucao import montar_semantica_execucao
-    motivo_status = montar_semantica_execucao(
-        execucao,
-        auditoria_resumo=auditoria_resumo,
-    )["motivo_status"] if execucao else ""
+    if aberta:
+        estado = estado_cadastro_tiny(execucao)
+        motivo_status = montar_semantica_execucao(
+            execucao, auditoria_resumo=auditoria_resumo
+        )["motivo_status"]
+    elif execucao is None:
+        estado = ESTADO_PRONTO
+        motivo_status = ""
+    elif any(estado_atual.values()):
+        estado = "parcial"
+        if erros:
+            motivo_status = f"Estado atual: {erros} erro(s) ainda pendente(s)."
+        elif falhas_secundarias:
+            motivo_status = (
+                f"Estado atual: {falhas_secundarias} imagem(ns) ainda pendente(s) de sincronização."
+            )
+        elif estado_atual["bloqueados"]:
+            motivo_status = (
+                f"Estado atual sem erro técnico: {estado_atual['bloqueados']} item(ns) "
+                "bloqueado(s) por segurança; revisão manual necessária."
+            )
+        else:
+            motivo_status = f"Estado atual: {estado_atual['pendentes']} item(ns) pendente(s)."
+    else:
+        estado = "concluido"
+        motivo_status = "Estado atual do espelho sem pendências."
 
     processados = cadastrados + erros
     universo = max(lidos, processados)
@@ -298,8 +347,8 @@ def _resumo_cadastro_tiny(instancia, fornecedor):
         "atualizada_em": atualizada_em,
         "mensagem_erro": mensagem_erro,
         "motivo_status": motivo_status,
-        "bloqueados": auditoria_resumo.get("bloqueados", 0),
-        "falhas_secundarias": auditoria_resumo.get("falhas_secundarias", 0),
+        "bloqueados": estado_atual["bloqueados"],
+        "falhas_secundarias": falhas_secundarias,
         "pode_iniciar": estado in (ESTADO_PRONTO, "concluido", "parcial"),
         "pode_pausar": estado == "sincronizando",
         "pode_retomar": estado in ("pausado", "interrompido"),
@@ -368,6 +417,9 @@ class InstanciaDetalheSerializer(InstanciaSerializer):
     @extend_schema_field(FornecedorDetalheSerializer(many=True))
     def get_fornecedores(self, obj):
         credenciais = {c.fornecedor: c for c in obj.credenciais_fornecedor.all()}
+        from apps.sincronizacao import auditoria
+
+        estados_atuais = auditoria.resumo_estado_atual(obj)
 
         # uma passada: (fornecedor, status) -> quantidade de variações no espelho
         contagem_por_status = {}
@@ -390,9 +442,13 @@ class InstanciaDetalheSerializer(InstanciaSerializer):
             resultado.append(
                 {
                     "fornecedor": valor,
-                    "cor": _cor_fornecedor(
+                    "cor": _cor_fornecedor_atual(
                         ultima_execucao.status if ultima_execucao else None,
                         bool(credencial and credencial.ativo),
+                        estados_atuais.get(
+                            valor,
+                            {"erros": 0, "pendentes": 0, "imagens_pendentes": 0, "bloqueados": 0},
+                        ),
                     ),
                     "ultima_execucao_em": ultima_execucao.iniciada_em if ultima_execucao else None,
                     "ultima_execucao_status": ultima_execucao.status if ultima_execucao else None,
@@ -402,7 +458,12 @@ class InstanciaDetalheSerializer(InstanciaSerializer):
                     "produtos_descontinuados": por_status.get(StatusVariacao.DESCONTINUADO, 0),
                     "credencial_configurada": bool(credencial and credencial.credenciais),
                     "credencial_ativa": bool(credencial and credencial.ativo),
-                    "cadastro_tiny": _resumo_cadastro_tiny(obj, valor),
+                    "cadastro_tiny": _resumo_cadastro_tiny(
+                        obj, valor, estado_atual=estados_atuais.get(
+                            valor,
+                            {"erros": 0, "pendentes": 0, "imagens_pendentes": 0, "bloqueados": 0},
+                        )
+                    ),
                 }
             )
         return resultado

@@ -4,6 +4,8 @@ from datetime import timedelta
 from django.test import TestCase
 from django.utils import timezone
 
+from apps.catalogo.models import Produto, Variacao
+from apps.sincronizacao.models import EventoLog, LogItem, NivelLog
 from apps.sincronizacao.models import Execucao, StatusExecucao, TipoExecucao
 
 from ..models import Instancia
@@ -102,3 +104,40 @@ class EstadoCadastroTinyNoDetalheTests(TestCase):
         self.assertEqual(ct["estado"], "parcial")
         self.assertTrue(ct["pode_iniciar"])
         self.assertEqual(ct["total_erros"], 1)
+
+    def test_card_explica_colisao_legada_sem_chamar_de_erro(self):
+        execucao = _execucao(
+            self.instancia,
+            fornecedor="asia",
+            status=StatusExecucao.PARCIAL,
+            finalizada_em=timezone.now(),
+            total_lidos=1,
+            total_ignorados=1,
+        )
+        produto = Produto.objects.create(
+            instancia=self.instancia,
+            fornecedor="asia",
+            codigo_pai="ME550P",
+            nome="Mala Esportiva",
+        )
+        variacao = Variacao.objects.create(
+            produto=produto,
+            sku="ME550",
+            nome="Mala Esportiva",
+            preco="86.50",
+            estoque=94,
+        )
+        LogItem.objects.create(
+            execucao=execucao,
+            variacao=variacao,
+            nivel=NivelLog.AVISO,
+            evento=EventoLog.BLOQUEADO,
+            mensagem="SKU ME550 bloqueado",
+            detalhe={"motivo": "SKU já existe no Tiny (id=857279363) e não possui vínculo confirmado"},
+        )
+
+        ct = _cadastro_tiny(self.instancia, "asia")
+        self.assertEqual(ct["bloqueados"], 1)
+        self.assertEqual(ct["falhas_secundarias"], 0)
+        self.assertIn("sem erro técnico", ct["motivo_status"])
+        self.assertNotIn("com erro(s)", ct["motivo_status"])

@@ -38,7 +38,7 @@ from django.utils import timezone
 
 from apps.instancias.constants import Fornecedor
 from apps.instancias.models import CredencialFornecedor
-from apps.instancias.tiny_client import TinyApiClient
+from apps.instancias.tiny_client import TinyApiClient, TinyApiValidationError, url_http_utilizavel
 from apps.sincronizacao.models import (
     STATUS_EXECUCAO_ABERTOS,
     STATUS_EXECUCAO_ATIVOS,
@@ -48,6 +48,7 @@ from apps.sincronizacao.models import (
 )
 
 from .models import StatusVariacao, Variacao
+from .imagens import ImagemProxyError, urls_proxy_imagens
 
 # Teto de anexos (imagens) por produto — escolha nossa, não do cliente
 # (documentado no README). Mora aqui; o command re-exporta por compat.
@@ -524,11 +525,11 @@ def marcar_erro(variacao, mensagem):
 
 
 def imagens_utilizaveis(variacao) -> list[str]:
-    """URLs REAIS do espelho: strings não vazias, sem duplicata, na ordem, teto 5."""
+    """URLs HTTP(S) estruturalmente válidas, sem duplicata, na ordem, teto 5."""
     vistas: set[str] = set()
     urls: list[str] = []
     for item in variacao.imagens or []:
-        if isinstance(item, str) and item.strip() and item.strip() not in vistas:
+        if url_http_utilizavel(item) and item.strip() not in vistas:
             urls.append(item.strip())
             vistas.add(item.strip())
     return urls[:MAX_ANEXOS_POR_PRODUTO]
@@ -570,7 +571,17 @@ def sincronizar_imagens_variacao(cliente, variacao, *, so_reconciliar=False, dry
         return {"resultado": IMG_PENDENTE, "desejadas": desejadas, "atuais": len(atuais)}
 
     if not dry_run:
-        cliente.sincronizar_anexos_produto(int(variacao.tiny_id), desejadas)
+        try:
+            cliente.sincronizar_anexos_produto(int(variacao.tiny_id), desejadas)
+        except TinyApiValidationError:
+            # O Tiny aceita URL, não upload multipart. Só nesta rejeição
+            # tentamos a rota pública assinada, que valida e otimiza a fonte
+            # sob demanda sem substituir a referência original no espelho.
+            try:
+                urls_otimizadas = urls_proxy_imagens(variacao, desejadas)
+            except ImagemProxyError:
+                raise
+            cliente.sincronizar_anexos_produto(int(variacao.tiny_id), urls_otimizadas)
         _marcar_imagens_sincronizadas(variacao, desejadas, dry_run=False)
     return {"resultado": IMG_ENVIADA, "desejadas": desejadas, "atuais": len(atuais)}
 

@@ -63,6 +63,10 @@ TINY_API_BASE_URL = env("TINY_API_BASE_URL", "https://api.tiny.com.br/public-api
 # (proxy, CDN, host alternativo) — fixar por env elimina essa variável.
 PUBLIC_BASE_URL = env("PUBLIC_BASE_URL", "http://localhost:8000")
 
+# URL pública usada somente no fallback de imagem otimizada. O Tiny precisa
+# conseguir alcançá-la; localhost é deliberadamente rejeitado no runtime.
+IMAGE_PROXY_BASE_URL = env("IMAGE_PROXY_BASE_URL", PUBLIC_BASE_URL)
+
 # Para onde o callback OAuth redireciona o navegador depois de processar o
 # retorno do Tiny (passo 10) — sucesso ou falha. O frontend roda numa origem
 # separada (Next.js), por isso isso não pode ser um caminho relativo.

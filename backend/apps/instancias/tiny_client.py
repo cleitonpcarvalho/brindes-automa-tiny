@@ -15,6 +15,8 @@ Regras respeitadas aqui:
 """
 
 import random
+import ipaddress
+import re
 import time
 from urllib.parse import quote, urlsplit, urlunsplit
 
@@ -421,6 +423,43 @@ def normalizar_url_http(url: str) -> str:
     query = quote(partes.query, safe="/%:@!$'()*+,;=?&-._~")
     fragment = quote(partes.fragment, safe="/%:@!$&'()*+,;=?-._~")
     return urlunsplit((partes.scheme, partes.netloc, path, query, fragment))
+
+
+def url_http_utilizavel(url) -> bool:
+    """Valida somente a estrutura HTTP(S), sem tentar adivinhar URLs quebradas.
+
+    A validação deliberadamente não faz HEAD/GET: quem precisa validar o
+    conteúdo real da imagem faz isso no caminho de proxy, quando o Tiny já
+    rejeitou o anexo direto.
+    """
+    if not isinstance(url, str) or not url.strip():
+        return False
+    valor = url.strip()
+    try:
+        partes = urlsplit(valor)
+        if partes.scheme.lower() not in {"http", "https"}:
+            return False
+        if not partes.netloc or partes.username or partes.password:
+            return False
+        _ = partes.port  # força a validação de uma porta eventualmente informada
+        host = partes.hostname
+        if not host or any(ord(c) < 32 for c in valor):
+            return False
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            if (
+                host.startswith(".")
+                or host.endswith(".")
+                or ".." in host
+                or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?", host)
+            ):
+                return False
+        if "//" in partes.path.replace("///", ""):
+            return False
+        return True
+    except ValueError:
+        return False
 
 
 def _corpo_anexos(urls) -> list[dict]:

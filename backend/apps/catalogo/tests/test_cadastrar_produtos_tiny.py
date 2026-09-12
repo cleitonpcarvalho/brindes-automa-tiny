@@ -294,10 +294,21 @@ class DimensoesAnexosEGarantiaNoPayloadTests(TestCase):
         instancia = _instancia_pronta()
         v = _variacao_pendente(
             instancia, "SKU-U",
-            imagens=["a", "", None, "  ", "a", "b"] + [f"u{i}" for i in range(10)],
+            imagens=[
+                "https://img.example/a.jpg",
+                "",
+                None,
+                "  ",
+                "https://img.example/a.jpg",
+                "https://img.example/b.jpg",
+            ] + [f"https://img.example/u{i}.jpg" for i in range(10)],
         )
         urls = imagens_utilizaveis(v)
-        self.assertEqual(urls[:3], ["a", "b", "u0"])          # vazias e duplicata "a" removidas
+        self.assertEqual(urls[:3], [
+            "https://img.example/a.jpg",
+            "https://img.example/b.jpg",
+            "https://img.example/u0.jpg",
+        ])  # vazias, texto e duplicata removidos
         self.assertEqual(len(urls), MAX_ANEXOS_POR_PRODUTO)   # limitado a 5
 
     @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")

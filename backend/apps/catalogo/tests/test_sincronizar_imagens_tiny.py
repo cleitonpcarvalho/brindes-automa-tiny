@@ -9,11 +9,12 @@ porque, depois do `externo=false`, o Tiny devolve a URL interna dele (S3).
 """
 
 from decimal import Decimal
-from io import StringIO
+from io import BytesIO, StringIO
 from unittest.mock import Mock, patch
 
 from django.core.management import call_command
-from django.test import TestCase, override_settings
+from django.test import RequestFactory, TestCase, override_settings
+from PIL import Image
 
 from apps.instancias.models import Instancia
 
@@ -96,6 +97,33 @@ class EnvioTests(TestCase):
         call_command("sincronizar_imagens_tiny", instancia.slug)
 
         mock_put.assert_called_once_with(100, ["https://ok/1.jpg"])
+
+    @override_settings(IMAGE_PROXY_BASE_URL="https://imagens.example.com")
+    @patch("apps.instancias.tiny_client.TinyApiClient.sincronizar_anexos_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.anexos_do_produto", return_value=[])
+    def test_rejeicao_de_validacao_tenta_url_proxy_sem_trocar_referencia_original(
+        self, mock_get, mock_put
+    ):
+        from apps.instancias.tiny_client import TinyApiValidationError
+
+        instancia = _instancia()
+        v = _cadastrada(instancia, "GRANDE", imagens=[ORIG], tiny_id="924")
+        mock_put.side_effect = [
+            TinyApiValidationError("Ocorreram erros de validação"),
+            {},
+        ]
+
+        call_command("sincronizar_imagens_tiny", instancia.slug)
+
+        self.assertEqual(mock_put.call_count, 2)
+        self.assertEqual(mock_put.call_args_list[0].args[1], [ORIG])
+        self.assertTrue(
+            mock_put.call_args_list[1].args[1][0].startswith(
+                "https://imagens.example.com/public/imagens/"
+            )
+        )
+        v.refresh_from_db()
+        self.assertEqual(v.imagens_tiny_sincronizadas, [ORIG])
 
 
 class IdempotenciaTests(TestCase):
@@ -327,6 +355,65 @@ class ClienteAnexosTests(TestCase):
             _corpo_anexos(["https://host/produto m².webp?x=1&y=2"]),
             [{"url": "https://host/produto%20m%C2%B2.webp?x=1&y=2", "externo": False}],
         )
+
+    def test_url_invalida_nao_entra_em_imagens_utilizaveis(self):
+        from apps.catalogo.tiny_sync import imagens_utilizaveis
+
+        instancia = _instancia()
+        v = _cadastrada(
+            instancia,
+            "URLS",
+            imagens=[
+                "texto comum",
+                "https://.xbzbrindes.com.br/foto.jpg",
+                "https:/xbzbrindes.com.br/foto.jpg",
+                "https://ok.example/foto%20valida.jpg",
+            ],
+        )
+        self.assertEqual(imagens_utilizaveis(v), ["https://ok.example/foto%20valida.jpg"])
+
+    def test_imagem_grande_e_redimensionada(self):
+        from apps.catalogo.imagens import _validar_e_transformar
+
+        buffer = BytesIO()
+        Image.new("RGB", (4000, 4000), "white").save(buffer, format="PNG")
+        corpo, content_type = _validar_e_transformar(buffer.getvalue(), "image/png")
+
+        self.assertEqual(content_type, "image/jpeg")
+        with Image.open(BytesIO(corpo)) as imagem:
+            self.assertLessEqual(max(imagem.size), 2400)
+
+    def test_imagem_pequena_valida_nao_e_reprocessada(self):
+        from apps.catalogo.imagens import _validar_e_transformar
+
+        buffer = BytesIO()
+        Image.new("RGB", (100, 100), "white").save(buffer, format="JPEG")
+        original = buffer.getvalue()
+        corpo, content_type = _validar_e_transformar(original, "image/jpeg")
+
+        self.assertEqual(corpo, original)
+        self.assertEqual(content_type, "image/jpeg")
+
+    def test_conteudo_nao_imagem_e_rejeitado(self):
+        from apps.catalogo.imagens import ImagemProxyError, _validar_e_transformar
+
+        with self.assertRaises(ImagemProxyError):
+            _validar_e_transformar(b"<html>nao e imagem</html>", "text/html")
+
+    @override_settings(IMAGE_PROXY_BASE_URL="https://imagens.example.com")
+    @patch("apps.catalogo.imagens.requests.get")
+    def test_proxy_assinado_valida_expiracao_e_fecha_resposta(self, mock_get):
+        from apps.catalogo.imagens import servir_imagem_proxy, url_proxy_imagem
+
+        instancia = _instancia()
+        v = _cadastrada(instancia, "PROXY", imagens=[ORIG], tiny_id="924")
+        url = url_proxy_imagem(v, 0, ORIG, agora=0)
+        caminho, query = url.split("?", 1)
+        params = dict(item.split("=", 1) for item in query.split("&"))
+        request = RequestFactory().get(caminho, params)
+        resposta = servir_imagem_proxy(request, v.pk, 0)
+        self.assertEqual(resposta.status_code, 410)
+        mock_get.assert_not_called()
 
     @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
     @patch("apps.instancias.tiny_client.requests.request")

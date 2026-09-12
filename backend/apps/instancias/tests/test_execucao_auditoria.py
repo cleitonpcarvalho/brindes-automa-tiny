@@ -212,6 +212,34 @@ class ExecucaoDetalheResumoTests(AuditoriaBase):
         self.assertEqual(metricas["falhas_secundarias"], 1)
         self.assertIn("falha(s) secundária(s)", d["resumo"]["motivo_status"])
 
+    def test_colisao_com_sku_legado_nao_e_apresentada_como_erro_tecnico(self):
+        LogItem.objects.filter(execucao=self.execucao).delete()
+        self.execucao.status = StatusExecucao.PARCIAL
+        self.execucao.finalizada_em = timezone.now()
+        self.execucao.total_lidos = 1
+        self.execucao.total_cadastrados = 0
+        self.execucao.total_erros = 0
+        self.execucao.total_ignorados = 1
+        self.execucao.save()
+
+        variacao = _variacao(self.instancia, "ME550", nome="Mala Esportiva")
+        _log(
+            self.execucao,
+            EventoLog.BLOQUEADO,
+            "SKU ME550 bloqueado",
+            variacao=variacao,
+            nivel=NivelLog.AVISO,
+            motivo="SKU já existe no Tiny (id=857279363) e não possui vínculo confirmado",
+        )
+
+        d = self.client.get(self._url()).data
+        self.assertEqual(d["auditoria"]["bloqueados"], 1)
+        self.assertEqual(d["auditoria"]["erros"], 0)
+        self.assertEqual(d["auditoria"]["bloqueios_sku_existente_tiny"], 1)
+        self.assertIn("sem erro técnico", d["resumo"]["motivo_status"])
+        self.assertIn("SKU já existente no Tiny", d["resumo"]["motivo_status"])
+        self.assertNotIn("com erro(s)", d["resumo"]["motivo_status"])
+
     def test_exige_autenticacao(self):
         self.assertEqual(APIClient().get(self._url()).status_code, status.HTTP_401_UNAUTHORIZED)
 

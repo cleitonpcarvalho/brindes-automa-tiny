@@ -16,6 +16,7 @@ x-backend-env: &backend-env
   # depende do Host da requisição) e destino do redirect pós-callback
   # (FRONTEND_BASE_URL).
   PUBLIC_BASE_URL: "https://sync-api.automasoluct.com.br"
+  IMAGE_PROXY_BASE_URL: "https://sync-api.automasoluct.com.br"
   FRONTEND_BASE_URL: "https://sync.automasoluct.com.br"
   FERNET_KEY: ${FERNET_KEY}
   REDIS_URL: "redis://redis:6379"

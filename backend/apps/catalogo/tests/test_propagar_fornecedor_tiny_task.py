@@ -29,7 +29,7 @@ from apps.sincronizacao.models import (
 )
 
 from ..models import Produto, StatusVariacao, Variacao
-from ..tasks import propagar_fornecedor_tiny_task
+from ..tasks import AUTOMATIC_CADASTRO_LOTE, propagar_fornecedor_tiny_task
 
 TINY_FORN_ID = 752133514
 
@@ -80,6 +80,21 @@ class _Base(TestCase):
 
 
 class NovosProdutosTests(_Base):
+    @patch("apps.catalogo.tasks._propagar_estoque")
+    @patch("apps.catalogo.tasks.cadastrar_produtos_tiny_task")
+    @patch("apps.catalogo.tasks.tiny_sync.fila_cadastro_massa")
+    def test_cadastro_automatico_limita_a_fila_por_lote(
+        self, mock_fila, mock_cadastro, _mock_estoque
+    ):
+        variacao = self._variacao("LOTE-1")
+        mock_fila.return_value = [variacao]
+
+        self._rodar()
+
+        self.assertEqual(mock_fila.call_args.kwargs["limite"], AUTOMATIC_CADASTRO_LOTE)
+        self.assertTrue(mock_fila.call_args.kwargs["incluir_imagens_pendentes"])
+        mock_cadastro.assert_called_once()
+
     @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_produto")
     @patch("apps.instancias.tiny_client.TinyApiClient.obter_produto")
     @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_estoque")

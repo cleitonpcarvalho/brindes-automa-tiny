@@ -41,6 +41,9 @@ from .tiny_sync import (
 
 logger = logging.getLogger(__name__)
 TINY_LOCK_RETRY_COUNTDOWN = 30
+# Limite por rodada automática: mantém a fila e o consumo de memória
+# controlados; os itens restantes continuam elegíveis para o próximo ciclo.
+AUTOMATIC_CADASTRO_LOTE = 25
 
 
 def _reagendar_task_tiny(task, args):
@@ -838,7 +841,12 @@ def propagar_fornecedor_tiny_task(instancia_id, fornecedor):
 
 
 def _propagar_novos_e_imagens(instancia, fornecedor):
-    fila = tiny_sync.fila_cadastro_massa(instancia, fornecedor, incluir_imagens_pendentes=True)
+    fila = tiny_sync.fila_cadastro_massa(
+        instancia,
+        fornecedor,
+        limite=AUTOMATIC_CADASTRO_LOTE,
+        incluir_imagens_pendentes=True,
+    )
     if not fila:
         return
     token = uuid.uuid4().hex

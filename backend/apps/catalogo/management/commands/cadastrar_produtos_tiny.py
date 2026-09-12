@@ -134,7 +134,10 @@ class Command(BaseCommand):
             if faltando:
                 w(self.style.WARNING(f"SKUs de --skus não encontrados no espelho: {faltando}"))
 
-        colisoes = colisoes_cross_fornecedor(instancia)
+        colisoes = colisoes_cross_fornecedor(
+            instancia,
+            variacoes=variacoes if skus else None,
+        )
         cliente = TinyApiClient(instancia, somente_leitura=dry_run)
 
         resultado = ResultadoSincronizacao(fila=len(variacoes))

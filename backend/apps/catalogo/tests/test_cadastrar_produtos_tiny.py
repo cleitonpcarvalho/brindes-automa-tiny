@@ -581,6 +581,32 @@ class SelecaoControladaTests(TestCase):
         skus_criados = sorted(c.args[0]["sku"] for c in mock_criar.call_args_list)
         self.assertEqual(skus_criados, ["SP-A", "SP-C"])
 
+    @patch("apps.catalogo.management.commands.cadastrar_produtos_tiny.colisoes_cross_fornecedor")
+    @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
+    def test_skus_explicitos_recortam_tambem_a_analise_de_colisoes(
+        self, mock_buscar, mock_criar, mock_colisoes
+    ):
+        instancia = _instancia_pronta()
+        alvo = _variacao(_produto(instancia, "xbz", "alvo"), "ALVO")
+        _variacao(_produto(instancia, "xbz", "fora"), "FORA")
+        mock_buscar.return_value = None
+        mock_criar.return_value = {"id": 1}
+        mock_colisoes.return_value = {}
+
+        call_command(
+            "cadastrar_produtos_tiny",
+            instancia.slug,
+            "--fornecedor",
+            "xbz",
+            "--skus",
+            "ALVO",
+            "--dry-run",
+        )
+
+        mock_colisoes.assert_called_once_with(instancia, variacoes=[alvo])
+        mock_criar.assert_not_called()
+
     @patch("apps.instancias.tiny_client.TinyApiClient.criar_produto")
     @patch("apps.instancias.tiny_client.TinyApiClient.buscar_produto_por_sku")
     def test_selecao_fornecedor_mais_skus(self, mock_buscar, mock_criar):

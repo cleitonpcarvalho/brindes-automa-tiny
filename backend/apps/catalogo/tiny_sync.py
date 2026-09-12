@@ -243,7 +243,7 @@ class Decisao:
 # ---------------------------------------------------------------------------
 
 
-def colisoes_cross_fornecedor(instancia) -> dict[str, list[str]]:
+def colisoes_cross_fornecedor(instancia, *, variacoes=None) -> dict[str, list[str]]:
     """
     `{identidade_tiny: [fornecedores]}` para identidades que aparecem em mais
     de um fornecedor
@@ -251,7 +251,24 @@ def colisoes_cross_fornecedor(instancia) -> dict[str, list[str]]:
     para saber a qual produto o SKU do Tiny corresponderia).
     """
     mapa: dict[str, list[str]] = {}
-    for variacao in Variacao.objects.filter(produto__instancia=instancia).select_related("produto"):
+    if variacoes is None:
+        candidatos = Variacao.objects.filter(produto__instancia=instancia)
+    else:
+        identidades = set()
+        for variacao in variacoes:
+            try:
+                identidades.add(identidade_tiny(variacao))
+            except IdentidadeTinyError:
+                continue
+        if not identidades:
+            return {}
+        candidatos = Variacao.objects.filter(
+            produto__instancia=instancia,
+        ).filter(
+            Q(sku__in=identidades) | Q(atributos__codigo_composto__in=identidades)
+        )
+
+    for variacao in candidatos.select_related("produto"):
         try:
             codigo = identidade_tiny(variacao)
         except IdentidadeTinyError:

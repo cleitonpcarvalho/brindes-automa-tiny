@@ -20,6 +20,7 @@ from ..tiny_sync import (
     PARADA_LEASE_PERDIDA,
     PARADA_PAUSA,
     ControladorSincronizacao,
+    colisoes_cross_fornecedor,
     avaliar_variacao,
     estimar_cadastro,
     executar_sincronizacao_tiny,
@@ -426,6 +427,17 @@ class OrquestradorTests(TestCase):
 
         self.assertEqual(mock.criados, [])
         self.assertEqual(r.bloqueadas, 1)
+
+    def test_colisoes_cross_com_recorte_de_variacoes_nao_varre_catalogo(self):
+        inst = _instancia()
+        alvo = _variacao(inst, "COLIDE", fornecedor="xbz")
+        _variacao(inst, "COLIDE", fornecedor="asia")
+        _variacao(inst, "FORA-DO-RECORTE", fornecedor="somarcas")
+
+        with self.assertNumQueries(1):
+            colisoes = colisoes_cross_fornecedor(inst, variacoes=[alvo])
+
+        self.assertEqual(colisoes, {"COLIDE": ["asia", "xbz"]})
 
     def test_retry_de_erro_e_reprocessado(self):
         inst = _instancia()

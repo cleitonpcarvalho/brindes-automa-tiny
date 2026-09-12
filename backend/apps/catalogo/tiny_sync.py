@@ -32,6 +32,7 @@ Proteções (idênticas às validadas no piloto — ver README):
 
 from dataclasses import dataclass
 from decimal import Decimal
+import re
 
 from django.db.models import Count, Q
 from django.utils import timezone
@@ -535,6 +536,32 @@ def imagens_utilizaveis(variacao) -> list[str]:
     return urls[:MAX_ANEXOS_POR_PRODUTO]
 
 
+def mensagem_erro_imagem_segura(exc: Exception) -> str:
+    """Resume erros de imagem sem registrar tokens ou credenciais."""
+    def seguro(valor, limite):
+        texto = str(valor or "")
+        texto = re.sub(
+            r"(?i)(bearer\s+|token|senha|secret|password|access[_ -]?key|authorization)"
+            r"\s*[:=]\s*[^,;\s]+",
+            r"\1<redigido>",
+            texto,
+        )
+        return texto[:limite]
+
+    if not isinstance(exc, TinyApiValidationError):
+        return seguro(exc, 1000)
+
+    partes = [seguro(exc.mensagem, 500)]
+    for detalhe in (exc.detalhes or [])[:20]:
+        if not isinstance(detalhe, dict):
+            continue
+        campo = seguro(detalhe.get("campo"), 160)
+        mensagem = seguro(detalhe.get("mensagem"), 500)
+        if campo or mensagem:
+            partes.append(f"campo={campo or '<desconhecido>'}: {mensagem}")
+    return " | ".join(partes)[:2000]
+
+
 # resultados possíveis de `sincronizar_imagens_variacao`
 IMG_SEM_IMAGEM = "sem_imagem"
 IMG_JA_OK = "ja_ok"          # marcador local já cobre — nada feito, sem GET
@@ -998,8 +1025,9 @@ def _sincronizar_imagens_do_sku(cliente, variacao, resultado, eventos, *, dry_ru
         r = sincronizar_imagens_variacao(cliente, variacao)
     except Exception as exc:
         resultado.imagens_erros += 1
-        registrar_erro_imagem(variacao, str(exc))
-        eventos.imagens(variacao, {"resultado": "erro", "erro": str(exc)})
+        erro = mensagem_erro_imagem_segura(exc)
+        registrar_erro_imagem(variacao, erro)
+        eventos.imagens(variacao, {"resultado": "erro", "erro": erro})
         return
     resultado._contabilizar_imagem(r)
     eventos.imagens(variacao, r)

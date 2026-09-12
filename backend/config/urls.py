@@ -15,6 +15,11 @@ urlpatterns = [
     # (openapi-typescript), não editado à mão (ver frontend/package.json).
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path(
+        "public/imagens/<int:variacao_id>/<int:indice>/<str:nome_arquivo>",
+        servir_imagem_proxy,
+        name="imagem-proxy-com-arquivo",
+    ),
+    path(
         "public/imagens/<int:variacao_id>/<int:indice>/",
         servir_imagem_proxy,
         name="imagem-proxy",

@@ -11,6 +11,7 @@ porque, depois do `externo=false`, o Tiny devolve a URL interna dele (S3).
 from decimal import Decimal
 from io import BytesIO, StringIO
 from unittest.mock import Mock, patch
+from urllib.parse import parse_qs, urlsplit
 
 from django.core.management import call_command
 from django.test import RequestFactory, TestCase, override_settings
@@ -122,6 +123,7 @@ class EnvioTests(TestCase):
                 "https://imagens.example.com/public/imagens/"
             )
         )
+        self.assertTrue(mock_put.call_args_list[1].args[1][0].split("?", 1)[0].endswith("/imagem.jpg"))
         v.refresh_from_db()
         self.assertEqual(v.imagens_tiny_sincronizadas, [ORIG])
 
@@ -414,6 +416,78 @@ class ClienteAnexosTests(TestCase):
         resposta = servir_imagem_proxy(request, v.pk, 0)
         self.assertEqual(resposta.status_code, 410)
         mock_get.assert_not_called()
+
+    @override_settings(IMAGE_PROXY_BASE_URL="https://imagens.example.com")
+    @patch("apps.catalogo.imagens.requests.get")
+    def test_proxy_com_nome_de_arquivo_retorna_imagem(self, mock_get):
+        from apps.catalogo.imagens import servir_imagem_proxy, url_proxy_imagem
+
+        instancia = _instancia()
+        v = _cadastrada(instancia, "PROXY-OK", imagens=[ORIG], tiny_id="924")
+        buffer = BytesIO()
+        Image.new("RGB", (20, 20), "white").save(buffer, format="JPEG")
+        origem = Mock(
+            headers={"Content-Type": "image/jpeg"},
+            iter_content=Mock(return_value=[buffer.getvalue()]),
+        )
+        origem.raise_for_status.return_value = None
+        mock_get.return_value = origem
+
+        url = url_proxy_imagem(v, 0, ORIG)
+        partes = urlsplit(url)
+        params = parse_qs(partes.query)
+        request = RequestFactory().get(
+            partes.path,
+            {"exp": params["exp"][0], "sig": params["sig"][0]},
+        )
+        resposta = servir_imagem_proxy(request, v.pk, 0, "imagem.jpg")
+
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(resposta["Content-Type"], "image/jpeg")
+        self.assertTrue(resposta.content.startswith(b"\xff\xd8"))
+        origem.close.assert_called_once_with()
+
+    @override_settings(IMAGE_PROXY_BASE_URL="https://imagens.example.com")
+    @patch("apps.catalogo.imagens.requests.get")
+    def test_proxy_com_assinatura_invalida_retorna_403(self, mock_get):
+        from apps.catalogo.imagens import servir_imagem_proxy, url_proxy_imagem
+
+        instancia = _instancia()
+        v = _cadastrada(instancia, "PROXY-INVALIDO", imagens=[ORIG], tiny_id="924")
+        partes = urlsplit(url_proxy_imagem(v, 0, ORIG, agora=2_000_000_000))
+        params = parse_qs(partes.query)
+        params["sig"] = ["0" * 64]
+        request = RequestFactory().get(
+            partes.path,
+            {"exp": params["exp"][0], "sig": params["sig"][0]},
+        )
+
+        resposta = servir_imagem_proxy(request, v.pk, 0, "imagem.jpg")
+
+        self.assertEqual(resposta.status_code, 403)
+        mock_get.assert_not_called()
+
+    @override_settings(IMAGE_PROXY_BASE_URL="https://imagens.example.com")
+    @patch("apps.instancias.tiny_client.TinyApiClient.sincronizar_anexos_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.anexos_do_produto", return_value=[])
+    def test_erro_de_validacao_registra_campo_e_mensagem_sem_credencial(
+        self, mock_get, mock_put
+    ):
+        from apps.instancias.tiny_client import TinyApiValidationError
+
+        instancia = _instancia()
+        v = _cadastrada(instancia, "VALIDACAO", imagens=[ORIG], tiny_id="924")
+        erro = TinyApiValidationError(
+            "Ocorreram erros de validação",
+            [{"campo": "anexos[0].url", "mensagem": "Não foi encontrado o nome do arquivo"}],
+        )
+        mock_put.side_effect = [erro, erro]
+
+        call_command("sincronizar_imagens_tiny", instancia.slug)
+
+        v.refresh_from_db()
+        self.assertIn("anexos[0].url", v.ultimo_erro)
+        self.assertIn("Não foi encontrado o nome do arquivo", v.ultimo_erro)
 
     @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
     @patch("apps.instancias.tiny_client.requests.request")

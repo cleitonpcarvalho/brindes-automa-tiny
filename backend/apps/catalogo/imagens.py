@@ -13,7 +13,7 @@ import io
 import tempfile
 import time
 import warnings
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import unquote, urlencode, urlsplit
 
 import requests
 from django.conf import settings
@@ -50,6 +50,17 @@ def _assinatura(variacao_id, indice, expira_em, url_original):
     ).hexdigest()
 
 
+def _nome_arquivo_proxy(url_original):
+    """Nome estável para o Tiny reconhecer o tipo do anexo pelo path."""
+    partes = urlsplit(unquote(url_original)).path.rsplit("/", 1)[-1].rsplit(".", 1)
+    extensao = f".{partes[-1].lower()}" if len(partes) == 2 else ""
+    if extensao == ".jpeg":
+        extensao = ".jpg"
+    if extensao not in {".jpg", ".png", ".webp"}:
+        extensao = ".jpg"
+    return f"imagem{extensao}"
+
+
 def _base_publica():
     base = (getattr(settings, "IMAGE_PROXY_BASE_URL", "") or settings.PUBLIC_BASE_URL).rstrip("/")
     partes = urlsplit(base)
@@ -68,7 +79,10 @@ def url_proxy_imagem(variacao, indice, url_original, *, agora=None):
     agora = int(agora if agora is not None else time.time())
     expira_em = agora + IMAGE_PROXY_TTL_SECONDS
     assinatura = _assinatura(variacao.pk, indice, expira_em, url_original)
-    caminho = f"{_base_publica()}/public/imagens/{variacao.pk}/{indice}/"
+    caminho = (
+        f"{_base_publica()}/public/imagens/{variacao.pk}/{indice}/"
+        f"{_nome_arquivo_proxy(url_original)}"
+    )
     return f"{caminho}?{urlencode({'exp': expira_em, 'sig': assinatura})}"
 
 
@@ -136,7 +150,7 @@ def _validar_e_transformar(conteudo, content_type):
 
 
 @require_GET
-def servir_imagem_proxy(request, variacao_id, indice):
+def servir_imagem_proxy(request, variacao_id, indice, nome_arquivo=None):
     try:
         expira_em = int(request.GET["exp"])
         assinatura = request.GET["sig"]

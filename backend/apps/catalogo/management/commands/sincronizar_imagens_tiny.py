@@ -12,6 +12,7 @@ from ...tiny_sync import (
     IMG_RECONCILIADA,
     IMG_SEM_IMAGEM,
     fila_imagens,
+    mensagem_erro_imagem_segura,
     registrar_erro_imagem,
     sincronizar_imagens_variacao,
 )
@@ -103,9 +104,10 @@ class Command(BaseCommand):
                 )
             except Exception as exc:  # NÃO perde o vínculo do produto já criado
                 erros += 1
+                erro = mensagem_erro_imagem_segura(exc)
                 if not dry_run:
-                    registrar_erro_imagem(variacao, f"Falha ao sincronizar imagens: {exc}")
-                self.stderr.write(f"{rot}: erro ao sincronizar imagens: {exc}")
+                    registrar_erro_imagem(variacao, f"Falha ao sincronizar imagens: {erro}")
+                self.stderr.write(f"{rot}: erro ao sincronizar imagens: {erro}")
                 continue
 
             desejadas = r["desejadas"]

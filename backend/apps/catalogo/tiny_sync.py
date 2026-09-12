@@ -41,7 +41,6 @@ from apps.instancias.constants import Fornecedor
 from apps.instancias.models import CredencialFornecedor
 from apps.instancias.tiny_client import TinyApiClient, TinyApiValidationError, url_http_utilizavel
 from apps.sincronizacao.models import (
-    STATUS_EXECUCAO_ABERTOS,
     STATUS_EXECUCAO_ATIVOS,
     Execucao,
     StatusExecucao,
@@ -93,13 +92,17 @@ ESTADO_PARCIAL = "parcial"
 
 
 def execucao_cadastro_tiny_aberta(instancia, fornecedor):
-    """A Execucao de cadastro Tiny 'aberta' (rodando/pausando/pausado/interrompido) do par, ou None."""
+    """Execução de cadastro que ainda bloqueia nova propagação automática, ou None."""
     return (
         Execucao.objects.filter(
             instancia=instancia,
             fornecedor=fornecedor,
             tipo=TipoExecucao.CADASTRO_TINY,
-            status__in=STATUS_EXECUCAO_ABERTOS,
+            status__in=(
+                StatusExecucao.RODANDO,
+                StatusExecucao.PAUSANDO,
+                StatusExecucao.PAUSADO,
+            ),
         )
         .order_by("-iniciada_em")
         .first()

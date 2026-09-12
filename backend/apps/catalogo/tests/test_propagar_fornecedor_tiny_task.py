@@ -30,6 +30,7 @@ from apps.sincronizacao.models import (
 
 from ..models import Produto, StatusVariacao, Variacao
 from ..tasks import AUTOMATIC_CADASTRO_LOTE, propagar_fornecedor_tiny_task
+from ..tiny_sync import execucao_cadastro_tiny_aberta
 
 TINY_FORN_ID = 752133514
 
@@ -242,6 +243,16 @@ class DriftTests(_Base):
 
 
 class ErrosEProtecoesTests(_Base):
+    def test_execucao_interrompida_nao_bloqueia_nova_propagacao_automatica(self):
+        Execucao.objects.create(
+            instancia=self.instancia,
+            fornecedor="asia",
+            tipo=TipoExecucao.CADASTRO_TINY,
+            status=StatusExecucao.INTERROMPIDO,
+        )
+
+        self.assertIsNone(execucao_cadastro_tiny_aberta(self.instancia, "asia"))
+
     @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_produto")
     @patch("apps.instancias.tiny_client.TinyApiClient.obter_produto")
     @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_estoque",

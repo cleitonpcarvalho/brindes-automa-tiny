@@ -1,6 +1,9 @@
 from decimal import Decimal
+from unittest.mock import Mock, patch
 
-from django.test import TestCase
+import requests
+
+from django.test import SimpleTestCase, TestCase
 
 from apps.fornecedores.spot import SpotFornecedor, _ncm_do_taric
 
@@ -90,6 +93,75 @@ class NormalizarSpotTests(TestCase):
         ).normalizar(_payload())
         for variacao in produtos[0].variacoes:
             self.assertEqual(variacao.imagens, ["https://cdn.exemplo.com/spot/11112_115.jpg"])
+
+class PayloadSpotTests(SimpleTestCase):
+    def test_rejeita_payload_com_products_none(self):
+        payload = _payload()
+        payload["products"] = None
+        with self.assertRaisesMessage(ValueError, "'products' deve ser uma lista"):
+            SpotFornecedor().normalizar(payload)
+
+    def test_rejeita_catalogo_completamente_vazio(self):
+        with self.assertRaisesMessage(ValueError, "completamente vazio/inconclusivo"):
+            SpotFornecedor().normalizar({"products": [], "optionals": [], "stocks": []})
+
+
+class HttpSpotTests(SimpleTestCase):
+    def _resposta(self, status=200, json_data=None):
+        resposta = Mock(status_code=status)
+        resposta.json.return_value = json_data or {}
+        if status >= 400:
+            resposta.raise_for_status.side_effect = requests.HTTPError(f"HTTP {status}")
+        return resposta
+
+    @patch("apps.fornecedores.spot.time.sleep")
+    @patch("apps.fornecedores.spot.requests.get")
+    def test_retry_502_e_depois_sucesso_na_autenticacao(self, mock_get, _sleep):
+        mock_get.side_effect = [
+            self._resposta(502),
+            self._resposta(200, {"Token": "token-teste"}),
+        ]
+        self.assertEqual(SpotFornecedor()._autenticar("access-key-teste"), "token-teste")
+        self.assertEqual(mock_get.call_count, 2)
+
+    @patch("apps.fornecedores.spot.time.sleep")
+    @patch("apps.fornecedores.spot.requests.get")
+    def test_retry_timeout_e_depois_sucesso_na_busca(self, mock_get, _sleep):
+        mock_get.side_effect = [
+            requests.exceptions.Timeout("timeout"),
+            self._resposta(200, {"Token": "token-teste"}),
+            self._resposta(200, {"Products": []}),
+            self._resposta(200, {"OptionalsComplete": []}),
+            self._resposta(200, {"Stocks": []}),
+            self._resposta(200),
+        ]
+        resultado = SpotFornecedor().buscar({"access_key": "access-key-teste"})
+        self.assertEqual(resultado, {"products": [], "optionals": [], "stocks": []})
+        self.assertEqual(mock_get.call_count, 6)
+
+    @patch("apps.fornecedores.spot.time.sleep")
+    @patch("apps.fornecedores.spot.requests.get")
+    def test_esgota_tres_tentativas(self, mock_get, _sleep):
+        mock_get.side_effect = [self._resposta(503)] * 3
+        with self.assertRaises(requests.HTTPError):
+            SpotFornecedor()._autenticar("access-key-teste")
+        self.assertEqual(mock_get.call_count, 3)
+
+    @patch("apps.fornecedores.spot.logger.warning")
+    @patch("apps.fornecedores.spot.requests.get")
+    def test_falha_no_close_session_nao_invalida_busca(self, mock_get, warning):
+        payload = {"Products": [], "OptionalsComplete": [], "Stocks": []}
+        respostas = [
+            self._resposta(200, {"Token": "token-teste"}),
+            self._resposta(200, {"Products": payload["Products"]}),
+            self._resposta(200, {"OptionalsComplete": payload["OptionalsComplete"]}),
+            self._resposta(200, {"Stocks": payload["Stocks"]}),
+            self._resposta(503),
+        ]
+        mock_get.side_effect = respostas
+        resultado = SpotFornecedor().buscar({"access_key": "access-key-teste"})
+        self.assertEqual(resultado["products"], [])
+        warning.assert_called_once()
 
 
 class ImagensSpotTests(TestCase):

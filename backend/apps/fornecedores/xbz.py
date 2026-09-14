@@ -20,9 +20,8 @@ class XbzFornecedor(FornecedorBase):
     Variacao identificada por CodigoXbz.
 
     Limite de 24 chamadas/dia compartilhado com o cliente final — por isso
-    buscar() faz exatamente UMA chamada, sem paginação e sem retry
-    automático. Repetir a chamada é decisão de quem chama este cliente
-    (ver checagem em management/commands/importar_fornecedor.py).
+    buscar() faz exatamente UMA chamada, sem paginação e sem retry automático.
+    A checagem do orçamento diário permanece no fluxo de importação.
     """
 
     codigo = Fornecedor.XBZ

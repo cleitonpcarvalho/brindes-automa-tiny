@@ -1,3 +1,5 @@
+from contextlib import nullcontext
+
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
@@ -11,6 +13,7 @@ from apps.sincronizacao.models import (
     StatusExecucao,
     TipoExecucao,
 )
+from apps.sincronizacao.locks import lock_fornecedor
 
 from ...registry import obter_cliente
 from ...services import checar_limite_diario_xbz, obter_configuracao, obter_credencial_ativa
@@ -68,8 +71,8 @@ class Command(BaseCommand):
             type=int,
             default=None,
             help="reusa uma Execucao já criada (passo 10: sincronização manual via API, que "
-            "precisa devolver o id da execução antes de enfileirar) em vez de criar uma nova "
-            "e pula as checagens de limite diário/credencial — quem criou a Execucao já as fez.",
+            "precisa devolver o id da execução antes de enfileirar) em vez de criar uma nova; "
+            "a checagem de limite considera essa Execucao como slot já reservado.",
         )
 
     def handle(self, *args, **options):
@@ -87,76 +90,90 @@ class Command(BaseCommand):
         if options["dry_run"]:
             if execucao_id is not None:
                 raise CommandError("--dry-run é incompatível com --execucao-id (o dry-run não toca nenhuma Execucao).")
+            if fornecedor == Fornecedor.XBZ:
+                raise CommandError(
+                    "dry-run da XBZ bloqueado: a API tem limite diário e o dry-run não gera "
+                    "uma Execucao contabilizável."
+                )
             return self._dry_run(instancia, fornecedor, options["force"])
 
-        if execucao_id is None:
-            self._checar_limite_diario(instancia, fornecedor, options["force"])
-            credencial = self._obter_credencial(instancia, fornecedor)
-            execucao = Execucao.objects.create(
-                instancia=instancia, fornecedor=fornecedor, tipo=options["tipo"]
+        lock = lock_fornecedor(instancia.id, fornecedor) if fornecedor == Fornecedor.XBZ else nullcontext(True)
+        with lock as adquirida:
+            if not adquirida:
+                raise CommandError(
+                    f"Já existe uma importação ativa para {instancia.slug}/{fornecedor}."
+                )
+
+            if execucao_id is None:
+                self._checar_limite_diario(instancia, fornecedor, options["force"])
+                credencial = self._obter_credencial(instancia, fornecedor)
+                execucao = Execucao.objects.create(
+                    instancia=instancia, fornecedor=fornecedor, tipo=options["tipo"]
+                )
+            else:
+                execucao = self._obter_execucao(execucao_id)
+                credencial = None  # buscada dentro do try — ver comentário abaixo
+
+            LogItem.objects.create(
+                execucao=execucao,
+                nivel=NivelLog.INFO,
+                mensagem="Ingestão iniciada — modo espelho apenas",
+                detalhe={
+                    "modo": "mirror-only",
+                    "instancia": instancia.slug,
+                    "fornecedor": fornecedor,
+                    "escreve_no_tiny": False,
+                },
             )
-        else:
-            execucao = self._obter_execucao(execucao_id)
-            credencial = None  # buscada dentro do try — ver comentário abaixo
 
-        LogItem.objects.create(
-            execucao=execucao,
-            nivel=NivelLog.INFO,
-            mensagem="Ingestão iniciada — modo espelho apenas",
-            detalhe={
-                "modo": "mirror-only",
-                "instancia": instancia.slug,
-                "fornecedor": fornecedor,
-                "escreve_no_tiny": False,
-            },
-        )
+            try:
+                execucao.heartbeat_em = timezone.now()
+                execucao.save(update_fields=["heartbeat_em"])
+                if fornecedor == Fornecedor.XBZ and execucao_id is not None:
+                    try:
+                        checar_limite_diario_xbz(
+                            instancia, fornecedor, execucao_atual=execucao
+                        )
+                    except ValueError as exc:
+                        self._falhar_execucao(execucao, "Limite diário da XBZ atingido", exc)
+                        raise CommandError(str(exc)) from exc
+                if credencial is None:
+                    # Caminho da sincronização manual (passo 10): a view já validou
+                    # a credencial de forma síncrona antes de criar a Execucao e
+                    # enfileirar, mas entre o enqueue e esta chamada ela pode ter
+                    # sido desativada/removida (corrida rara).
+                    credencial = obter_credencial_ativa(instancia, fornecedor)
 
-        try:
-            execucao.heartbeat_em = timezone.now()
-            execucao.save(update_fields=["heartbeat_em"])
-            if credencial is None:
-                # Caminho da sincronização manual (passo 10): a view já validou
-                # a credencial de forma síncrona antes de criar a Execucao e
-                # enfileirar, mas entre o enqueue e esta chamada ela pode ter
-                # sido desativada/removida (corrida rara) — nesse caso, cair no
-                # `except Exception` abaixo e marcar a Execucao como falha é o
-                # comportamento certo, em vez de deixá-la presa em "rodando".
-                credencial = obter_credencial_ativa(instancia, fornecedor)
+                configuracao = obter_configuracao(fornecedor)
+                cliente = obter_cliente(fornecedor, configuracao=configuracao)
 
-            configuracao = obter_configuracao(fornecedor)
-            cliente = obter_cliente(fornecedor, configuracao=configuracao)
+                payload_bruto = self._buscar(cliente, credencial, execucao)
+                produtos_normalizados = self._normalizar(cliente, payload_bruto, execucao)
 
-            payload_bruto = self._buscar(cliente, credencial, execucao)
-            produtos_normalizados = self._normalizar(cliente, payload_bruto, execucao)
+                totais = self._gravar(instancia, fornecedor, produtos_normalizados, execucao)
 
-            totais = self._gravar(instancia, fornecedor, produtos_normalizados, execucao)
+                execucao.finalizada_em = timezone.now()
+                execucao.total_lidos = totais["lidos"]
+                execucao.total_novos = totais["novos"]
+                execucao.total_atualizados = totais["atualizados"]
+                execucao.total_ignorados = totais["ignorados"]
+                execucao.total_erros = totais["erros"]
+                execucao.status = StatusExecucao.SUCESSO if totais["erros"] == 0 else StatusExecucao.PARCIAL
+                execucao.save()
+            except CommandError:
+                raise
+            except Exception as exc:
+                self._falhar_execucao(execucao, "Falha inesperada na importação", exc)
+                raise CommandError(str(exc)) from exc
 
-            execucao.finalizada_em = timezone.now()
-            execucao.total_lidos = totais["lidos"]
-            execucao.total_novos = totais["novos"]
-            execucao.total_atualizados = totais["atualizados"]
-            execucao.total_ignorados = totais["ignorados"]
-            execucao.total_erros = totais["erros"]
-            execucao.status = StatusExecucao.SUCESSO if totais["erros"] == 0 else StatusExecucao.PARCIAL
-            execucao.save()
-        except CommandError:
-            raise
-        except Exception as exc:
-            # Qualquer falha não prevista nos pontos específicos abaixo (ex.:
-            # erro ao gravar fora do loop de itens) não pode deixar a Execucao
-            # presa em "rodando" para sempre — a sincronização manual (passo
-            # 10) mostra esse status ao usuário em tempo real.
-            self._falhar_execucao(execucao, "Falha inesperada na importação", exc)
-            raise CommandError(str(exc)) from exc
+            LogItem.objects.create(
+                execucao=execucao,
+                nivel=NivelLog.INFO,
+                mensagem="Importação concluída",
+                detalhe=totais,
+            )
 
-        LogItem.objects.create(
-            execucao=execucao,
-            nivel=NivelLog.INFO,
-            mensagem="Importação concluída",
-            detalhe=totais,
-        )
-
-        self.stdout.write(self.style.SUCCESS(f"[{fornecedor}] {instancia}: {totais}"))
+            self.stdout.write(self.style.SUCCESS(f"[{fornecedor}] {instancia}: {totais}"))
 
     # -- dry-run ------------------------------------------------------------
 

@@ -15,26 +15,31 @@ from apps.sincronizacao.models import Execucao, StatusExecucao, TipoExecucao
 from .models import CadenciaFornecedor, ConfiguracaoFornecedor
 
 
-def checar_limite_diario_xbz(instancia, fornecedor, force=False):
+def checar_limite_diario_xbz(instancia, fornecedor, force=False, execucao_atual=None):
     """
     Regra do cliente: xbz tem limite de 24 chamadas/dia, compartilhado com o
-    cliente final — nunca repetir sem querer no mesmo dia. Levanta ValueError
+    cliente final. Como o adapter faz no máximo uma chamada por execução,
+    conta as execuções de carga inicial/incremental criadas no dia, incluindo
+    as que terminaram em falha. Quando recebe uma execução já reservada, ela
+    não conta contra o próprio slot. `force` é preservado na assinatura por
+    compatibilidade, mas não pode furar o limite da XBZ. Levanta ValueError
     (não CommandError: esta função também é chamada pela API, que não tem
     esse conceito) — cada chamador traduz para o que fizer sentido.
     """
-    if fornecedor != Fornecedor.XBZ or force:
+    if fornecedor != Fornecedor.XBZ:
         return
-    ja_rodou_hoje = Execucao.objects.filter(
+    queryset = Execucao.objects.filter(
         instancia=instancia,
         fornecedor=fornecedor,
         tipo__in=[TipoExecucao.CARGA_INICIAL, TipoExecucao.INCREMENTAL],
-        status__in=[StatusExecucao.SUCESSO, StatusExecucao.PARCIAL],
         iniciada_em__date=timezone.localdate(),
-    ).exists()
-    if ja_rodou_hoje:
+    )
+    if execucao_atual is not None:
+        queryset = queryset.exclude(pk=execucao_atual.pk)
+    tentativas_hoje = queryset.count()
+    if tentativas_hoje >= 24:
         raise ValueError(
-            "xbz já foi importado hoje para esta instância. Use --force para repetir "
-            "(lembre-se do limite de 24 chamadas/dia, compartilhado com o cliente final)."
+            "xbz atingiu o limite conservador de 24 tentativas de sincronização no dia."
         )
 
 

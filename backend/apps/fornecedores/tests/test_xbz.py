@@ -1,6 +1,9 @@
 from decimal import Decimal
+from unittest.mock import Mock, patch
 
-from django.test import TestCase
+import requests
+
+from django.test import SimpleTestCase, TestCase
 
 from apps.fornecedores.xbz import XbzFornecedor
 
@@ -77,3 +80,46 @@ class ConversaoDeUnidadesXbzTests(TestCase):
         produtos = XbzFornecedor().normalizar([XBZ_GRUPO_06520[0]])
         dim = produtos[0].variacoes[0].dimensoes
         self.assertTrue(dim.vazio())
+
+
+class HttpXbzTests(SimpleTestCase):
+    def _resposta(self, status=200, json_data=None):
+        resposta = Mock(status_code=status)
+        resposta.json.return_value = json_data or []
+        if status >= 400:
+            resposta.raise_for_status.side_effect = requests.HTTPError(f"HTTP {status}")
+        return resposta
+
+    @patch("apps.fornecedores.xbz.requests.get")
+    def test_timeout_faz_somente_uma_chamada(self, mock_get):
+        mock_get.side_effect = requests.exceptions.Timeout("timeout")
+        with self.assertRaises(requests.exceptions.Timeout):
+            XbzFornecedor().buscar({"cnpj": "cnpj-teste", "token": "token-teste"})
+        self.assertEqual(mock_get.call_count, 1)
+
+    @patch("apps.fornecedores.xbz.requests.get")
+    def test_502_faz_somente_uma_chamada(self, mock_get):
+        mock_get.return_value = self._resposta(502)
+        with self.assertRaises(requests.HTTPError):
+            XbzFornecedor().buscar({"cnpj": "cnpj-teste", "token": "token-teste"})
+        self.assertEqual(mock_get.call_count, 1)
+
+    @patch("apps.fornecedores.xbz.requests.get")
+    def test_sucesso_continua_funcionando(self, mock_get):
+        mock_get.return_value = self._resposta()
+        self.assertEqual(XbzFornecedor().buscar({"cnpj": "cnpj-teste", "token": "token-teste"}), [])
+        self.assertEqual(mock_get.call_count, 1)
+
+    @patch("apps.fornecedores.xbz.requests.get")
+    def test_401_nao_e_repetido(self, mock_get):
+        mock_get.return_value = self._resposta(401)
+        with self.assertRaisesMessage(ValueError, "401"):
+            XbzFornecedor().buscar({"cnpj": "cnpj-teste", "token": "token-teste"})
+        self.assertEqual(mock_get.call_count, 1)
+
+    @patch("apps.fornecedores.xbz.requests.get")
+    def test_403_nao_e_repetido(self, mock_get):
+        mock_get.return_value = self._resposta(403)
+        with self.assertRaisesMessage(ValueError, "403"):
+            XbzFornecedor().buscar({"cnpj": "cnpj-teste", "token": "token-teste"})
+        self.assertEqual(mock_get.call_count, 1)

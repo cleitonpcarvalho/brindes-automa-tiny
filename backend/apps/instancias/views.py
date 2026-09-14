@@ -450,6 +450,10 @@ class SincronizarFornecedorView(APIView):
                      "pause-a antes de reimportar o espelho."},
                     status=status.HTTP_409_CONFLICT,
                 )
+            try:
+                checar_limite_diario_xbz(instancia, fornecedor)
+            except ValueError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
             # A 1ª rodada de um fornecedor nesta instância é a carga inicial; as
             # seguintes são incrementais. Só rótulo — o pipeline de importação

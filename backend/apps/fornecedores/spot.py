@@ -1,4 +1,6 @@
+import logging
 import re
+import time
 
 import requests
 
@@ -24,6 +26,11 @@ _PADRAO_DIAMETRO_COMPRIMENTO = re.compile(
 # Teto de imagens por variação enviadas ao espelho (e, adiante, ao Tiny —
 # `imagens_utilizaveis` também corta em 5). Escolha nossa, não do cliente.
 MAX_IMAGENS_POR_VARIACAO = 5
+MAX_TENTATIVAS_HTTP = 3
+BACKOFF_HTTP_SEGUNDOS = 0.2
+STATUS_HTTP_RETRYABLE = frozenset({502, 503, 504})
+
+logger = logging.getLogger(__name__)
 
 _SO_DIGITOS = re.compile(r"\D")
 
@@ -200,11 +207,7 @@ class SpotFornecedor(FornecedorBase):
         return {"products": products, "optionals": optionals, "stocks": stocks}
 
     def _autenticar(self, access_key):
-        resposta = requests.get(
-            f"{self.BASE_URL}/AuthenticateClient",
-            params={"accessKey": access_key},
-            timeout=self.TIMEOUT,
-        )
+        resposta = self._get_http("AuthenticateClient", {"accessKey": access_key})
         resposta.raise_for_status()
         dados = resposta.json()
         if dados.get("ErrorCode"):
@@ -215,18 +218,42 @@ class SpotFornecedor(FornecedorBase):
         return token
 
     def _get(self, caminho, token):
-        resposta = requests.get(
-            f"{self.BASE_URL}/{caminho}",
-            params={"token": token, "lang": "PT"},
-            timeout=self.TIMEOUT,
-        )
+        resposta = self._get_http(caminho, {"token": token, "lang": "PT"})
         resposta.raise_for_status()
         return resposta.json()
 
+    def _get_http(self, caminho, params):
+        for tentativa in range(1, MAX_TENTATIVAS_HTTP + 1):
+            try:
+                resposta = requests.get(
+                    f"{self.BASE_URL}/{caminho}", params=params, timeout=self.TIMEOUT
+                )
+                if resposta.status_code not in STATUS_HTTP_RETRYABLE:
+                    return resposta
+                if tentativa == MAX_TENTATIVAS_HTTP:
+                    return resposta
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+                if tentativa == MAX_TENTATIVAS_HTTP:
+                    raise
+            time.sleep(BACKOFF_HTTP_SEGUNDOS * tentativa)
+
     def _encerrar_sessao(self, token):
-        requests.get(f"{self.BASE_URL}/CloseSession", params={"token": token}, timeout=self.TIMEOUT)
+        try:
+            requests.get(
+                f"{self.BASE_URL}/CloseSession", params={"token": token}, timeout=self.TIMEOUT
+            ).raise_for_status()
+        except requests.exceptions.RequestException:
+            logger.warning("spot: falha ao encerrar sessão")
 
     def normalizar(self, payload_bruto):
+        if not isinstance(payload_bruto, dict):
+            raise ValueError("spot: payload raiz inválido; esperado um objeto.")
+        for campo in ("products", "optionals", "stocks"):
+            if not isinstance(payload_bruto.get(campo), list):
+                raise ValueError(f"spot: payload inválido; '{campo}' deve ser uma lista.")
+        if not any(payload_bruto[campo] for campo in ("products", "optionals", "stocks")):
+            raise ValueError("spot: fornecedor retornou catálogo completamente vazio/inconclusivo.")
+
         url_base_imagens = self.configuracao.get("url_base_imagens", "")
 
         produtos_por_referencia = {p["ProdReference"]: p for p in payload_bruto["products"]}

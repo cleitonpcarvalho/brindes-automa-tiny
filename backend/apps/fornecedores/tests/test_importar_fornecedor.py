@@ -7,6 +7,7 @@ from django.test import TestCase
 from apps.catalogo.models import Produto, StatusVariacao, Variacao
 from apps.instancias.models import CredencialFornecedor, Instancia
 from apps.sincronizacao.models import Execucao, StatusExecucao, TipoExecucao
+from apps.fornecedores.tasks import executar_sincronizacao_manual_task, sincronizar_fornecedor_task
 
 from .fixtures import XBZ_GRUPO_06520, XBZ_GRUPO_P12288
 
@@ -94,15 +95,11 @@ class ImportarFornecedorIdempotenciaTests(TestCase):
         self.assertEqual(segunda_execucao.total_ignorados, 5)
 
     @patch("apps.fornecedores.xbz.XbzFornecedor.buscar")
-    def test_segunda_chamada_no_mesmo_dia_e_bloqueada_sem_force(self, mock_buscar):
+    def test_segunda_chamada_no_mesmo_dia_e_permitida_ate_limite(self, mock_buscar):
         mock_buscar.return_value = XBZ_GRUPO_06520
         call_command("importar_fornecedor", self.instancia.slug, "xbz", "--mirror-only")
-
-        with self.assertRaises(CommandError):
-            call_command("importar_fornecedor", self.instancia.slug, "xbz", "--mirror-only")
-
-        # a checagem falha ANTES de qualquer nova chamada de rede
-        self.assertEqual(mock_buscar.call_count, 1)
+        call_command("importar_fornecedor", self.instancia.slug, "xbz", "--mirror-only")
+        self.assertEqual(mock_buscar.call_count, 2)
 
     @patch("apps.fornecedores.xbz.XbzFornecedor.buscar")
     def test_execucao_de_cadastro_tiny_nao_conta_como_importacao_xbz(self, mock_buscar):
@@ -168,15 +165,39 @@ class ImportarFornecedorComExecucaoIdTests(TestCase):
         self.assertEqual(execucao.total_novos, 6)
 
     @patch("apps.fornecedores.xbz.XbzFornecedor.buscar")
-    def test_pula_a_checagem_de_limite_diario_quando_execucao_id_e_passado(self, mock_buscar):
+    def test_execucao_reservada_nao_conta_contra_o_proprio_slot(self, mock_buscar):
+        mock_buscar.return_value = XBZ_GRUPO_06520
+        Execucao.objects.bulk_create([
+            Execucao(
+                instancia=self.instancia,
+                fornecedor="xbz",
+                tipo=TipoExecucao.INCREMENTAL,
+                status=StatusExecucao.FALHA,
+            )
+            for _ in range(23)
+        ])
+        execucao = Execucao.objects.create(
+            instancia=self.instancia, fornecedor="xbz", tipo=TipoExecucao.INCREMENTAL
+        )
+
+        call_command(
+            "importar_fornecedor", self.instancia.slug, "xbz",
+            execucao_id=execucao.id, mirror_only=True,
+        )
+
+        mock_buscar.assert_called_once()
+        execucao.refresh_from_db()
+        self.assertEqual(execucao.status, StatusExecucao.SUCESSO)
+
+    @patch("apps.fornecedores.xbz.XbzFornecedor.buscar")
+    def test_execucao_id_considera_a_propria_execucao_como_slot_reservado(self, mock_buscar):
         mock_buscar.return_value = XBZ_GRUPO_06520
         call_command("importar_fornecedor", self.instancia.slug, "xbz", "--mirror-only")  # já rodou hoje
 
         execucao_manual = Execucao.objects.create(
             instancia=self.instancia, fornecedor="xbz", tipo=TipoExecucao.INCREMENTAL
         )
-        # sem --execucao-id isso levantaria CommandError (limite diário) — com
-        # ele, a checagem é pulada porque quem chamou já validou antes
+        # A execução reservada não deve contar contra o próprio slot.
         call_command(
             "importar_fornecedor", self.instancia.slug, "xbz", execucao_id=execucao_manual.id, mirror_only=True
         )
@@ -198,3 +219,89 @@ class ImportarFornecedorComExecucaoIdTests(TestCase):
         execucao.refresh_from_db()
         self.assertEqual(execucao.status, StatusExecucao.FALHA)
         self.assertIn("credencial ativa", execucao.mensagem_erro)
+
+
+class LimiteDiarioXbzTests(TestCase):
+    def setUp(self):
+        self.instancia = Instancia.objects.create(nome="Loja Limite XBZ")
+        CredencialFornecedor.objects.create(
+            instancia=self.instancia,
+            fornecedor="xbz",
+            credenciais={"cnpj": "0", "token": "0"},
+            ativo=True,
+        )
+
+    def _criar_execucoes(self, quantidade, status=StatusExecucao.FALHA):
+        Execucao.objects.bulk_create(
+            [
+                Execucao(
+                    instancia=self.instancia,
+                    fornecedor="xbz",
+                    tipo=TipoExecucao.INCREMENTAL,
+                    status=status,
+                )
+                for _ in range(quantidade)
+            ]
+        )
+
+    @patch("apps.fornecedores.xbz.XbzFornecedor.buscar", return_value=[])
+    def test_com_23_tentativas_a_24a_e_permitida(self, mock_buscar):
+        self._criar_execucoes(23)
+        call_command("importar_fornecedor", self.instancia.slug, "xbz", "--mirror-only")
+        mock_buscar.assert_called_once()
+        self.assertEqual(Execucao.objects.filter(fornecedor="xbz").count(), 24)
+
+    @patch("apps.fornecedores.xbz.XbzFornecedor.buscar")
+    def test_com_24_tentativas_a_25a_e_bloqueada(self, mock_buscar):
+        self._criar_execucoes(24)
+        with self.assertRaises(CommandError):
+            call_command("importar_fornecedor", self.instancia.slug, "xbz", "--mirror-only")
+        with self.assertRaises(CommandError):
+            call_command("importar_fornecedor", self.instancia.slug, "xbz", "--mirror-only")
+        mock_buscar.assert_not_called()
+        self.assertEqual(Execucao.objects.filter(fornecedor="xbz").count(), 24)
+
+    @patch("apps.fornecedores.xbz.XbzFornecedor.buscar", side_effect=TimeoutError("timeout"))
+    def test_falha_de_execucao_entra_na_contagem(self, mock_buscar):
+        with self.assertRaises(CommandError):
+            call_command("importar_fornecedor", self.instancia.slug, "xbz", "--mirror-only")
+        mock_buscar.assert_called_once()
+        self.assertEqual(Execucao.objects.filter(fornecedor="xbz").count(), 1)
+
+    @patch("apps.fornecedores.xbz.XbzFornecedor.buscar")
+    def test_force_nao_ignora_limite_xbz(self, mock_buscar):
+        self._criar_execucoes(24)
+        with self.assertRaises(CommandError):
+            call_command("importar_fornecedor", self.instancia.slug, "xbz", "--force", "--mirror-only")
+        mock_buscar.assert_not_called()
+
+    @patch("apps.fornecedores.xbz.XbzFornecedor.buscar")
+    def test_dry_run_xbz_nao_chama_api(self, mock_buscar):
+        with self.assertRaises(CommandError):
+            call_command("importar_fornecedor", self.instancia.slug, "xbz", "--dry-run", "--mirror-only")
+        mock_buscar.assert_not_called()
+
+    @patch("apps.fornecedores.xbz.XbzFornecedor.buscar")
+    def test_task_automatica_respeita_limite_xbz(self, mock_buscar):
+        self._criar_execucoes(24)
+        antes = Execucao.objects.filter(fornecedor="xbz").count()
+        sincronizar_fornecedor_task(self.instancia.id, "xbz")
+        mock_buscar.assert_not_called()
+        self.assertEqual(Execucao.objects.filter(fornecedor="xbz").count(), antes)
+
+    @patch("apps.fornecedores.xbz.XbzFornecedor.buscar", return_value=[])
+    def test_task_automatica_com_limite_disponivel_cria_execucao(self, mock_buscar):
+        sincronizar_fornecedor_task(self.instancia.id, "xbz")
+        mock_buscar.assert_called_once()
+        self.assertEqual(Execucao.objects.filter(fornecedor="xbz").count(), 1)
+
+    @patch("apps.fornecedores.xbz.XbzFornecedor.buscar")
+    def test_task_manual_respeita_limite_xbz(self, mock_buscar):
+        self._criar_execucoes(24)
+        execucao = Execucao.objects.create(
+            instancia=self.instancia,
+            fornecedor="xbz",
+            tipo=TipoExecucao.INCREMENTAL,
+        )
+        executar_sincronizacao_manual_task(execucao.id)
+        mock_buscar.assert_not_called()

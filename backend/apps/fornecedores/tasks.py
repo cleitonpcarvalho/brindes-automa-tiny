@@ -16,6 +16,7 @@ from .models import (
     CadenciaFornecedor,
     StatusAtualizacaoVariacao,
 )
+from .services import checar_limite_diario_xbz
 
 logger = logging.getLogger(__name__)
 
@@ -130,8 +131,8 @@ def verificar_e_disparar_sincronizacoes():
 def sincronizar_fornecedor_task(instancia_id, fornecedor):
     """
     Executa `importar_fornecedor` para (instancia, fornecedor). Para a xbz,
-    a trava de "no máximo 1x/dia" já vive no próprio comando — aqui só
-    tratamos isso como um skip esperado, não como falha da tarefa.
+    a trava diária é verificada antes de criar a Execucao — aqui só tratamos
+    o limite esgotado como um skip esperado, não como falha da tarefa.
 
     Pula (não falha) se há uma sincronização de produtos com o Tiny ATIVA
     para o mesmo fornecedor — reimportar o espelho no meio mudaria a
@@ -164,6 +165,15 @@ def sincronizar_fornecedor_task(instancia_id, fornecedor):
                 instancia.slug, fornecedor,
             )
             return
+        if fornecedor == "xbz":
+            try:
+                checar_limite_diario_xbz(instancia, fornecedor)
+            except ValueError as exc:
+                logger.info(
+                    "sincronização de espelho de %s/%s pulada: %s",
+                    instancia.slug, fornecedor, exc,
+                )
+                return
         execucao = Execucao.objects.create(
             instancia_id=instancia_id,
             fornecedor=fornecedor,

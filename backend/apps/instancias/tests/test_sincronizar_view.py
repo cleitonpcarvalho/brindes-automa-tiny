@@ -22,18 +22,23 @@ class SincronizarFornecedorViewTests(TestCase):
         resposta = self.client.post(self._url("xbz"))
         self.assertEqual(resposta.status_code, status.HTTP_400_BAD_REQUEST)
 
-    def test_xbz_ja_rodou_hoje_retorna_400(self):
+    def test_xbz_com_24_slots_ocupados_retorna_400_sem_criar_execucao(self):
         CredencialFornecedor.objects.create(
             instancia=self.instancia, fornecedor="xbz", credenciais={"cnpj": "1", "token": "2"}, ativo=True
         )
-        Execucao.objects.create(
-            instancia=self.instancia,
-            fornecedor="xbz",
-            tipo=TipoExecucao.INCREMENTAL,
-            status=StatusExecucao.SUCESSO,
-        )
+        Execucao.objects.bulk_create([
+            Execucao(
+                instancia=self.instancia,
+                fornecedor="xbz",
+                tipo=TipoExecucao.INCREMENTAL,
+                status=StatusExecucao.FALHA,
+            )
+            for _ in range(24)
+        ])
+        antes = Execucao.objects.count()
         resposta = self.client.post(self._url("xbz"))
         self.assertEqual(resposta.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(Execucao.objects.count(), antes)
 
     @patch("apps.instancias.views.executar_sincronizacao_manual_task")
     def test_sucesso_cria_execucao_e_enfileira_devolvendo_o_id(self, mock_task):

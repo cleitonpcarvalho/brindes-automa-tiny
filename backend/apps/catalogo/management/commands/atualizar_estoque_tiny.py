@@ -1,6 +1,4 @@
 from django.core.management.base import BaseCommand, CommandError
-from django.db.models import F, Q
-
 from apps.instancias.constants import Fornecedor
 from apps.instancias.models import Instancia
 from apps.instancias.tiny_client import TinyApiClient
@@ -12,8 +10,8 @@ from ...models import StatusVariacao, Variacao
 class Command(BaseCommand):
     """
     Atualiza no Tiny o estoque das variações já cadastradas cujo valor
-    mudou no espelho desde a última sincronização (`estoque` difere de
-    `estoque_tiny_sincronizado`, ou nunca foi sincronizado). Mesmo
+    mudou no espelho desde a última sincronização (o saldo normalizado para
+    Tiny difere de `estoque_tiny_sincronizado`, ou nunca foi sincronizado). Mesmo
     tratamento de throttle e de erro do cadastro — uma falha não trava as
     demais, e como o marcador só avança em caso de sucesso, rodar de novo
     naturalmente tenta de novo só o que ainda está fora de sincronia.
@@ -45,11 +43,11 @@ class Command(BaseCommand):
 
         cliente = TinyApiClient(instancia)
 
-        fila = (
-            Variacao.objects.filter(produto__instancia=instancia, status=StatusVariacao.CADASTRADO)
-            .filter(Q(estoque_tiny_sincronizado__isnull=True) | ~Q(estoque=F("estoque_tiny_sincronizado")))
-            .order_by("id")
-        )
+        fila = Variacao.filtrar_estoque_tiny_pendente(
+            Variacao.objects.filter(
+                produto__instancia=instancia, status=StatusVariacao.CADASTRADO
+            )
+        ).order_by("id")
         if options["fornecedor"]:
             fila = fila.filter(produto__fornecedor=options["fornecedor"])
         if options["limite"]:
@@ -61,12 +59,12 @@ class Command(BaseCommand):
             try:
                 cliente.atualizar_estoque(
                     int(variacao.tiny_id),
-                    quantidade=variacao.estoque,
+                    quantidade=variacao.estoque_para_tiny,
                     # `precoUnitario` do lançamento de Balanço é CUSTO — usa o
                     # preço do fornecedor (NÃO o de venda, que agora é sempre 0).
                     preco_unitario=variacao.preco_custo_tiny,
                 )
-                variacao.estoque_tiny_sincronizado = variacao.estoque
+                variacao.estoque_tiny_sincronizado = variacao.estoque_para_tiny
                 variacao.ultimo_erro = ""
                 variacao.save(update_fields=["estoque_tiny_sincronizado", "ultimo_erro", "atualizado_em"])
                 atualizadas += 1

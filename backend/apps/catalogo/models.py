@@ -238,6 +238,25 @@ class Variacao(models.Model):
         """
         return self.preco
 
+    @property
+    def estoque_para_tiny(self):
+        """Saldo publicável no Tiny; o espelho preserva o valor bruto do fornecedor."""
+        return max(0, self.estoque)
+
+    @classmethod
+    def filtrar_estoque_tiny_pendente(cls, queryset):
+        """Seleciona drift comparando o saldo que o Tiny efetivamente recebe."""
+        return queryset.annotate(
+            estoque_para_tiny_calculado=models.Case(
+                models.When(estoque__lte=0, then=models.Value(0)),
+                default=models.F("estoque"),
+                output_field=models.IntegerField(),
+            )
+        ).filter(
+            models.Q(estoque_tiny_sincronizado__isnull=True)
+            | ~models.Q(estoque_tiny_sincronizado=models.F("estoque_para_tiny_calculado"))
+        )
+
     def aplicar_regra_de_estoque(self):
         """
         Regra do cliente nº 3: variação com estoque zero no fornecedor não é

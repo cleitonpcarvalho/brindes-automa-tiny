@@ -223,6 +223,30 @@ class OrquestradorTests(TestCase):
         v.refresh_from_db()
         self.assertEqual(v.tiny_id, "123")
 
+    @patch("apps.catalogo.tiny_sync._sincronizar_imagens_do_sku")
+    def test_atualizacao_existente_publica_estoque_negativo_como_zero(self, _imagens):
+        inst = _instancia()
+        v = _variacao(
+            inst,
+            "X134066",
+            estoque=-1,
+            payload_bruto={"CodigoComposto": "18700-AZU"},
+            atributos={"codigo_composto": "18700-AZU"},
+            status=StatusVariacao.CADASTRADO,
+            tiny_id="123",
+        )
+        cliente = MagicMock()
+        cliente.obter_produto.return_value = {"id": 123, "sku": "X134066", "fornecedores": []}
+
+        atualizar_variacao_individual(inst, v, cliente=cliente)
+
+        cliente.atualizar_estoque.assert_called_once_with(
+            123, quantidade=0, preco_unitario=Decimal("10.00")
+        )
+        v.refresh_from_db()
+        self.assertEqual(v.estoque, -1)
+        self.assertEqual(v.estoque_tiny_sincronizado, 0)
+
     def test_variacao_elegivel_e_criada_no_tiny(self):
         inst = _instancia()
         v = _variacao(inst, "SKU-OK")

@@ -65,6 +65,38 @@ class AtualizacaoDeEstoqueTests(TestCase):
         self.assertEqual(variacao.estoque_tiny_sincronizado, 99)
 
     @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_estoque")
+    def test_estoque_zero_e_publicado_como_zero(self, mock_atualizar):
+        instancia = _instancia_pronta()
+        variacao = _variacao_cadastrada(
+            instancia, "SKU-ZERO", estoque=0, estoque_tiny_sincronizado=None
+        )
+
+        call_command("atualizar_estoque_tiny", instancia.slug)
+
+        mock_atualizar.assert_called_once_with(123, quantidade=0, preco_unitario=Decimal("10.00"))
+        variacao.refresh_from_db()
+        self.assertEqual(variacao.estoque, 0)
+        self.assertEqual(variacao.estoque_tiny_sincronizado, 0)
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_estoque")
+    def test_estoque_negativo_e_publicado_como_zero_sem_drift_infinito(self, mock_atualizar):
+        instancia = _instancia_pronta()
+        variacao = _variacao_cadastrada(
+            instancia, "SKU-NEG", estoque=-9, estoque_tiny_sincronizado=-1
+        )
+
+        call_command("atualizar_estoque_tiny", instancia.slug)
+
+        mock_atualizar.assert_called_once_with(123, quantidade=0, preco_unitario=Decimal("10.00"))
+        variacao.refresh_from_db()
+        self.assertEqual(variacao.estoque, -9)
+        self.assertEqual(variacao.estoque_tiny_sincronizado, 0)
+
+        mock_atualizar.reset_mock()
+        call_command("atualizar_estoque_tiny", instancia.slug)
+        mock_atualizar.assert_not_called()
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_estoque")
     def test_variacao_pendente_nao_e_considerada(self, mock_atualizar):
         instancia = _instancia_pronta()
         _variacao_cadastrada(

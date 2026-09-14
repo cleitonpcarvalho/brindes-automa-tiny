@@ -519,7 +519,7 @@ def marcar_cadastrada(variacao, tiny_id, *, preco_custo_publicado):
     if preco_custo_publicado is not None:
         # CRIAÇÃO (não VINCULAÇÃO): o POST /produtos já leva o pacote da regra
         # definitiva (descricaoComplementar, precos {0/0/custo}, fornecedor
-        # padrão) E o estoque inicial (= `variacao.estoque`) — então marca os
+        # padrão) E o estoque inicial normalizado para o Tiny — então marca os
         # três marcadores como publicados, para a propagação automática não
         # reenviar logo em seguida um Balanço/PUT redundante. Numa VINCULAÇÃO
         # o produto preexistente no Tiny não passou pela nossa regra:
@@ -527,7 +527,7 @@ def marcar_cadastrada(variacao, tiny_id, *, preco_custo_publicado):
         # passo de correção de dados/estoque ajustá-lo depois.
         variacao.preco_custo_tiny_sincronizado = preco_custo_publicado
         variacao.dados_tiny_sincronizados_em = timezone.now()
-        variacao.estoque_tiny_sincronizado = variacao.estoque
+        variacao.estoque_tiny_sincronizado = variacao.estoque_para_tiny
         campos.append("preco_custo_tiny_sincronizado")
         campos.append("dados_tiny_sincronizados_em")
         campos.append("estoque_tiny_sincronizado")
@@ -1010,11 +1010,11 @@ def _atualizar_variacao_vinculada(cliente, instancia, variacao):
     cliente.atualizar_produto(int(variacao.tiny_id), payload)
     cliente.atualizar_estoque(
         int(variacao.tiny_id),
-        quantidade=variacao.estoque,
+        quantidade=variacao.estoque_para_tiny,
         preco_unitario=variacao.preco_custo_tiny,
     )
     variacao.preco_custo_tiny_sincronizado = variacao.preco
-    variacao.estoque_tiny_sincronizado = variacao.estoque
+    variacao.estoque_tiny_sincronizado = variacao.estoque_para_tiny
     variacao.dados_tiny_sincronizados_em = timezone.now()
     variacao.ultimo_erro = ""
     variacao.status = StatusVariacao.CADASTRADO
@@ -1080,7 +1080,7 @@ def montar_payload_produto(variacao, instancia, *, tiny_fornecedor_id=None) -> d
             "precoPromocional": 0,
             "precoCusto": float(variacao.preco_custo_tiny),  # = Variacao.preco
         },
-        "estoque": {"controlar": True, "inicial": float(variacao.estoque)},
+        "estoque": {"controlar": True, "inicial": float(variacao.estoque_para_tiny)},
     }
     dimensoes = _montar_dimensoes(variacao)
     if dimensoes:

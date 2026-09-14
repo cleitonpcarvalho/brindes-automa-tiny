@@ -4,9 +4,8 @@ depois de uma importação de espelho quando a cadência do par tem
 `propagar_tiny` ligado. Reaproveita, SEM duplicar regra:
 
   1. produtos novos elegíveis + imagens -> cadastro em massa (com Execucao);
-  2. estoque que mudou -> `atualizar_estoque_tiny --fornecedor`;
-  3. dados de produtos existentes não são propagados automaticamente;
-     `corrigir_dados_produto_tiny` permanece manual.
+  2. dados de produtos existentes que mudaram -> PUT controlado;
+  3. estoque que mudou -> `atualizar_estoque_tiny --fornecedor`.
 
 Cada etapa é guiada por marcador de drift: nada que já esteja em dia é
 reescrito.
@@ -190,7 +189,7 @@ class DriftTests(_Base):
     @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_estoque")
     @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_produto", return_value=_get_tiny(222, "CUSTO-1"))
     @patch("apps.instancias.tiny_client.TinyApiClient.obter_produto")
-    def test_custo_que_mudou_nao_e_reprocessado_automaticamente(self, mock_get, mock_put, mock_estoque):
+    def test_custo_que_mudou_e_reprocessado_automaticamente(self, mock_get, mock_put, mock_estoque):
         v = self._cadastrada(
             "CUSTO-1", tiny_id="222", preco=Decimal("18.00"),
             preco_custo_tiny_sincronizado=Decimal("12.00"),
@@ -199,24 +198,58 @@ class DriftTests(_Base):
 
         self._rodar()
 
-        mock_put.assert_not_called()
+        mock_get.assert_called_once()
+        mock_put.assert_called_once()
         v.refresh_from_db()
-        self.assertEqual(v.preco_custo_tiny_sincronizado, Decimal("12.00"))
+        self.assertEqual(v.preco_custo_tiny_sincronizado, Decimal("18.00"))
         mock_estoque.assert_not_called()
 
     @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_estoque")
     @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_produto", return_value=_get_tiny(333, "DESC-1"))
     @patch("apps.instancias.tiny_client.TinyApiClient.obter_produto")
-    def test_descricao_que_mudou_nao_e_reprocessada_automaticamente(self, mock_get, mock_put, _me):
+    def test_descricao_que_mudou_e_reprocessada_automaticamente(self, mock_get, mock_put, _me):
         # marcador de dados zerado pela importação (descrição mudou no fornecedor)
         v = self._cadastrada("DESC-1", tiny_id="333", dados_tiny_sincronizados_em=None)
         mock_get.return_value = _get_tiny(333, "DESC-1")
 
         self._rodar()
 
-        mock_put.assert_not_called()
+        mock_get.assert_called_once()
+        mock_put.assert_called_once()
         v.refresh_from_db()
-        self.assertIsNone(v.dados_tiny_sincronizados_em)
+        self.assertIsNotNone(v.dados_tiny_sincronizados_em)
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.obter_produto")
+    def test_ncm_e_dimensoes_alterados_sao_reprocessados(self, mock_get, mock_put):
+        v = self._cadastrada(
+            "DADOS-1", tiny_id="334", ncm="12345678", largura=20,
+            dados_tiny_sincronizados_em=None,
+        )
+        mock_get.return_value = _get_tiny(334, "DADOS-1")
+
+        self._rodar()
+
+        mock_get.assert_called_once()
+        mock_put.assert_called_once()
+        v.refresh_from_db()
+        self.assertIsNotNone(v.dados_tiny_sincronizados_em)
+
+    @patch("apps.instancias.tiny_client.TinyApiClient.atualizar_produto")
+    @patch("apps.instancias.tiny_client.TinyApiClient.obter_produto")
+    def test_erro_em_dados_nao_impede_o_proximo_item(self, mock_get, mock_put):
+        ruim = self._cadastrada("A-DADOS-RUIM", tiny_id="335", dados_tiny_sincronizados_em=None)
+        bom = self._cadastrada("B-DADOS-BOM", tiny_id="336", dados_tiny_sincronizados_em=None)
+        mock_get.side_effect = [RuntimeError("GET falhou"), _get_tiny(336, "DADOS-BOM")]
+
+        self._rodar()
+
+        self.assertEqual(mock_get.call_count, 2)
+        mock_put.assert_called_once()
+        ruim.refresh_from_db()
+        bom.refresh_from_db()
+        self.assertIsNone(ruim.dados_tiny_sincronizados_em)
+        self.assertIsNotNone(bom.dados_tiny_sincronizados_em)
 
     @patch("apps.instancias.tiny_client.TinyApiClient.sincronizar_anexos_produto", return_value={})
     @patch("apps.instancias.tiny_client.TinyApiClient.anexos_do_produto", return_value=[])

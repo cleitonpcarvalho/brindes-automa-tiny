@@ -791,9 +791,9 @@ def propagar_fornecedor_tiny_task(instancia_id, fornecedor):
          massa, rodada com Execucao/auditoria/pause-resume
          (`cadastrar_produtos_tiny_task`). Só cria Execucao se a fila não
          estiver vazia;
-      2. estoque que mudou no espelho -> `atualizar_estoque_tiny --fornecedor`;
-      3. correção de dados de produtos existentes NÃO faz parte da cadência
-         automática; o comando `corrigir_dados_produto_tiny` permanece manual.
+      2. dados de produtos existentes que mudaram ->
+         `corrigir_dados_produto_tiny --executar --limite=25`;
+      3. estoque que mudou no espelho -> `atualizar_estoque_tiny --fornecedor`;
 
     Cada etapa é isolada: uma falha de etapa é registrada e NÃO impede as
     demais. Nenhuma etapa escreve algo que já esteja em dia — a seleção é
@@ -835,9 +835,8 @@ def propagar_fornecedor_tiny_task(instancia_id, fornecedor):
             return
 
         _propagar_novos_e_imagens(instancia, fornecedor)
+        _propagar_dados(instancia, fornecedor)
         _propagar_estoque(instancia, fornecedor)
-        # Dados de produtos existentes não são propagados automaticamente:
-        # o backfill pode sobrescrever preços corretos e reprocessar o catálogo.
 
 
 def _propagar_novos_e_imagens(instancia, fornecedor):
@@ -887,6 +886,7 @@ def _propagar_dados(instancia, fornecedor):
             instancia=instancia.slug,
             fornecedor=fornecedor,
             executar=True,
+            limite=AUTOMATIC_CADASTRO_LOTE,
         )
     except CommandError as exc:
         logger.info(

@@ -340,6 +340,101 @@ def consolidar_status_execucao(execucao: Execucao) -> bool:
     return True
 
 
+def execucao_interrompida_sem_trabalho(execucao: Execucao) -> bool:
+    """Indica se uma execução interrompida pode ser encerrada sem retomada.
+
+    A decisão usa a mesma fila reconstruída pelo fluxo de retomada, e não os
+    contadores históricos da ``Execucao``. O ``limite=1`` evita carregar o
+    catálogo quando basta saber se ainda existe uma unidade de trabalho.
+    """
+    if execucao.tipo != TipoExecucao.CADASTRO_TINY:
+        return False
+    if execucao.status != StatusExecucao.INTERROMPIDO:
+        return False
+    if execucao.finalizada_em is not None:
+        return False
+    return not tiny_sync.fila_cadastro_massa(
+        execucao.instancia,
+        execucao.fornecedor,
+        limite=1,
+    )
+
+
+def consolidar_execucao_interrompida_sem_trabalho(execucao_id: int) -> bool:
+    """Finaliza uma execução histórica cuja fila real de retomada está vazia.
+
+    Serializa com qualquer escrita Tiny da instância e com as ações de
+    iniciar/retomar da API. Nenhuma variação é alterada e nenhuma chamada ao
+    Tiny é feita. Um lease novo invalida de forma cooperativa um eventual
+    worker antigo antes de registrar o encerramento.
+
+    Retorna ``True`` somente quando a consolidação foi aplicada.
+    """
+    referencia = Execucao.objects.filter(pk=execucao_id).values("instancia_id").first()
+    if referencia is None:
+        return False
+
+    instancia_id = referencia["instancia_id"]
+    with lock_instancia_tiny(instancia_id) as adquirida:
+        if not adquirida:
+            return False
+
+        with transaction.atomic():
+            # Mesma trava curta usada pelas ações iniciar/pausar/retomar.
+            Instancia.objects.select_for_update().get(pk=instancia_id)
+            execucao = (
+                Execucao.objects.select_for_update()
+                .select_related("instancia")
+                .get(pk=execucao_id)
+            )
+            if not execucao_interrompida_sem_trabalho(execucao):
+                return False
+
+            status_anterior = execucao.status
+            agora = timezone.now()
+            _atualizar_contadores(execucao)
+            execucao.status = StatusExecucao.SUCESSO
+            execucao.finalizada_em = agora
+            execucao.heartbeat_em = agora
+            execucao.pausa_solicitada = False
+            execucao.lease_token = uuid.uuid4().hex
+            execucao.mensagem_erro = ""
+            execucao.save(
+                update_fields=[
+                    "status",
+                    "finalizada_em",
+                    "heartbeat_em",
+                    "pausa_solicitada",
+                    "lease_token",
+                    "mensagem_erro",
+                    "total_lidos",
+                    "total_novos",
+                    "total_cadastrados",
+                    "total_erros",
+                    "total_ignorados",
+                ]
+            )
+            detalhe = {
+                "status_anterior": status_anterior,
+                "status": execucao.status,
+                "criterio": "fila_cadastro_massa_vazia",
+                "cadastrados": execucao.total_cadastrados,
+                "erros": execucao.total_erros,
+                "pendentes": execucao.total_ignorados,
+            }
+            LogItem.objects.create(
+                execucao=execucao,
+                nivel=NivelLog.INFO,
+                evento=EventoLog.GERAL,
+                mensagem=(
+                    "Execução interrompida consolidada sem retomada: "
+                    "fila atual sem trabalho pendente"
+                ),
+                detalhe=detalhe,
+            )
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Task principal
 # ---------------------------------------------------------------------------

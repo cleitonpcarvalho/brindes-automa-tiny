@@ -116,7 +116,7 @@ class RitmoDeMassaTests(TestCase):
         cliente.get("/produtos")  # 1ª: teto ainda desconhecido
         cliente.get("/produtos")  # 2ª: já com o teto da 1ª resposta
 
-        self.assertEqual(limiter.chamadas, [None, 120])
+        self.assertEqual(limiter.chamadas, [30, 120])
         instancia.refresh_from_db()
         self.assertIsNone(instancia.rate_limit_por_minuto)  # nada gravado no banco
 
@@ -137,14 +137,14 @@ class RitmoDeMassaTests(TestCase):
 
     @override_settings(TINY_API_BASE_URL="https://api.tiny.example")
     @patch("apps.instancias.tiny_client.requests.request")
-    def test_sem_fallback_a_primeira_chamada_continua_sem_teto(self, mock_request):
+    def test_sem_limite_persistido_usa_fallback_v3_na_primeira_chamada(self, mock_request):
         instancia = _instancia()
         mock_request.return_value = _resposta(200, {})
         limiter = LimiterFalso()
 
         TinyApiClient(instancia, sleep_fn=lambda s: None, limiter=limiter).get("/produtos")
 
-        self.assertEqual(limiter.chamadas, [None])  # comportamento antigo preservado
+        self.assertEqual(limiter.chamadas, [30])
 
 
 class Trata429Tests(TestCase):

@@ -26,6 +26,9 @@ from django.core.exceptions import ImproperlyConfigured
 from .tiny_throttle import RateLimiterCompartilhado
 
 
+TINY_V3_RATE_LIMIT_FALLBACK = 30
+
+
 class TinyApiError(Exception):
     """Erro definitivo ao chamar a API do Tiny (ex.: 429 esgotado)."""
 
@@ -104,9 +107,9 @@ class TinyApiClient:
         # um valor maior — continua FINITO (não trava para sempre num produto).
         self._max_tentativas_429 = max_tentativas_429 or self.MAX_TENTATIVAS_429
         # Teto conservador para o limiter enquanto o `x-limit-api` da conta ainda
-        # não foi visto NESTA sessão. `None` = comportamento antigo (sem freio até
-        # a 1ª resposta). Útil no dry-run em massa, que não persiste o header.
-        self._rate_limit_fallback = rate_limit_fallback
+        # não foi visto NESTA sessão. O fallback V3 também protege a primeira
+        # chamada e nunca é persistido; um header real o substitui.
+        self._rate_limit_fallback = rate_limit_fallback or TINY_V3_RATE_LIMIT_FALLBACK
         # Observabilidade opcional para comandos longos. Não altera retries,
         # sleeps nem exceções quando não informado.
         self._on_rate_limit = on_rate_limit
@@ -406,6 +409,9 @@ class TinyApiClient:
                 self.BACKOFF_MAXIMO_SEGUNDOS,
             )
             espera = random.uniform(teto / 2, teto)
+        registrar_cooldown = getattr(self._limiter, "registrar_cooldown", None)
+        if registrar_cooldown:
+            registrar_cooldown(espera)
         if self._on_rate_limit:
             self._on_rate_limit(caminho, tentativa, espera, usou_retry_after)
         self._sleep(espera)

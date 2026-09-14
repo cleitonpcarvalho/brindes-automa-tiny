@@ -289,18 +289,29 @@ class SpotFornecedor(FornecedorBase):
         if not isinstance(payload_bruto, dict):
             _logar_payload_spot_invalido(payload_bruto)
             raise ValueError("spot: payload raiz inválido; esperado um objeto.")
-        for campo in ("products", "optionals", "stocks"):
+        for campo in ("products", "optionals"):
             if not isinstance(payload_bruto.get(campo), list):
                 _logar_payload_spot_invalido(payload_bruto)
                 raise ValueError(f"spot: payload inválido; '{campo}' deve ser uma lista.")
-        if not any(payload_bruto[campo] for campo in ("products", "optionals", "stocks")):
+        stocks = payload_bruto.get("stocks")
+        if stocks is not None and not isinstance(stocks, list):
+            _logar_payload_spot_invalido(payload_bruto)
+            raise ValueError("spot: payload inválido; 'stocks' deve ser uma lista.")
+        estoque_disponivel = stocks is not None
+        if not estoque_disponivel:
+            logger.warning(
+                "spot: stocks indisponível; produtos/opcionais serão processados "
+                "sem alterar estoques existentes: %s",
+                _diagnostico_payload_spot(payload_bruto),
+            )
+        if not any(payload_bruto.get(campo) for campo in ("products", "optionals", "stocks")):
             raise ValueError("spot: fornecedor retornou catálogo completamente vazio/inconclusivo.")
 
         url_base_imagens = self.configuracao.get("url_base_imagens", "")
 
         produtos_por_referencia = {p["ProdReference"]: p for p in payload_bruto["products"]}
-        estoque_por_sku = {s["Sku"]: s.get("Quantity", 0) for s in payload_bruto["stocks"]}
-        estoque_por_websku = {s["WebSku"]: s.get("Quantity", 0) for s in payload_bruto["stocks"]}
+        estoque_por_sku = {s["Sku"]: s.get("Quantity", 0) for s in (stocks or [])}
+        estoque_por_websku = {s["WebSku"]: s.get("Quantity", 0) for s in (stocks or [])}
 
         produtos_normalizados = {}
         for opcional in payload_bruto["optionals"]:
@@ -319,9 +330,12 @@ class SpotFornecedor(FornecedorBase):
                 produtos_normalizados[referencia] = produto
 
             sku = opcional["Sku"]
-            estoque = estoque_por_sku.get(sku)
-            if estoque is None:
-                estoque = estoque_por_websku.get(opcional.get("WebSku"), 0)
+            estoque = None
+            if estoque_disponivel:
+                estoque = estoque_por_sku.get(sku)
+                if estoque is None:
+                    estoque = estoque_por_websku.get(opcional.get("WebSku"), 0)
+                estoque = int(estoque or 0)
 
             imagens = imagens_spot_da_variacao(opcional, produto_bruto, url_base_imagens)
 
@@ -334,7 +348,7 @@ class SpotFornecedor(FornecedorBase):
                     # o Taric cru fica em `atributos` para os demais casos.
                     ncm=_ncm_do_taric(taric),
                     preco=to_decimal(opcional.get("Price1")),
-                    estoque=int(estoque or 0),
+                    estoque=estoque,
                     cor=opcional.get("ColorDesc1", ""),
                     imagens=imagens,
                     atributos={"taric": taric} if taric else {},

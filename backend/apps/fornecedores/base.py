@@ -85,7 +85,10 @@ class VariacaoNormalizada:
     sku: str
     nome: str
     preco: Decimal
-    estoque: int = 0
+    # ``None`` significa que o fornecedor não disponibilizou o conjunto de
+    # estoque nesta resposta. Esse sentinela nunca deve ser persistido como
+    # zero; o gravador preserva o saldo existente e adia variações novas.
+    estoque: int | None = 0
     ncm: str = ""
     cor: str = ""
     tamanho: str = ""

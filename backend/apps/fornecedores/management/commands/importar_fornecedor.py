@@ -151,6 +151,19 @@ class Command(BaseCommand):
                 produtos_normalizados = self._normalizar(cliente, payload_bruto, execucao)
 
                 totais = self._gravar(instancia, fornecedor, produtos_normalizados, execucao)
+                if totais["estoque_indisponivel"]:
+                    LogItem.objects.create(
+                        execucao=execucao,
+                        nivel=NivelLog.AVISO,
+                        mensagem=(
+                            "Estoque do fornecedor indisponível; saldos existentes "
+                            "foram preservados"
+                        ),
+                        detalhe={
+                            "variacoes_sem_estoque_recebido": totais["estoque_indisponivel"],
+                            "variacoes_novas_adiadas": totais["variacoes_novas_adiadas"],
+                        },
+                    )
 
                 execucao.finalizada_em = timezone.now()
                 execucao.total_lidos = totais["lidos"]
@@ -158,7 +171,11 @@ class Command(BaseCommand):
                 execucao.total_atualizados = totais["atualizados"]
                 execucao.total_ignorados = totais["ignorados"]
                 execucao.total_erros = totais["erros"]
-                execucao.status = StatusExecucao.SUCESSO if totais["erros"] == 0 else StatusExecucao.PARCIAL
+                execucao.status = (
+                    StatusExecucao.SUCESSO
+                    if totais["erros"] == 0 and totais["estoque_indisponivel"] == 0
+                    else StatusExecucao.PARCIAL
+                )
                 execucao.save()
             except CommandError:
                 raise
@@ -217,6 +234,7 @@ class Command(BaseCommand):
             "variacoes": 0,
             "com_estoque": 0,
             "sem_estoque": 0,
+            "estoque_indisponivel": 0,
             "descontinuadas_por_regra": 0,
             "com_ncm": 0,
             "sem_ncm": 0,
@@ -236,7 +254,9 @@ class Command(BaseCommand):
             for variacao in produto.variacoes:
                 resumo["variacoes"] += 1
 
-                if variacao.estoque and variacao.estoque > 0:
+                if variacao.estoque is None:
+                    resumo["estoque_indisponivel"] += 1
+                elif variacao.estoque > 0:
                     resumo["com_estoque"] += 1
                 else:
                     resumo["sem_estoque"] += 1
@@ -276,6 +296,7 @@ class Command(BaseCommand):
         w(f"  Variações (total) .......... {resumo['variacoes']}")
         w(f"  Com estoque (> 0) .......... {resumo['com_estoque']}")
         w(f"  Sem estoque (<= 0) ......... {resumo['sem_estoque']}")
+        w(f"  Estoque indisponível ....... {resumo['estoque_indisponivel']}")
         w(f"  Descontinuadas por regra ... {resumo['descontinuadas_por_regra']}  (prefixo P@ — só xbz)")
         w(f"  Com NCM .................... {resumo['com_ncm']}")
         w(f"  Sem NCM ................... {resumo['sem_ncm']}")
@@ -344,14 +365,17 @@ class Command(BaseCommand):
 
     def _gravar(self, instancia, fornecedor, produtos_normalizados, execucao):
         # `lidos`/`novos`/`atualizados`/`ignorados`/`erros` alimentam os campos
-        # de Execucao (mesmos nomes). `produtos`, `sem_estoque` e
-        # `ignorados_regra` são um recorte extra que só vai para o LogItem
-        # final (detalhe JSON) — sem coluna nova em Execucao:
+        # de Execucao (mesmos nomes). Os demais são um recorte extra que só
+        # vai para o LogItem final (detalhe JSON) — sem coluna nova em Execucao:
         #   produtos        = quantos produtos-pai foram lidos/gravados
         #   sem_estoque     = variações que terminaram como 'aguardando'
         #                     (estoque 0 no fornecedor — regra nº 3)
         #   ignorados_regra = variações que terminaram 'descontinuado'
         #                     (prefixo P@ da xbz — regra nº 2)
+        #   estoque_indisponivel = variações recebidas sem informação de
+        #                     estoque; saldos existentes são preservados
+        #   variacoes_novas_adiadas = ainda não havia saldo local a preservar,
+        #                     então a criação espera uma resposta válida
         totais = {
             "produtos": 0,
             "lidos": 0,
@@ -359,6 +383,8 @@ class Command(BaseCommand):
             "atualizados": 0,
             "ignorados": 0,
             "sem_estoque": 0,
+            "estoque_indisponivel": 0,
+            "variacoes_novas_adiadas": 0,
             "ignorados_regra": 0,
             "erros": 0,
         }
@@ -383,9 +409,14 @@ class Command(BaseCommand):
 
             for variacao_normalizada in produto_normalizado.variacoes:
                 totais["lidos"] += 1
+                if variacao_normalizada.estoque is None:
+                    totais["estoque_indisponivel"] += 1
                 try:
                     resultado, variacao = self._gravar_variacao(produto, variacao_normalizada)
                     totais[resultado] += 1
+                    if variacao is None:
+                        totais["variacoes_novas_adiadas"] += 1
+                        continue
                     # Recorte do estado final da variação no espelho (conta em
                     # toda passada — nova, atualizada ou ignorada por hash).
                     if variacao.status == StatusVariacao.AGUARDANDO:
@@ -440,16 +471,18 @@ class Command(BaseCommand):
 
     def _gravar_variacao(self, produto, variacao_normalizada):
         """
-        Idempotência: se já existe uma Variacao com esse sku e o hash do
-        payload bruto não mudou, não escreve nada e conta como 'ignorado' —
-        em particular, um status já definido (ex.: 'cadastrado' por um passo
-        futuro) não é tocado. Se mudou (ou é nova), grava os campos vindos
-        do fornecedor; regra de estoque e regra de descontinuado continuam
-        sendo aplicadas dentro de Variacao.save(), não aqui.
+        Idempotência: sem mudança de payload nem de estoque disponível, não
+        escreve nada. ``estoque=None`` significa fonte indisponível: numa
+        variação existente atualiza apenas os demais dados, preservando saldo,
+        status e marcador Tiny; uma variação nova é adiada porque não há valor
+        confiável que possa ser persistido no campo inteiro obrigatório.
         """
         hash_novo = calcular_hash_conteudo(variacao_normalizada.payload_bruto)
 
         variacao = Variacao.objects.filter(produto=produto, sku=variacao_normalizada.sku).first()
+        estoque_disponivel = variacao_normalizada.estoque is not None
+        if variacao is None and not estoque_disponivel:
+            return "ignorados", None
         if variacao is not None and variacao.hash_conteudo == hash_novo:
             return "ignorados", variacao
 
@@ -474,7 +507,8 @@ class Command(BaseCommand):
         variacao.nome = variacao_normalizada.nome
         variacao.ncm = variacao_normalizada.ncm
         variacao.preco = variacao_normalizada.preco  # regra do cliente nº 4: sem margem
-        variacao.estoque = variacao_normalizada.estoque
+        if estoque_disponivel:
+            variacao.estoque = variacao_normalizada.estoque
         variacao.cor = variacao_normalizada.cor
         variacao.tamanho = variacao_normalizada.tamanho
         variacao.capacidade = variacao_normalizada.capacidade
@@ -491,6 +525,36 @@ class Command(BaseCommand):
             variacao.imagens_tiny_sincronizadas = []
         if dados_mudaram:
             variacao.dados_tiny_sincronizados_em = None
-        variacao.save()
+        if estoque_disponivel:
+            variacao.save()
+        else:
+            status_preservado = variacao.status
+            campos_atualizados = [
+                "nome",
+                "ncm",
+                "preco",
+                "cor",
+                "tamanho",
+                "capacidade",
+                "largura",
+                "altura",
+                "comprimento",
+                "diametro",
+                "peso_liquido",
+                "peso_bruto",
+                "imagens",
+                "atributos",
+                "payload_bruto",
+                "hash_conteudo",
+                "atualizado_em",
+            ]
+            if imagens_mudaram:
+                campos_atualizados.append("imagens_tiny_sincronizadas")
+            if dados_mudaram:
+                campos_atualizados.append("dados_tiny_sincronizados_em")
+            # Variacao.save() ainda calcula o hash, mas estoque/status ficam
+            # fora de update_fields e portanto não mudam no banco.
+            variacao.save(update_fields=campos_atualizados)
+            variacao.status = status_preservado
 
         return ("atualizados" if existia else "novos"), variacao

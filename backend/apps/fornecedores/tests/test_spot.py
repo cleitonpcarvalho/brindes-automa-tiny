@@ -94,6 +94,7 @@ class NormalizarSpotTests(TestCase):
         for variacao in produtos[0].variacoes:
             self.assertEqual(variacao.imagens, ["https://cdn.exemplo.com/spot/11112_115.jpg"])
 
+
 class PayloadSpotTests(SimpleTestCase):
     def test_rejeita_payload_com_products_none(self):
         payload = _payload()
@@ -104,6 +105,51 @@ class PayloadSpotTests(SimpleTestCase):
     def test_rejeita_catalogo_completamente_vazio(self):
         with self.assertRaisesMessage(ValueError, "completamente vazio/inconclusivo"):
             SpotFornecedor().normalizar({"products": [], "optionals": [], "stocks": []})
+
+    @patch("apps.fornecedores.spot.logger.warning")
+    def test_payload_invalido_registra_apenas_estrutura(self, mock_warning):
+        payload = {
+            "products": {
+                "Items": [{"Name": "CONTEUDO-NAO-DEVE-APARECER"}],
+                "Page": 1,
+            },
+            "optionals": [{"Sku": "SKU-NAO-DEVE-APARECER"}],
+            "stocks": None,
+        }
+
+        with self.assertRaisesMessage(ValueError, "'products' deve ser uma lista"):
+            SpotFornecedor().normalizar(payload)
+
+        mock_warning.assert_called_once()
+        formato, diagnostico = mock_warning.call_args.args
+        self.assertIn("estrutura do payload inválido", formato)
+        self.assertEqual(
+            diagnostico["payload"],
+            {
+                "tipo": "dict",
+                "quantidade_chaves": 3,
+                "chaves": ["optionals", "products", "stocks"],
+            },
+        )
+        self.assertEqual(
+            diagnostico["products"],
+            {
+                "presente": True,
+                "tipo": "dict",
+                "quantidade_chaves": 2,
+                "chaves": ["Items", "Page"],
+            },
+        )
+        self.assertEqual(
+            diagnostico["optionals"],
+            {"presente": True, "tipo": "list", "tamanho": 1},
+        )
+        self.assertEqual(
+            diagnostico["stocks"],
+            {"presente": True, "tipo": "NoneType"},
+        )
+        self.assertNotIn("CONTEUDO-NAO-DEVE-APARECER", repr(diagnostico))
+        self.assertNotIn("SKU-NAO-DEVE-APARECER", repr(diagnostico))
 
 
 class HttpSpotTests(SimpleTestCase):

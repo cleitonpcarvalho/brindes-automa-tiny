@@ -32,7 +32,47 @@ STATUS_HTTP_RETRYABLE = frozenset({502, 503, 504})
 
 logger = logging.getLogger(__name__)
 
+_MAX_CHAVES_DIAGNOSTICO = 20
+_MAX_TAMANHO_CHAVE_DIAGNOSTICO = 80
+
 _SO_DIGITOS = re.compile(r"\D")
+
+
+def _resumo_estrutura_spot(valor) -> dict:
+    """Resume somente a estrutura de um valor JSON, nunca seu conteúdo."""
+    resumo = {"tipo": type(valor).__name__}
+    if isinstance(valor, list):
+        resumo["tamanho"] = len(valor)
+    elif isinstance(valor, dict):
+        chaves = sorted(
+            str(chave)[:_MAX_TAMANHO_CHAVE_DIAGNOSTICO]
+            for chave in valor.keys()
+        )
+        resumo["quantidade_chaves"] = len(chaves)
+        resumo["chaves"] = chaves[:_MAX_CHAVES_DIAGNOSTICO]
+        if len(chaves) > _MAX_CHAVES_DIAGNOSTICO:
+            resumo["chaves_omitidas"] = len(chaves) - _MAX_CHAVES_DIAGNOSTICO
+    return resumo
+
+
+def _diagnostico_payload_spot(payload_bruto) -> dict:
+    """Estrutura segura do payload composto entregue à normalização."""
+    diagnostico = {"payload": _resumo_estrutura_spot(payload_bruto)}
+    if not isinstance(payload_bruto, dict):
+        return diagnostico
+    for campo in ("products", "optionals", "stocks"):
+        diagnostico[campo] = {
+            "presente": campo in payload_bruto,
+            **_resumo_estrutura_spot(payload_bruto.get(campo)),
+        }
+    return diagnostico
+
+
+def _logar_payload_spot_invalido(payload_bruto) -> None:
+    logger.warning(
+        "spot: estrutura do payload inválido antes da normalização: %s",
+        _diagnostico_payload_spot(payload_bruto),
+    )
 
 
 def _ncm_do_taric(valor) -> str:
@@ -247,9 +287,11 @@ class SpotFornecedor(FornecedorBase):
 
     def normalizar(self, payload_bruto):
         if not isinstance(payload_bruto, dict):
+            _logar_payload_spot_invalido(payload_bruto)
             raise ValueError("spot: payload raiz inválido; esperado um objeto.")
         for campo in ("products", "optionals", "stocks"):
             if not isinstance(payload_bruto.get(campo), list):
+                _logar_payload_spot_invalido(payload_bruto)
                 raise ValueError(f"spot: payload inválido; '{campo}' deve ser uma lista.")
         if not any(payload_bruto[campo] for campo in ("products", "optionals", "stocks")):
             raise ValueError("spot: fornecedor retornou catálogo completamente vazio/inconclusivo.")

@@ -4,11 +4,12 @@ from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, TestCase
 
-from apps.catalogo.models import StatusVariacao
+from apps.catalogo.models import Produto, StatusVariacao, Variacao
 from apps.fornecedores.management.commands.importar_fornecedor import Command
 from apps.fornecedores.spot import SpotFornecedor
+from apps.instancias.models import Instancia
 
 from .fixtures import (
     SPOT_ESTOQUES_11112,
@@ -147,3 +148,129 @@ class PersistirEstoqueSpotIndisponivelTests(SimpleTestCase):
         self.assertEqual(resultado, "ignorados")
         self.assertIsNone(variacao)
         mock_variacao_model.assert_not_called()
+
+
+class PersistirEstoqueSpotMesmoHashRegressionTests(TestCase):
+    """Regressões para mudanças exclusivas do endpoint ``stocks`` da Spot."""
+
+    def setUp(self):
+        self.instancia = Instancia.objects.create(nome="Loja Spot")
+        self.produto = Produto.objects.create(
+            instancia=self.instancia,
+            fornecedor="spot",
+            codigo_pai=SPOT_PRODUTO_11112["ProdReference"],
+            nome=SPOT_PRODUTO_11112["Name"],
+        )
+        self.comando = Command()
+
+    def _normalizada(self, stocks):
+        return SpotFornecedor().normalizar(_payload(stocks))[0].variacoes[0]
+
+    def _normalizada_com_estoque(self, quantidade):
+        stocks = deepcopy(SPOT_ESTOQUES_11112)
+        stocks[0]["Quantity"] = quantidade
+        return self._normalizada(stocks)
+
+    def _variacao_existente(
+        self,
+        normalizada,
+        *,
+        estoque,
+        estoque_tiny_sincronizado,
+        status=StatusVariacao.CADASTRADO,
+    ):
+        return Variacao.objects.create(
+            produto=self.produto,
+            sku=normalizada.sku,
+            nome=normalizada.nome,
+            ncm=normalizada.ncm,
+            preco=normalizada.preco,
+            estoque=estoque,
+            cor=normalizada.cor,
+            imagens=deepcopy(normalizada.imagens),
+            atributos=deepcopy(normalizada.atributos),
+            payload_bruto=deepcopy(normalizada.payload_bruto),
+            status=status,
+            tiny_id="900" if status == StatusVariacao.CADASTRADO else None,
+            estoque_tiny_sincronizado=estoque_tiny_sincronizado,
+        )
+
+    def test_mesmo_payload_estoque_muda_de_200_para_zero(self):
+        normalizada = self._normalizada_com_estoque(0)
+        existente = self._variacao_existente(
+            normalizada,
+            estoque=200,
+            estoque_tiny_sincronizado=200,
+        )
+
+        resultado, _ = self.comando._gravar_variacao(self.produto, normalizada)
+
+        existente.refresh_from_db()
+        self.assertEqual(resultado, "atualizados")
+        self.assertEqual(existente.estoque, 0)
+        self.assertEqual(existente.estoque_tiny_sincronizado, 200)
+        self.assertEqual(existente.status, StatusVariacao.CADASTRADO)
+
+    def test_mesmo_payload_e_mesmo_estoque_continua_ignorado(self):
+        normalizada = self._normalizada_com_estoque(200)
+        existente = self._variacao_existente(
+            normalizada,
+            estoque=200,
+            estoque_tiny_sincronizado=200,
+        )
+        atualizado_em = existente.atualizado_em
+
+        resultado, _ = self.comando._gravar_variacao(self.produto, normalizada)
+
+        existente.refresh_from_db()
+        self.assertEqual(resultado, "ignorados")
+        self.assertEqual(existente.estoque, 200)
+        self.assertEqual(existente.atualizado_em, atualizado_em)
+
+    def test_stocks_vazio_persiste_zero_sobre_estoque_positivo(self):
+        normalizada = self._normalizada([])
+        existente = self._variacao_existente(
+            normalizada,
+            estoque=200,
+            estoque_tiny_sincronizado=200,
+        )
+
+        resultado, _ = self.comando._gravar_variacao(self.produto, normalizada)
+
+        existente.refresh_from_db()
+        self.assertEqual(resultado, "atualizados")
+        self.assertEqual(existente.estoque, 0)
+        self.assertEqual(existente.estoque_tiny_sincronizado, 200)
+
+    @patch("apps.fornecedores.spot.logger.warning")
+    def test_stocks_none_preserva_estoque_anterior(self, _mock_warning):
+        normalizada = self._normalizada(None)
+        existente = self._variacao_existente(
+            normalizada,
+            estoque=200,
+            estoque_tiny_sincronizado=200,
+        )
+
+        resultado, _ = self.comando._gravar_variacao(self.produto, normalizada)
+
+        existente.refresh_from_db()
+        self.assertEqual(resultado, "ignorados")
+        self.assertEqual(existente.estoque, 200)
+        self.assertEqual(existente.estoque_tiny_sincronizado, 200)
+        self.assertEqual(existente.status, StatusVariacao.CADASTRADO)
+
+    def test_reposicao_com_mesmo_payload_persiste_estoque_e_volta_a_pendente(self):
+        normalizada = self._normalizada_com_estoque(25)
+        existente = self._variacao_existente(
+            normalizada,
+            estoque=0,
+            estoque_tiny_sincronizado=None,
+            status=StatusVariacao.AGUARDANDO,
+        )
+
+        resultado, _ = self.comando._gravar_variacao(self.produto, normalizada)
+
+        existente.refresh_from_db()
+        self.assertEqual(resultado, "atualizados")
+        self.assertEqual(existente.estoque, 25)
+        self.assertEqual(existente.status, StatusVariacao.PENDENTE)

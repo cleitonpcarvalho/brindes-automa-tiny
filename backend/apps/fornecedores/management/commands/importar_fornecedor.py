@@ -483,7 +483,14 @@ class Command(BaseCommand):
         estoque_disponivel = variacao_normalizada.estoque is not None
         if variacao is None and not estoque_disponivel:
             return "ignorados", None
-        if variacao is not None and variacao.hash_conteudo == hash_novo:
+        if (
+            variacao is not None
+            and variacao.hash_conteudo == hash_novo
+            and (
+                not estoque_disponivel
+                or variacao.estoque == variacao_normalizada.estoque
+            )
+        ):
             return "ignorados", variacao
 
         existia = variacao is not None
